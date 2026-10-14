@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # CodeRabbit AI 代码审查配置
-# 文档：https://docs.coderabbit.ai/getting-started/configure-coderabbit
+# 文档：https://docs.coderabbit.ai/reference/configuration
 # 说明：需在仓库中安装 CodeRabbit GitHub App 后生效，CodeRabbit 会读取仓库根目录的本文件。
 
 # 使用简体中文进行所有审查、总结与对话回复
@@ -26,6 +26,8 @@ reviews:
   auto_review:
     enabled: true
     auto_incremental_review: true
+    # 0 表示不自动暂停：无论 PR 累计多少次提交，每次推送都会继续增量审查
+    auto_pause_after_reviewed_commits: 0
     drafts: false
     base_branches:
       - ".*"
