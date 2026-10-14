@@ -74,4 +74,4 @@ fix-docker.sh
 /scripts/scale_dev_jobs.sh
 
 # 注意:不要排除 docs/ —— 里面的 docs.go / swagger.json 是 Go 代码依赖的 swagger 包
-# 注意:不要用 *.md 通配排除 —— skills/preloaded/**/SKILL.md 会被打进镜像给 agent 用
+# 注意:不要用 *.md 通配排除 —— agent 技能等 Markdown 文件需要保留在镜像内
