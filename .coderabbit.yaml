@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI 代码审查配置
+# 文档：https://docs.coderabbit.ai/getting-started/configure-coderabbit
+# 说明：需在仓库中安装 CodeRabbit GitHub App 后生效，CodeRabbit 会读取仓库根目录的本文件。
+
+# 使用简体中文进行所有审查、总结与对话回复
+language: "zh-CN"
+
+tone_instructions: "请始终使用简体中文进行审查与回复，语气专业、简洁、具体，指出问题时给出原因和可直接采用的修改建议。"
+
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: false
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  poem: false
+
+  # 对每个 PR 自动审查，并在后续推送时增量审查
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - ".*"
+
+  path_filters:
+    - "!**/*.lock"
+    - "!**/go.sum"
+    - "!**/package-lock.json"
+    - "!**/pnpm-lock.yaml"
+    - "!**/yarn.lock"
+    - "!**/*.pb.go"
+    - "!**/*_pb2.py"
+    - "!**/*_pb2_grpc.py"
+    - "!**/dist/**"
+    - "!**/vendor/**"
+    - "!third_party/**"
+    - "!licenses/**"
+    - "!testdata/**"
+    - "!dataset/**"
+
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        重点审查：错误处理是否完整（不得忽略 error）、context 传递与超时控制、
+        goroutine 泄漏与并发安全、SQL 注入及多租户数据隔离、资源（连接/文件）是否正确关闭。
+    - path: "docreader/**/*.py"
+      instructions: |
+        重点审查：异常处理、大文件与内存占用、类型注解、外部输入校验以及解析器的边界情况。
+    - path: "frontend/**"
+      instructions: |
+        重点审查：组件职责与可复用性、响应式状态管理、XSS 风险、国际化文案是否硬编码、无障碍与性能问题。
+    - path: "migrations/**"
+      instructions: |
+        重点审查：迁移是否可回滚、是否兼容已有数据、是否会锁大表或造成停机。
+    - path: ".github/workflows/**"
+      instructions: |
+        重点审查：权限最小化（permissions）、密钥使用安全、第三方 Action 是否固定版本。
+    - path: "{helm,deploy,docker}/**"
+      instructions: |
+        重点审查：镜像版本固定、资源限制、敏感信息不得明文写入、端口与健康检查配置。
+
+  tools:
+    golangci-lint:
+      enabled: true
+    ruff:
+      enabled: true
+    eslint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false

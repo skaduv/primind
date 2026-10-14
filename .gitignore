@@ -7,6 +7,7 @@
 !.gitattributes
 !.dockerignore
 !.golangci.yml
+!.coderabbit.yaml
 !.env.lite.example
 !.env
 
