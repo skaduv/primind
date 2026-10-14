@@ -10,6 +10,33 @@ on:
       - "v*"
     branches:
       - main
+    # 只在镜像输入变化时重建；tag 推送不受 paths 过滤影响（GitHub 文档：
+    # "Path filters are not evaluated for pushes of tags"），发布 tag 始终构建。
+    paths:
+      - "**/*.go"
+      - "!cli/**"
+      - "!client/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - "VERSION"
+      - "cmd/**"
+      - "internal/**"
+      - "docs/**"
+      - "config/**"
+      - "migrations/**"
+      - "dataset/**"
+      - "frontend/**"
+      - "docreader/**"
+      - "third_party/**"
+      - "docker/**"
+      - "scripts/**"
+      - "licenses/**"
+      - "packages/**"
+      - "THIRD_PARTY_NOTICES.md"
+      - ".dockerignore"
+      - ".github/workflows/docker-image.yml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
