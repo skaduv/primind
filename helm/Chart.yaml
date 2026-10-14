@@ -1,0 +1,16 @@
+apiVersion: v2
+name: primind
+description: |
+  Primind - 内部知识库与 RAG 平台，支持文档解析、向量检索与 LLM 集成。
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - ai
+  - rag
+  - knowledge-base
+  - llm
+  - document-parsing
+  - vector-search
+  - chatbot

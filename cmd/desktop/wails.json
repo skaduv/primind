@@ -1,0 +1,23 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Primind Lite",
+  "outputfilename": "Primind Lite",
+  "frontend:dir": "../../frontend",
+  "wailsjsdir": "../../frontend/src",
+  "build:tags": "desktop",
+  "author": {
+    "name": "Primind Team",
+    "email": ""
+  },
+  "info": {
+    "companyName": "Primind",
+    "productName": "Primind Lite",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright 2026 Primind",
+    "comments": "Primind Desktop Edition"
+  },
+  "mac": {
+    "category": "public.app-category.productivity",
+    "titlebar": "hiddenInset"
+  }
+}

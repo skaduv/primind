@@ -1,0 +1,23 @@
+[Unit]
+Description=Primind Lite - Knowledge Base Management System
+After=network.target
+
+[Service]
+Type=simple
+User=primind
+Group=primind
+WorkingDirectory=/opt/primind
+EnvironmentFile=/opt/primind/.env.lite
+ExecStart=/opt/primind/Primind-lite
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/primind/data
+
+[Install]
+WantedBy=multi-user.target
