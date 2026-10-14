@@ -224,6 +224,23 @@ jobs:
     runs-on: ${{ matrix.runs }}
     timeout-minutes: 60
     steps:
+      # The 2-core/7 GB private-repo runners run out of disk while building
+      # and exporting this image's layers; free the preinstalled toolchains
+      # first, the same way build-docreader does.
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: false
+          # all of these default to true, but feel free to set to "false" if necessary
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Checkout code
         uses: actions/checkout@v6
 
