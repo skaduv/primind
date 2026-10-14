@@ -13,9 +13,9 @@ help:
 	@echo "  clean             清理构建文件"
 	@echo ""
 	@echo "Docker 命令:"
-	@echo "  docker-build-app       构建应用 Docker 镜像 (primind/primind-app)"
-	@echo "  docker-build-docreader 构建文档读取器镜像 (primind/primind-docreader)"
-	@echo "  docker-build-frontend  构建前端镜像 (primind/primind-ui)"
+	@echo "  docker-build-app       构建应用 Docker 镜像 (ghcr.io/skaduv/primind-app)"
+	@echo "  docker-build-docreader 构建文档读取器镜像 (ghcr.io/skaduv/primind-docreader)"
+	@echo "  docker-build-frontend  构建前端镜像 (ghcr.io/skaduv/primind-ui)"
 	@echo "  docker-build-all       构建所有 Docker 镜像"
 	@echo "  docker-run            运行 Docker 容器"
 	@echo "  docker-stop           停止 Docker 容器"
@@ -77,7 +77,7 @@ BINARY_NAME=Primind
 MAIN_PATH=./cmd/server
 
 # Docker related variables
-DOCKER_IMAGE=primind/primind-app
+DOCKER_IMAGE=ghcr.io/skaduv/primind-app
 DOCKER_TAG=latest
 
 # Platform detection
@@ -148,14 +148,14 @@ docker-build-app:
 
 # Build docreader Docker image
 docker-build-docreader:
-	docker build --platform $(PLATFORM) -f docker/Dockerfile.docreader -t primind/primind-docreader:latest .
+	docker build --platform $(PLATFORM) -f docker/Dockerfile.docreader -t ghcr.io/skaduv/primind-docreader:latest .
 
 # Build frontend Docker image (multi-stage: npm runs inside the builder stage)
 docker-build-frontend:
 	@eval $$(./scripts/get_version.sh env); \
 	docker build --platform $(PLATFORM) \
 		--build-arg VITE_FRONTEND_COMMIT="$$COMMIT_ID" \
-		-f frontend/Dockerfile -t primind/primind-ui:latest frontend/
+		-f frontend/Dockerfile -t ghcr.io/skaduv/primind-ui:latest frontend/
 
 # Build all Docker images
 docker-build-all: docker-build-app docker-build-docreader docker-build-frontend

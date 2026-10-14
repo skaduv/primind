@@ -253,7 +253,7 @@ pre-existing Service name does not automatically transfer its ownership to Helm.
 | `app.strategy.type` | App update strategy: `RollingUpdate` or `Recreate` | `RollingUpdate` |
 | `app.strategy.rollingUpdate.maxSurge` | Extra Pods during rolling updates (integer or percentage); ignored with `Recreate` | `1` |
 | `app.strategy.rollingUpdate.maxUnavailable` | Unavailable Pods during rolling updates (integer or percentage); ignored with `Recreate` | `0` |
-| `app.image.repository` | Image repository | `primind/primind-app` |
+| `app.image.repository` | Image repository | `ghcr.io/skaduv/primind-app` |
 | `app.image.tag` | Image tag | `""` (uses appVersion) |
 | `app.resources` | Resource limits | See values.yaml |
 | `app.env` | Environment variables | See values.yaml |
@@ -265,7 +265,7 @@ pre-existing Service name does not automatically transfer its ownership to Helm.
 |-----------|-------------|---------|
 | `frontend.enabled` | Enable frontend | `true` |
 | `frontend.replicaCount` | Number of replicas | `1` |
-| `frontend.image.repository` | Image repository | `primind/primind-ui` |
+| `frontend.image.repository` | Image repository | `ghcr.io/skaduv/primind-ui` |
 | `frontend.image.tag` | Image tag | `""` (uses appVersion) |
 
 ### DocReader
@@ -274,7 +274,7 @@ pre-existing Service name does not automatically transfer its ownership to Helm.
 |-----------|-------------|---------|
 | `docreader.enabled` | Enable DocReader | `true` |
 | `docreader.replicaCount` | Number of replicas | `1` |
-| `docreader.image.repository` | Image repository | `primind/primind-docreader` |
+| `docreader.image.repository` | Image repository | `ghcr.io/skaduv/primind-docreader` |
 | `docreader.image.tag` | Image tag | `""` (uses appVersion) |
 
 ### PostgreSQL (ParadeDB)

@@ -58,7 +58,7 @@ const (
 	// before /workspace and its input/output directories were handed to the
 	// sandbox account — a sandbox built from it cannot write its own artifact
 	// directory. Point this back at latest once a release ships that fix.
-	DefaultDockerImage = "primind/primind-sandbox:main"
+	DefaultDockerImage = "ghcr.io/skaduv/primind-sandbox:main"
 
 	// DefaultCubeTemplateImage is the same environment with Cube's envd daemon
 	// baked in (target "cube" of docker/Dockerfile.sandbox).
@@ -68,17 +68,17 @@ const (
 	// DefaultDockerImage therefore always fails the probe with "connection
 	// refused" — E2B gets away with that image because its own builder injects
 	// envd, and the Docker backend never needs one.
-	DefaultCubeTemplateImage = "primind/primind-sandbox:main-cube"
+	DefaultCubeTemplateImage = "ghcr.io/skaduv/primind-sandbox:main-cube"
 
 	// DefaultDesktopDockerImage is the XFCE/x11vnc/websockify variant of
 	// DefaultDockerImage (target "desktop" of docker/Dockerfile.sandbox).
 	// E2B desktop templates are built from it. The Docker backend does not
 	// consume this tag yet.
-	DefaultDesktopDockerImage = "primind/primind-sandbox:main-desktop"
+	DefaultDesktopDockerImage = "ghcr.io/skaduv/primind-sandbox:main-desktop"
 
 	// DefaultCubeDesktopTemplateImage is DefaultDesktopDockerImage plus Cube
 	// envd (target "desktop-cube").
-	DefaultCubeDesktopTemplateImage = "primind/primind-sandbox:main-desktop-cube"
+	DefaultCubeDesktopTemplateImage = "ghcr.io/skaduv/primind-sandbox:main-desktop-cube"
 
 	// DesktopWebsockifyPort is websockify inside the sandbox. Primind dials
 	// it through the provider gateway (Host "{port}-{id}.{domain}"), not by

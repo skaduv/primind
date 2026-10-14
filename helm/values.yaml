@@ -69,7 +69,7 @@ app:
 
   image:
     # -- Image repository
-    repository: primind/primind-app
+    repository: ghcr.io/skaduv/primind-app
     # -- Image tag (defaults to Chart.appVersion if empty)
     tag: ""
     # -- Image pull policy
@@ -165,7 +165,7 @@ frontend:
 
   image:
     # -- Image repository
-    repository: primind/primind-ui
+    repository: ghcr.io/skaduv/primind-ui
     # -- Image tag (defaults to Chart.appVersion if empty)
     tag: ""
     # -- Image pull policy
@@ -214,7 +214,7 @@ docreader:
 
   image:
     # -- Image repository
-    repository: primind/primind-docreader
+    repository: ghcr.io/skaduv/primind-docreader
     # -- Image tag (defaults to Chart.appVersion if empty)
     tag: ""
     # -- Image pull policy

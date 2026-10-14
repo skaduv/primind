@@ -148,7 +148,7 @@ build_app_image() {
         --build-arg GO_VERSION_ARG="$GO_VERSION" \
         --build-arg WITH_ANYDOC=${WITH_ANYDOC:-1} \
         -f docker/Dockerfile.app \
-        -t primind/primind-app:latest \
+        -t ghcr.io/skaduv/primind-app:latest \
         .
     
     if [ $? -eq 0 ]; then
@@ -174,7 +174,7 @@ build_docreader_image() {
         --build-arg PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST:-}" \
         --build-arg PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST="${PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST:-}" \
         -f docker/Dockerfile.docreader \
-        -t primind/primind-docreader:latest \
+        -t ghcr.io/skaduv/primind-docreader:latest \
         .
     
     if [ $? -eq 0 ]; then
@@ -201,7 +201,7 @@ build_frontend_image() {
         ${NPM_REGISTRY:+--build-arg NPM_REGISTRY="$NPM_REGISTRY"} \
         ${NODE_MAX_OLD_SPACE_SIZE:+--build-arg NODE_MAX_OLD_SPACE_SIZE="$NODE_MAX_OLD_SPACE_SIZE"} \
         -f frontend/Dockerfile \
-        -t primind/primind-ui:latest \
+        -t ghcr.io/skaduv/primind-ui:latest \
         frontend/
     
     if [ $? -eq 0 ]; then
@@ -226,8 +226,8 @@ build_sandbox_image() {
         --build-arg TARGETPLATFORM=$PLATFORM \
         -f docker/Dockerfile.sandbox \
         --target sandbox \
-        -t primind/primind-sandbox:latest \
-        -t primind/primind-sandbox:main \
+        -t ghcr.io/skaduv/primind-sandbox:latest \
+        -t ghcr.io/skaduv/primind-sandbox:main \
         .
 
     if [ $? -ne 0 ]; then
@@ -244,8 +244,8 @@ build_sandbox_image() {
         --build-arg TARGETPLATFORM=$PLATFORM \
         -f docker/Dockerfile.sandbox \
         --target cube \
-        -t primind/primind-sandbox:latest-cube \
-        -t primind/primind-sandbox:main-cube \
+        -t ghcr.io/skaduv/primind-sandbox:latest-cube \
+        -t ghcr.io/skaduv/primind-sandbox:main-cube \
         .
 
     if [ $? -ne 0 ]; then
@@ -262,8 +262,8 @@ build_sandbox_image() {
         --build-arg TARGETPLATFORM=$PLATFORM \
         -f docker/Dockerfile.sandbox \
         --target desktop \
-        -t primind/primind-sandbox:latest-desktop \
-        -t primind/primind-sandbox:main-desktop \
+        -t ghcr.io/skaduv/primind-sandbox:latest-desktop \
+        -t ghcr.io/skaduv/primind-sandbox:main-desktop \
         .
 
     if [ $? -ne 0 ]; then
@@ -278,8 +278,8 @@ build_sandbox_image() {
         --build-arg TARGETPLATFORM=$PLATFORM \
         -f docker/Dockerfile.sandbox \
         --target desktop-cube \
-        -t primind/primind-sandbox:latest-desktop-cube \
-        -t primind/primind-sandbox:main-desktop-cube \
+        -t ghcr.io/skaduv/primind-sandbox:latest-desktop-cube \
+        -t ghcr.io/skaduv/primind-sandbox:main-desktop-cube \
         .
 
     if [ $? -eq 0 ]; then
@@ -358,29 +358,29 @@ clean_images() {
     
     # 停止相关容器
     log_info "停止相关容器..."
-    docker stop $(docker ps -q --filter "ancestor=primind/primind-app:latest" 2>/dev/null) 2>/dev/null || true
-    docker stop $(docker ps -q --filter "ancestor=primind/primind-docreader:latest" 2>/dev/null) 2>/dev/null || true
-    docker stop $(docker ps -q --filter "ancestor=primind/primind-ui:latest" 2>/dev/null) 2>/dev/null || true
+    docker stop $(docker ps -q --filter "ancestor=ghcr.io/skaduv/primind-app:latest" 2>/dev/null) 2>/dev/null || true
+    docker stop $(docker ps -q --filter "ancestor=ghcr.io/skaduv/primind-docreader:latest" 2>/dev/null) 2>/dev/null || true
+    docker stop $(docker ps -q --filter "ancestor=ghcr.io/skaduv/primind-ui:latest" 2>/dev/null) 2>/dev/null || true
     
     # 删除相关容器
     log_info "删除相关容器..."
-    docker rm $(docker ps -aq --filter "ancestor=primind/primind-app:latest" 2>/dev/null) 2>/dev/null || true
-    docker rm $(docker ps -aq --filter "ancestor=primind/primind-docreader:latest" 2>/dev/null) 2>/dev/null || true
-    docker rm $(docker ps -aq --filter "ancestor=primind/primind-ui:latest" 2>/dev/null) 2>/dev/null || true
+    docker rm $(docker ps -aq --filter "ancestor=ghcr.io/skaduv/primind-app:latest" 2>/dev/null) 2>/dev/null || true
+    docker rm $(docker ps -aq --filter "ancestor=ghcr.io/skaduv/primind-docreader:latest" 2>/dev/null) 2>/dev/null || true
+    docker rm $(docker ps -aq --filter "ancestor=ghcr.io/skaduv/primind-ui:latest" 2>/dev/null) 2>/dev/null || true
     
     # 删除镜像
     log_info "删除本地镜像..."
-    docker rmi primind/primind-app:latest 2>/dev/null || true
-    docker rmi primind/primind-docreader:latest 2>/dev/null || true
-    docker rmi primind/primind-ui:latest 2>/dev/null || true
-    docker rmi primind/primind-sandbox:latest 2>/dev/null || true
-    docker rmi primind/primind-sandbox:latest-cube 2>/dev/null || true
-    docker rmi primind/primind-sandbox:latest-desktop 2>/dev/null || true
-    docker rmi primind/primind-sandbox:latest-desktop-cube 2>/dev/null || true
-    docker rmi primind/primind-sandbox:main 2>/dev/null || true
-    docker rmi primind/primind-sandbox:main-cube 2>/dev/null || true
-    docker rmi primind/primind-sandbox:main-desktop 2>/dev/null || true
-    docker rmi primind/primind-sandbox:main-desktop-cube 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-app:latest 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-docreader:latest 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-ui:latest 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:latest 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:latest-cube 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:latest-desktop 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:latest-desktop-cube 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:main 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:main-cube 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:main-desktop 2>/dev/null || true
+    docker rmi ghcr.io/skaduv/primind-sandbox:main-desktop-cube 2>/dev/null || true
     
     docker image prune -f
     

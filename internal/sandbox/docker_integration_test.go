@@ -11,8 +11,8 @@
 //
 // Run with a reachable daemon and the standard sandbox image:
 //
-//	docker build -f docker/Dockerfile.sandbox -t primind/primind-sandbox:dev .
-//	DOCKER_INTEGRATION_IMAGE=primind/primind-sandbox:dev \
+//	docker build -f docker/Dockerfile.sandbox -t ghcr.io/skaduv/primind-sandbox:dev .
+//	DOCKER_INTEGRATION_IMAGE=ghcr.io/skaduv/primind-sandbox:dev \
 //	go test -tags=docker_integration ./internal/sandbox \
 //	  -run '^TestDocker.*Integration' -count=1 -v -timeout=15m
 package sandbox

@@ -73,9 +73,11 @@ make build-images
 
 该命令等价于 `./scripts/build_images.sh`，构建以下镜像：
 
-- `primind/primind-app`：主服务镜像
-- `primind/primind-docreader`：文档解析服务镜像
-- `primind/primind-ui`：前端镜像
+- `ghcr.io/skaduv/primind-app`：主服务镜像
+- `ghcr.io/skaduv/primind-docreader`：文档解析服务镜像
+- `ghcr.io/skaduv/primind-ui`：前端镜像
+
+CI 在 main 分支推送时会把上述镜像构建并推送到 GitHub Container Registry（`ghcr.io/skaduv/`），标签为 `main`；推送 `v*` tag 时生成版本号与 `latest` 标签。
 
 也可以单独构建：`make build-images-app`、`make build-images-docreader`、`make build-images-frontend`。
 

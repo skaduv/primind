@@ -815,7 +815,7 @@ const isMaskedSecret = (value?: string) => value === secretPlaceholder
 // Mirrors DefaultDockerImage on the server, including why it tracks main
 // instead of latest: the latest tag still carries an image whose /workspace
 // the sandbox account cannot write.
-const defaultDockerImage = 'primind/primind-sandbox:main'
+const defaultDockerImage = 'ghcr.io/skaduv/primind-sandbox:main'
 
 const clusterGuideUrl = docsUrl('sandboxDeployment')
 const e2bApiKeysUrl = 'https://e2b.dev/dashboard?tab=keys'

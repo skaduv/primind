@@ -162,7 +162,7 @@ func TestCubeRemoteClientListTemplatesSurfacesLastError(t *testing.T) {
 			"templateID": "tpl-broken",
 			"status":     "FAILED",
 			"imageInfo":  DefaultDockerImage,
-			"lastError":  "pull access denied for primind/primind-sandbox",
+			"lastError":  "pull access denied for ghcr.io/skaduv/primind-sandbox",
 		}},
 		nil,
 	))
@@ -170,7 +170,7 @@ func TestCubeRemoteClientListTemplatesSurfacesLastError(t *testing.T) {
 	templates, err := client.ListTemplates(context.Background())
 	require.NoError(t, err)
 	require.Len(t, templates, 1)
-	require.Equal(t, "pull access denied for primind/primind-sandbox", templates[0].Error)
+	require.Equal(t, "pull access denied for ghcr.io/skaduv/primind-sandbox", templates[0].Error)
 }
 
 // Cube stores snapshots in the template store. The settings step is for
@@ -586,10 +586,10 @@ func TestCubeTemplateImageIsRecognisedAsStandard(t *testing.T) {
 func TestIsStandardTemplateImage(t *testing.T) {
 	for _, image := range []string{
 		DefaultDockerImage,
-		"primind/primind-sandbox",
-		"docker.io/primind/primind-sandbox:latest",
-		"docker.io/primind/primind-sandbox@sha256:abc",
-		"registry.internal:5000/primind/primind-sandbox:v1",
+		"skaduv/primind-sandbox",
+		"docker.io/skaduv/primind-sandbox:latest",
+		"docker.io/skaduv/primind-sandbox@sha256:abc",
+		"registry.internal:5000/skaduv/primind-sandbox:v1",
 	} {
 		require.True(t, isStandardTemplateImage(image), image)
 	}

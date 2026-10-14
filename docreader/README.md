@@ -8,7 +8,7 @@ DocReader 是 Primind 项目中负责文档解析和处理的 gRPC 服务。它�
 
 ```yaml
 docreader:
-  image: primind/primind-docreader:${PRIMIND_VERSION:-latest}
+  image: ghcr.io/skaduv/primind-docreader:${PRIMIND_VERSION:-latest}
   environment:
     - MINIO_ENDPOINT=minio:9000
     - MINIO_PUBLIC_ENDPOINT=http://localhost:${MINIO_PORT:-9000}

@@ -117,7 +117,7 @@ func TestResolveBuildsSessionBoundManagerForDocker(t *testing.T) {
 			Config: &types.TenantSandboxConfig{
 				SandboxType: "docker",
 				Docker: &types.DockerSandboxConfig{
-					Image: "primind/primind-sandbox:test",
+					Image: "ghcr.io/skaduv/primind-sandbox:test",
 				},
 			},
 			Found: true,
@@ -146,7 +146,7 @@ func TestResolveRefusesDockerWhenDisabled(t *testing.T) {
 			Config: &types.TenantSandboxConfig{
 				SandboxType: "docker",
 				Docker: &types.DockerSandboxConfig{
-					Image: "primind/primind-sandbox:test",
+					Image: "ghcr.io/skaduv/primind-sandbox:test",
 				},
 			},
 			Found: true,

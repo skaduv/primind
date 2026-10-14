@@ -153,8 +153,8 @@ func imageTag(image string) string {
 }
 
 // normalizeImageRepository reduces an image reference to its repository path so
-// that "docker.io/primind/primind-sandbox:latest",
-// "primind/primind-sandbox@sha256:…" and the bare name all compare equal.
+// that "docker.io/skaduv/primind-sandbox:latest",
+// "skaduv/primind-sandbox@sha256:…" and the bare name all compare equal.
 func normalizeImageRepository(image string) string {
 	ref := strings.TrimSpace(image)
 	if ref == "" {

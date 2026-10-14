@@ -8,7 +8,7 @@
 #
 #   docker build --platform linux/amd64 \
 #     --build-arg VITE_FRONTEND_COMMIT=$(git rev-parse --short HEAD) \
-#     -t primind/primind-ui:latest \
+#     -t ghcr.io/skaduv/primind-ui:latest \
 #     frontend/
 #
 # Optional npm mirror (e.g. corporate registry):

@@ -116,12 +116,12 @@ const FAQ_SAMPLE = `# Primind 部署与使用 FAQ
 ## 安装与启动
 
 ### Q1: Docker 镜像在哪里下载？
-官方镜像通过 daocloud 加速分发：
+官方镜像发布在 GitHub Container Registry：
 
 \`\`\`
-docker pull docker.m.daocloud.io/primind/primind-app:v0.5.0
-docker pull docker.m.daocloud.io/primind/primind-docreader:v0.5.0
-docker pull docker.m.daocloud.io/primind/primind-ui:v0.5.0
+docker pull ghcr.io/skaduv/primind-app:main
+docker pull ghcr.io/skaduv/primind-docreader:main
+docker pull ghcr.io/skaduv/primind-ui:main
 \`\`\`
 
 ### Q2: 启动后访问 5173 显示旧界面？
