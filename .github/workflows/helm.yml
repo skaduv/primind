@@ -69,5 +69,5 @@ jobs:
           frontend_override="$(render_image templates/frontend.yaml --set frontend.image.tag=ui-test)"
           docreader_override="$(render_image templates/docreader.yaml --set docreader.image.tag=reader-test)"
 
-          test "$frontend_override" = "primind/primind-ui:ui-test"
-          test "$docreader_override" = "primind/primind-docreader:reader-test"
+          test "$frontend_override" = "ghcr.io/skaduv/primind-ui:ui-test"
+          test "$docreader_override" = "ghcr.io/skaduv/primind-docreader:reader-test"
