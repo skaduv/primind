@@ -8,16 +8,11 @@ on:
       - "scripts/build_frontend_dist.sh"
       - "scripts/test_embed_nginx.py"
       - ".github/workflows/frontend.yml"
-  pull_request:
-    paths:
-      - "frontend/**"
-      - "scripts/build_frontend_dist.sh"
-      - "scripts/test_embed_nginx.py"
-      - ".github/workflows/frontend.yml"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: primind-frontend-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

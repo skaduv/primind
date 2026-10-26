@@ -8,11 +8,9 @@ on:
     branches: [main]
     paths:
       - 'cli/**'
+      - 'client/**'
       - '.github/workflows/cli.yml'
-  pull_request:
-    paths:
-      - 'cli/**'
-      - '.github/workflows/cli.yml'
+  workflow_call:
   workflow_dispatch:
 
 defaults:
@@ -31,6 +29,7 @@ jobs:
   test:
     name: test (${{ matrix.os }} / go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

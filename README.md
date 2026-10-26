@@ -27,6 +27,8 @@ Primind 是内部使用的知识库与 RAG 平台：把团队的文档集中起�
 
 ## 本地开发
 
+代码提交、AI 协作、PR 审查与合并流程见 [代码提交与协作规范](CONTRIBUTING.md)；GitHub 上的门禁启用步骤见 [CI 门禁启用说明](docs/CI_GATE_SETUP.md)。
+
 前置依赖：Docker、Go 1.26+、Node.js 20+。
 
 1. 准备配置：

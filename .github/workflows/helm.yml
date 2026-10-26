@@ -7,10 +7,7 @@ on:
     paths:
       - "helm/**"
       - ".github/workflows/helm.yml"
-  pull_request:
-    paths:
-      - "helm/**"
-      - ".github/workflows/helm.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -19,6 +16,7 @@ permissions:
 jobs:
   chart:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6

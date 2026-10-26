@@ -1,0 +1,121 @@
+name: CI
+
+# Always create one stable required check, even for documentation-only PRs.
+# Component selection happens inside the workflow, never in trigger paths.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: primind-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: PR policy and change detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scopes: ${{ steps.changes.outputs.scopes }}
+      app: ${{ steps.changes.outputs.app }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      docreader: ${{ steps.changes.outputs.docreader }}
+      anydoc: ${{ steps.changes.outputs.anydoc }}
+      cli: ${{ steps.changes.outputs.cli }}
+      client: ${{ steps.changes.outputs.client }}
+      helm: ${{ steps.changes.outputs.helm }}
+      lint: ${{ steps.changes.outputs.lint }}
+      lint_modules: ${{ steps.changes.outputs.lint_modules }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Validate GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          lint_dir=$(mktemp -d "$RUNNER_TEMP/actionlint.XXXXXX")
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o "$lint_dir/actionlint.tar.gz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$lint_dir/actionlint.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$lint_dir/actionlint.tar.gz" -C "$lint_dir" actionlint
+          "$lint_dir/actionlint" -shellcheck= -pyflakes=
+      - name: Test CI routing and failure handling
+        run: node --test scripts/ci/*.test.mjs
+      - name: Validate PR title
+        run: node scripts/ci/policy.mjs
+      - name: Detect required components
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci/changes.mjs
+
+  app:
+    needs: prepare
+    if: needs.prepare.outputs.app == 'true'
+    uses: ./.github/workflows/app.yml
+
+  frontend:
+    needs: prepare
+    if: needs.prepare.outputs.frontend == 'true'
+    uses: ./.github/workflows/frontend.yml
+
+  docreader:
+    needs: prepare
+    if: needs.prepare.outputs.docreader == 'true'
+    uses: ./.github/workflows/docreader.yml
+
+  anydoc:
+    needs: prepare
+    if: needs.prepare.outputs.anydoc == 'true'
+    uses: ./.github/workflows/anydoc.yml
+
+  cli:
+    needs: prepare
+    if: needs.prepare.outputs.cli == 'true'
+    uses: ./.github/workflows/cli.yml
+
+  client:
+    needs: prepare
+    if: needs.prepare.outputs.client == 'true'
+    uses: ./.github/workflows/client.yml
+
+  helm:
+    needs: prepare
+    if: needs.prepare.outputs.helm == 'true'
+    uses: ./.github/workflows/helm.yml
+
+  lint:
+    needs: prepare
+    if: needs.prepare.outputs.lint == 'true'
+    uses: ./.github/workflows/go-lint.yml
+    with:
+      modules: ${{ needs.prepare.outputs.lint_modules }}
+
+  gate:
+    name: CI Gate
+    if: always()
+    needs: [prepare, app, frontend, docreader, anydoc, cli, client, helm, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Require every selected check to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci/gate.mjs

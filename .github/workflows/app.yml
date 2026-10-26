@@ -31,36 +31,11 @@ on:
       - "scripts/test-git-hooks.sh"
       - "cmd/desktop/build/windows/installer/project.nsi"
       - ".github/workflows/app.yml"
-  pull_request:
-    paths:
-      - "**/*.go"
-      - "!cli/**"
-      - "!client/**"
-      - "!docreader/**"
-      - "!third_party/anydoc-go/**"
-      - "go.mod"
-      - "go.sum"
-      - "Makefile"
-      - "config/**"
-      - "migrations/**"
-      - "testdata/**"
-      - "docker/Dockerfile.app"
-      - "THIRD_PARTY_NOTICES.md"
-      - "licenses/**"
-      - "internal/textconv/data/**"
-      - "internal/models/catalog/data/**"
-      - "internal/models/parity/testdata/**"
-      - "internal/models/providers/assets/**"
-      - "scripts/model-catalog/**"
-      - "scripts/*third-party*.sh"
-      - "scripts/git-hooks/**"
-      - "scripts/test-git-hooks.sh"
-      - "cmd/desktop/build/windows/installer/project.nsi"
-      - ".github/workflows/app.yml"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: primind-app-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -141,7 +116,14 @@ jobs:
       - name: Vet and test
         shell: bash
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v '/docreader/')
+          # Capture first so a failing go list cannot be hidden by mapfile's
+          # process substitution and leave only a partial package set tested.
+          package_list=$(go list ./...)
+          mapfile -t pkgs < <(printf '%s\n' "$package_list" | grep -v '/docreader/')
+          if [ "${#pkgs[@]}" -eq 0 ]; then
+            echo 'No application packages found'
+            exit 1
+          fi
           go vet "${pkgs[@]}"
           go test "${pkgs[@]}"
           go test -tags desktop ./internal/container

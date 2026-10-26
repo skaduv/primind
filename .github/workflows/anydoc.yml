@@ -12,16 +12,11 @@ on:
       - "scripts/build-anydoc-lib.sh"
       - "internal/infrastructure/docparser/**"
       - ".github/workflows/anydoc.yml"
-  pull_request:
-    paths:
-      - "third_party/anydoc-go/**"
-      - "scripts/build-anydoc-lib.sh"
-      - "internal/infrastructure/docparser/**"
-      - ".github/workflows/anydoc.yml"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: primind-anydoc-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
