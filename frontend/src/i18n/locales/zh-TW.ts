@@ -5148,7 +5148,7 @@ export default {
     }
   },
   createChat: {
-    title: 'Hi，我是 Primind，讓你的知識觸手可及',
+    title: 'Hi，我是RISE平台的Primind助手，讓你的知識觸手可及',
     newSessionTitle: '新會話',
     openProject: '選擇專案',
     clearProject: '取消綁定',
@@ -5433,11 +5433,11 @@ export default {
     haveAccount: '已有帳戶？',
     backToLogin: '返回登入',
     loginHint: '登入以繼續使用；首次使用請在下方建立帳戶。',
-    firstTime: '首次使用 Primind？',
+    firstTime: '首次使用全域數智化平台？',
     registerSuccess: '註冊成功，請登入',
     registerFailed: '註冊失敗',
     subtitle: 'RAG 問答、ReAct 智慧代理與 Wiki 知識庫，大型語言模型驅動的企業級知識框架',
-    registerSubtitle: '建立帳戶並開始使用 Primind',
+    registerSubtitle: '建立帳戶並開始使用全域數智化平台',
     emailPlaceholder: '輸入電子信箱地址',
     passwordPlaceholder: '輸入密碼',
     confirmPasswordPlaceholder: '再次輸入密碼',

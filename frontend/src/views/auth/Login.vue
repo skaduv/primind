@@ -95,21 +95,13 @@
       </svg>
     </div>
 
-    <!-- Logo - Top Left -->
-    <a href="https://github.com/primind/primind" target="_blank" class="header-logo" :title="$t('common.github')">
-      <img src="@/assets/img/primind.png" alt="Primind" class="logo-image" />
-    </a>
+    <!-- Logo - Top Left: 内部品牌标识，透明底直接压在渐变背景上 -->
+    <div class="header-logo">
+      <img src="@/assets/brand/rise-logo-mono-white.png" alt="全域数智化平台" class="logo-image" />
+    </div>
 
-    <!-- Header Links - Top Right -->
+    <!-- Header Links - Top Right（仅保留语言切换） -->
     <div class="header-links">
-
-      <a href="https://github.com/primind/primind" target="_blank" class="header-link" :title="$t('common.info')">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-          <path
-            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-        </svg>
-        <span class="link-text">GitHub</span>
-      </a>
 
       <div class="language-switch">
         <button @click="toggleLanguageMenu" class="header-link" :title="currentLangOption?.label">
@@ -823,7 +815,20 @@ onMounted(async () => {
   min-height: 100%;
   overflow: hidden;
   position: relative;
-  background: linear-gradient(225deg, #022c22 0%, #064e3b 15%, #065f46 25%, #047857 38%, #059669 50%, #07C05F 65%, #10B981 78%, #34D399 90%, #6EE7B7 100%);
+
+  // 品牌背景插槽：默认无图，只用渐变兜底。
+  // 内部背景图到位后只需改这一行，例如：
+  //   --login-bg-image: url('@/assets/brand/login-bg.jpg');
+  // 图片会盖在渐变之上，表单与文字的可读性由下面的遮罩层 --login-bg-scrim 控制。
+  --login-bg-image: none;
+  --login-bg-scrim: linear-gradient(225deg, rgba(2, 27, 61, 0) 0%, rgba(2, 27, 61, 0.10) 55%, rgba(2, 27, 61, 0.28) 100%);
+
+  background-color: #04234f;
+  background-image: var(--login-bg-scrim), var(--login-bg-image),
+    linear-gradient(225deg, #021b3d 0%, #04295c 15%, #073c86 30%, #0a55b4 45%, #037ef2 60%, #3d9bff 75%, #8fc4ff 88%, #d6e8ff 100%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
 
   &::before {
     content: '';
@@ -859,7 +864,7 @@ onMounted(async () => {
   border: 2px solid rgba(255, 255, 255, 0.3);
   box-shadow:
     0 0 15px rgba(255, 255, 255, 0.35),
-    0 0 30px rgba(16, 185, 129, 0.2),
+    0 0 30px rgba(61, 155, 255, 0.28),
     inset 0 0 8px rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
@@ -1183,11 +1188,14 @@ onMounted(async () => {
   top: 32px;
   left: 50px;
   z-index: 100;
-  cursor: pointer;
 
+  // 透明底 logo 直接压在深蓝渐变上：用全白单色版（图形里的深藏青会融进蓝色背景，
+  // 白色挖空版在任意亮度的渐变上都清晰），再补一层柔和投影压住边缘。
   .logo-image {
-    width: 120px;
+    display: block;
+    width: 168px;
     height: auto;
+    filter: drop-shadow(0 4px 16px rgba(2, 18, 40, 0.38));
   }
 }
 
@@ -1292,7 +1300,7 @@ onMounted(async () => {
   }
 
   .check-icon {
-    color: var(--td-success-color);
+    color: var(--td-brand-color);
     font-weight: 700;
     font-size: var(--app-text-base);
     flex-shrink: 0;
@@ -1303,7 +1311,7 @@ onMounted(async () => {
   }
 
   &.active {
-    background: var(--td-success-color-light);
+    background: var(--td-brand-color-light);
     color: var(--td-brand-color-active);
   }
 }
@@ -1441,7 +1449,7 @@ onMounted(async () => {
     &:hover {
       border-color: var(--td-brand-color-active);
       color: var(--td-brand-color-active);
-      background: var(--td-success-color-light);
+      background: var(--td-brand-color-light);
     }
   }
 }
@@ -1602,7 +1610,7 @@ onMounted(async () => {
       width: 20px;
       height: 20px;
       border-radius: 50%;
-      background: var(--td-success-color-light);
+      background: var(--td-brand-color-light);
       color: var(--td-brand-color-active);
       display: flex;
       align-items: center;
@@ -1638,7 +1646,7 @@ onMounted(async () => {
     left: 40px;
 
     .logo-image {
-      width: 100px;
+      width: 140px;
     }
   }
 
@@ -1674,7 +1682,7 @@ onMounted(async () => {
   .showcase-section {
     flex: 0 0 auto;
     min-height: 50vh;
-    padding: 40px 24px;
+    padding: 96px 24px 40px;
   }
 
   .showcase-content {
@@ -1686,7 +1694,7 @@ onMounted(async () => {
     left: 30px;
 
     .logo-image {
-      width: 80px;
+      width: 120px;
     }
   }
 
@@ -1738,7 +1746,7 @@ onMounted(async () => {
   }
 
   .showcase-section {
-    padding: 32px 20px;
+    padding: 92px 20px 32px;
   }
 
   .header-logo {
@@ -1746,7 +1754,7 @@ onMounted(async () => {
     left: 20px;
 
     .logo-image {
-      width: 70px;
+      width: 104px;
     }
   }
 
@@ -1784,6 +1792,32 @@ onMounted(async () => {
   }
 }
 
+/* 笔记本高度（≤980px）：展示区整体下移，给顶部 logo 留出安全距离 */
+@media (max-height: 980px) and (min-width: 769px) {
+  .showcase-section {
+    padding-bottom: 50px;
+  }
+
+  .showcase-content {
+    margin-bottom: 20px;
+  }
+}
+
+/* 矮屏（1280x800 等）：压缩顶部 logo，避免和展示区标题贴在一起 */
+@media (max-height: 860px) and (min-width: 769px) {
+  .header-logo {
+    top: 22px;
+
+    .logo-image {
+      width: 148px;
+    }
+  }
+
+  .showcase-section {
+    padding-bottom: 20px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
 
   .knowledge-node,
@@ -1801,7 +1835,11 @@ onMounted(async () => {
 <style lang="less">
 html[theme-mode="dark"] {
   .login-layout {
-    background: linear-gradient(225deg, #011a14 0%, #032e22 15%, #043a2c 25%, #05503d 38%, #046647 50%, #038a56 65%, #049b60 78%, #06a06a 90%, #07b074 100%);
+    --login-bg-scrim: linear-gradient(225deg, rgba(1, 14, 32, 0) 0%, rgba(1, 14, 32, 0.14) 55%, rgba(1, 14, 32, 0.34) 100%);
+
+    background-color: #021226;
+    background-image: var(--login-bg-scrim), var(--login-bg-image),
+      linear-gradient(225deg, #010e20 0%, #021835 15%, #032148 30%, #062e66 45%, #03427f 60%, #02589f 75%, #0370c4 88%, #0486ea 100%);
   }
 
   .knowledge-node {
@@ -1814,10 +1852,8 @@ html[theme-mode="dark"] {
     stroke: rgba(255, 255, 255, 0.25);
   }
 
-  .header-logo .logo-image {
-    filter: invert(1) hue-rotate(180deg) brightness(1.1);
-  }
-
+  // Logo 始终位于白色圆角衬托上，因此两种主题都直接用标准版彩色 logo，
+  // 不再需要早期的 filter: invert() 反色（反色会把蓝色渐变图形搅成脏色）。
   .header-link {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.15);
@@ -1873,7 +1909,7 @@ html[theme-mode="dark"] {
   }
 
   .login-features .feature-icon {
-    background: rgba(6, 176, 77, 0.15);
+    background: rgba(3, 126, 242, 0.16);
   }
 }
 </style>

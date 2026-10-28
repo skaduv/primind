@@ -3,8 +3,8 @@
         <!-- 展开时：Logo + 搜索/折叠按钮同行 -->
         <div class="logo_row" v-if="!uiStore.sidebarCollapsed">
             <div class="logo_box" @click="router.push('/platform/knowledge-bases')" style="cursor: pointer;">
-                <img class="logo" src="@/assets/img/primind.png" alt="">
-                <sup v-if="isLiteEdition" class="lite-badge">Lite</sup>
+                <img class="logo logo--on-light" src="@/assets/brand/rise-logo-compact.png" alt="RISE">
+                <img class="logo logo--on-dark" src="@/assets/brand/rise-logo-compact-on-dark.png" alt="RISE">
             </div>
             <div class="logo_actions">
                 <t-tooltip placement="bottom">
@@ -381,7 +381,6 @@ const hasAnySession = computed(() =>
 type MenuItem = { title: string; icon: string; path: string; childrenPath?: string; children?: any[] };
 const { menuArr, visibleMenuArr } = storeToRefs(usemenuStore);
 let activeSubmenu = ref<string>('');
-const isLiteEdition = ref(false);
 
 // 批量管理状态
 const batchMode = ref(false)
@@ -1059,10 +1058,9 @@ onMounted(async () => {
 
     window.addEventListener(SESSION_MUTATION_EVENT, handleSessionMutation);
 
-    isLiteEdition.value = authStore.isLiteMode
+    // 侧边栏不再展示 Lite 标记；这里只负责把运行时版本记到 store 里供路由/功能开关使用。
     editorResources.ensureSystemInfo().then(() => {
         if (editorResources.systemInfo?.edition === 'lite') {
-            isLiteEdition.value = true
             authStore.setLiteMode(true)
         }
     }).catch(() => { })
@@ -1368,19 +1366,13 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
         overflow: hidden;
 
         .logo {
-            width: 108px;
+            width: 100px;
             height: auto;
         }
 
-        .lite-badge {
-            margin-left: 2px;
-            align-self: flex-start;
-            margin-top: 2px;
-            font-size: 9px;
-            font-weight: 600;
-            color: var(--td-text-color-placeholder);
-            user-select: none;
-            white-space: nowrap;
+        // 深浅两套 logo 由下方非 scoped 样式按 theme-mode 切换
+        .logo--on-dark {
+            display: none;
         }
     }
 
@@ -1977,9 +1969,13 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
 }
 </style>
 <style lang="less">
-// Dark mode: invert dark logo to light
-html[theme-mode="dark"] .aside_box .logo_box .logo {
-    filter: invert(1) hue-rotate(180deg);
+// Dark mode: 深色侧栏改用浅色文字版 logo（彩色图形保留，不再整体反色）
+html[theme-mode="dark"] .aside_box .logo_box .logo--on-light {
+    display: none;
+}
+
+html[theme-mode="dark"] .aside_box .logo_box .logo--on-dark {
+    display: inline-block;
 }
 
 // Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见

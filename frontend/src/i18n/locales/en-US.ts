@@ -2625,11 +2625,11 @@ export default {
     haveAccount: 'Already have an account?',
     backToLogin: 'Back to Login',
     loginHint: 'Sign in to continue, or create an account below if this is your first time.',
-    firstTime: 'New to Primind?',
+    firstTime: 'New to 全域数智化平台?',
     registerSuccess: 'Registration successful. Please sign in',
     registerFailed: 'Registration failed',
     subtitle: 'RAG Q&A, ReAct Agent and Wiki — an LLM-powered enterprise knowledge framework',
-    registerSubtitle: 'Create your account and start using Primind',
+    registerSubtitle: 'Create your account and start using 全域数智化平台',
     emailPlaceholder: 'Enter email address',
     passwordPlaceholder: 'Enter password',
     confirmPasswordPlaceholder: 'Enter password again',
@@ -2923,7 +2923,7 @@ export default {
     goToAgentSettings: 'Go to agent settings'
   },
   createChat: {
-    title: 'Hi, I am Primind — your knowledge, within reach',
+    title: 'Hi, I am the Primind assistant on the RISE platform — your knowledge, within reach',
     newSessionTitle: 'New Session',
     openProject: 'Select project',
     clearProject: 'Clear',

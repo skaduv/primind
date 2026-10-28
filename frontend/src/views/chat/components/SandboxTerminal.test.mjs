@@ -5,13 +5,14 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const terminal = readFileSync(new URL('./SandboxTerminal.vue', import.meta.url), 'utf8')
-const theme = readFileSync(new URL('../../../assets/theme/theme.css', import.meta.url), 'utf8')
 const promptUrl = new URL('../../../../../docker/sandbox-pty-prompt.sh', import.meta.url)
 const prompt = readFileSync(promptUrl, 'utf8')
 const promptPath = fileURLToPath(promptUrl)
 
 test('xterm palette keeps prompt green but ls directories blue', () => {
-  assert.match(theme, /--td-brand-color-4: #07c05f/)
+  // 终端配色是语义色（绿色提示符 / 蓝色目录），刻意与品牌主色解耦：
+  // 品牌色换成蓝色后这里仍保持 ANSI 绿，也不会去读 --td-brand-color 令牌。
+  assert.doesNotMatch(terminal, /var\(--td-brand-color/)
   assert.match(terminal, /brightGreen: '#07c05f'/)
   assert.match(terminal, /brightBlue: '#729fcf'/)
   assert.doesNotMatch(terminal, /brightBlue: '#07c05f'/)
@@ -84,7 +85,9 @@ test('a non-reattachable (Docker) terminal never redials silently after ready', 
   assert.match(terminal, /chat\.sandbox\.stopped/)
 })
 
-test('interactive bash defines Debian-style ls aliases', () => {
+// Runs the real bash from PATH; Windows has none (Git Bash also cannot source
+// the Windows-style promptPath below), so keep the assertion CI-only there.
+test('interactive bash defines Debian-style ls aliases', { skip: process.platform === 'win32' }, () => {
   const out = execFileSync('bash', [
     '--norc',
     '--noprofile',

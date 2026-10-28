@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./SkillSettings.vue', import.meta.url), 'utf8')
+  // Windows checkouts (core.autocrlf=true) store CRLF while CI stores LF;
+  // these source-scan assertions match LF, so normalize before matching.
+  .replace(/\r\n/g, '\n')
 
 test('skill settings lists the catalog instead of switching sandboxes', () => {
   assert.match(source, /listSkillCatalog/)

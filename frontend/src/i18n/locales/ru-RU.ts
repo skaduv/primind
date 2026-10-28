@@ -5146,7 +5146,7 @@ export default {
     }
   },
   createChat: {
-    title: 'Привет, я Primind — ваши знания всегда под рукой',
+    title: 'Привет, я ассистент Primind на платформе RISE — ваши знания всегда под рукой',
     newSessionTitle: 'Новая сессия',
     openProject: 'Выбрать проект',
     clearProject: 'Снять привязку',
@@ -5431,11 +5431,11 @@ export default {
     haveAccount: 'Уже есть аккаунт?',
     backToLogin: 'Вернуться ко входу',
     loginHint: 'Войдите, чтобы продолжить, или создайте аккаунт ниже, если вы впервые здесь.',
-    firstTime: 'Впервые в Primind?',
+    firstTime: 'Впервые в 全域数智化平台?',
     registerSuccess: 'Регистрация завершена. Войдите в систему',
     registerFailed: 'Ошибка регистрации',
     subtitle: 'RAG, ReAct-агент и Wiki — корпоративный фреймворк знаний на основе больших моделей',
-    registerSubtitle: 'Создайте аккаунт и начните работу с Primind',
+    registerSubtitle: 'Создайте аккаунт и начните работу с 全域数智化平台',
     emailPlaceholder: 'Введите адрес электронной почты',
     passwordPlaceholder: 'Введите пароль',
     confirmPasswordPlaceholder: 'Введите пароль ещё раз',
