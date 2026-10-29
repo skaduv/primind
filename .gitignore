@@ -66,27 +66,3 @@ fix-docker.sh
 
 # Locally built BrowserSkill runtime and extension bundles
 /artifacts/browserskill/
-
-# 任务输出目录
-outputs/
-
-
-# 项目开发文档spec
-docs/
-
-
-# 项目部署文档deploy
-deploy/
-
-
-# 数据库文档
-data/
-
-# 配置文档
-config/
-
-# 运行脚本
-scripts/migration*
-
-# 本地docker配置文件
-docker-compose*

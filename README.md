@@ -23,49 +23,6 @@ Primind 是内部使用的知识库与 RAG 平台：把团队的文档集中起�
 - `docker/`、`docker-compose.yml`：容器构建与本地编排。
 - `helm/`：Kubernetes 部署 Chart。
 
-目录结构（依据 git 跟踪内容生成，展示到二级目录）：
-
-```text
-primind/
-├─ cmd/                    # 程序入口：server（主服务）、desktop（桌面版）、download、milvus-migrate
-├─ internal/               # 后端核心代码
-│  ├─ application/         # 应用服务层：repository（各存储适配）+ service（业务逻辑）
-│  ├─ handler/             # HTTP API 处理器与 DTO
-│  ├─ agent/               # Agent 引擎：推理循环、工具（tools）、技能（skills）、上下文压缩（compaction）
-│  ├─ models/              # 模型接入：各厂商 API 适配（api/）、模型目录（catalog/）、运行时（runtime/）
-│  ├─ datasource/          # 外部数据源连接器：notion、yuque、feishu、gitlab、confluence、rss 等
-│  ├─ infrastructure/      # 基础设施：文档解析（docparser）、分块（chunker）、web_fetch、web_search
-│  ├─ sandbox/             # Agent 远程沙箱
-│  ├─ localsandbox/        # 本地沙箱与技能目录管理（skilltree、winhost 等）
-│  ├─ im/                  # IM 集成：钉钉、飞书、企微、Slack、Telegram、Mattermost 等
-│  ├─ mcp/ mcpserver/      # MCP 客户端与内置 MCP 服务端
-│  ├─ router/ middleware/ database/ runtime/   # 路由、中间件、数据库、运行时装配
-│  └─ types/ utils/ common/ config/ …          # 公共类型与工具（另有 event、logger、stream、tracing 等小包）
-├─ frontend/               # Vue 3 + TypeScript 前端（Vite 构建）
-│  └─ src/                 # 页面（views）、组件、stores、composables、i18n、utils
-├─ docreader/              # 文档解析服务（Python，gRPC），供主服务调用
-├─ cli/                    # 命令行工具（Go，独立 module）
-├─ client/                 # Go SDK（独立 module）
-├─ third_party/anydoc-go/  # anydoc 解析引擎的 Go 绑定
-├─ packages/               # 仓库内共享包说明
-├─ config/                 # 内置模型/Agent 配置模板与提示词模板（prompt_templates/）
-├─ migrations/             # 数据库迁移：mysql / paradedb / sqlite / versioned
-├─ docker/                 # 各服务 Dockerfile 与容器配置（app、docreader、sandbox、searxng）
-├─ helm/                   # Kubernetes 部署 Chart（templates、values）
-├─ scripts/                # 构建、开发、迁移、校验脚本（dev.sh、build_images.sh 等）
-├─ docs/                   # swag 生成的 Swagger 文档（docs.go、swagger.json/yaml）
-├─ dataset/                # 评测数据集与样本
-├─ testdata/               # 集成测试数据
-├─ licenses/               # 第三方依赖许可与来源清单
-├─ deploy/                 # 额外部署配置（primind-lite 的 systemd 单元）
-├─ misc/                   # 杂项配置
-├─ .github/workflows/      # CI：app、frontend、docker-image、helm、cli 等
-├─ Makefile                # 构建、开发、Docker、数据库迁移等入口命令
-├─ go.mod / go.sum         # 主服务 Go module
-├─ docker-compose.yml      # 本地容器编排
-└─ .env.example            # 环境变量配置模板（另有 .env.lite.example）
-```
-
 数据流：上传文档 → docreader/内置引擎解析 → 分块与向量化 → 向量库/全文检索 → RAG 问答或 Agent 推理。
 
 ## 本地开发
