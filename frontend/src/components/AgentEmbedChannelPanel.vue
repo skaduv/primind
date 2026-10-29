@@ -491,7 +491,7 @@ const agentImageUploadEnabledEffective = computed(() =>
   drawerAgent.value?.config?.image_upload_enabled === true,
 )
 
-const PRIMIND_BRAND_COLOR = '#07C05F'
+const PRIMIND_BRAND_COLOR = '#037EF2'
 
 function getDefaultEmbedPrimaryColor(): string {
   if (typeof window === 'undefined') return PRIMIND_BRAND_COLOR

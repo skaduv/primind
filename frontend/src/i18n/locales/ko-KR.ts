@@ -5146,7 +5146,7 @@ export default {
     }
   },
   createChat: {
-    title: '안녕하세요, Primind입니다 — 당신의 지식을 손끝에',
+    title: '안녕하세요, RISE 플랫폼의 Primind 어시스턴트입니다. 당신의 지식을 손끝에서',
     newSessionTitle: '새 세션',
     openProject: '프로젝트 선택',
     clearProject: '바인딩 해제',
@@ -5431,11 +5431,11 @@ export default {
     haveAccount: '이미 계정이 있으신가요?',
     backToLogin: '로그인으로 돌아가기',
     loginHint: '로그인하여 계속하세요. 처음이시라면 아래에서 계정을 만드세요.',
-    firstTime: 'Primind가 처음이신가요?',
+    firstTime: '全域数智化平台가 처음이신가요?',
     registerSuccess: '가입이 완료되었습니다. 로그인해주세요',
     registerFailed: '가입 실패',
     subtitle: 'RAG Q&A, ReAct 에이전트, Wiki 지식베이스 — 대규모 언어 모델 기반 엔터프라이즈 지식 프레임워크',
-    registerSubtitle: '계정을 만들고 Primind를 시작하세요',
+    registerSubtitle: '계정을 만들고 全域数智化平台를 시작하세요',
     emailPlaceholder: '이메일 주소 입력',
     passwordPlaceholder: '비밀번호 입력',
     confirmPasswordPlaceholder: '비밀번호 다시 입력',
