@@ -27,7 +27,7 @@ FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8
 
 WORKDIR /frontend
 
-ARG NPM_REGISTRY=
+ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG NODE_MAX_OLD_SPACE_SIZE=4096
 
 ENV VITE_IS_DOCKER=true
@@ -36,11 +36,14 @@ ENV NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE}"
 
 # The lockfile pins the remote SheetJS archive and its integrity hash.
 COPY package.json package-lock.json ./
-RUN if [ -n "$NPM_REGISTRY" ]; then \
-      npm ci --registry="$NPM_REGISTRY"; \
-    else \
-      npm ci; \
-    fi
+# Bound each network request and retry transient failures without re-resolving dependencies.
+RUN npm ci --registry="${NPM_REGISTRY:-https://registry.npmjs.org}" \
+      --no-audit --no-fund \
+      --fetch-retries=3 \
+      --fetch-retry-factor=2 \
+      --fetch-retry-mintimeout=10000 \
+      --fetch-retry-maxtimeout=30000 \
+      --fetch-timeout=120000
 
 COPY . .
 # After npm ci so a new commit hash does not bust the dependency layer.
