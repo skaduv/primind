@@ -93,7 +93,21 @@ go test ./internal/application/service/retriever ./internal/application/reposito
 
 ## OS-F 性能（AC-OS02-07、AC-OS03-09）
 
-状态：未开始。业务目标值待用户确认。
+状态：适配器层基线已测；含 Embedding/LLM 的应用级基线和业务目标值待模型与用户确认。
+
+```bash
+PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags integration ./internal/application/repository/retriever/opensearch/integration -run '^TestLocalRealBaseline$' -count=1 -v -timeout 20m
+```
+
+2026-11-03 本机结果：单节点 OpenSearch 2.19.3（WSL Docker），lucene HNSW m=16，1 分片 0 副本，单 worker 顺序 BatchSave，不含 Embedding 时间，没有并发业务负载（NG 会话共用同一台机器）。
+
+| 项 | 规模/参数 | 结果 |
+| --- | --- | --- |
+| 写入 | 10,000 chunk，dim 768，batch 40 | 13.0 s，约 768 chunk/s；单批 p50 40.8 ms、p95 86.8 ms、max 444.9 ms；写后计数 10,000，与写入一致 |
+| 向量检索 | 200 次，TopK 10，按 KB 过滤 | p50 55.4 ms、p95 63.2 ms、p99 77.5 ms、max 110.9 ms |
+| 关键词检索 | 200 次，TopK 10，按 KB 过滤 | p50 9.1 ms、p95 15.2 ms、p99 20.1 ms、max 36.5 ms |
+
+这只是纯索引和检索子路径的基线，不能关闭 AC-OS02-07 或 AC-OS03-09。待做：应用级导入（解析、Embedding、索引确认、可检索）和三路检索、问答的分段耗时，并发写查混合，以及向用户确认业务目标值（规模、导入窗口或最低吞吐、p95、错误率、资源上限）。
 
 ## 与 NebulaGraph 会话的共享文件
 
