@@ -84,6 +84,9 @@ func (r *Repository) CopyIndices(
 		return err
 	}
 	alias := r.indexAlias(dimension)
+	if err := r.refreshBeforeByQuery(ctx, alias); err != nil {
+		return err
+	}
 
 	var total int64
 	for from := 0; ; from += copyBatchSize {

@@ -365,6 +365,9 @@ func (r *Repository) deleteByTerms(
 	if err != nil {
 		return fmt.Errorf("opensearch: marshal delete body: %w", err)
 	}
+	if err := r.refreshBeforeByQuery(ctx, index); err != nil {
+		return err
+	}
 	refresh := true
 	req := osapi.DocumentDeleteByQueryReq{
 		Indices: []string{index},

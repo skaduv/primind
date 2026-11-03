@@ -803,6 +803,9 @@ func TestOS01_AllRepositoryRoutesShareWriteBudget(t *testing.T) {
 			return
 		case strings.HasSuffix(r.URL.Path, "_search"):
 			io.WriteString(w, `{"hits":{"hits":[{"_source":{"chunk_id":"src","source_id":"src","knowledge_id":"doc","knowledge_base_id":"kb","content":"copy","embedding":[1,2,3]}}]}}`)
+		case strings.HasSuffix(r.URL.Path, "/_refresh"):
+			// Pre-by-query visibility refresh; not a data mutation.
+			io.WriteString(w, `{"_shards":{"total":1,"successful":1,"failed":0}}`)
 		default:
 			mutations.Add(1)
 			if block.Load() {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 
+	osapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
+
 	"github.com/primind/primind/internal/logger"
 )
 
@@ -73,6 +75,30 @@ func inspectDeleteByQueryResponse(body io.Reader) error {
 	}
 	if result.Total == nil || result.Deleted == nil || *result.Total < 0 || *result.Deleted != *result.Total || result.TimedOut || result.VersionConflicts != 0 || len(result.Failures) != 0 {
 		return fmt.Errorf("opensearch: incomplete delete: %w", ErrTransport)
+	}
+	return nil
+}
+
+// refreshBeforeByQuery makes writes acknowledged so far visible to a
+// following _delete_by_query / _update_by_query / scan. Those operations
+// read a search snapshot, so without this a chunk written moments earlier
+// (bulk uses refresh=false) is silently skipped: a delete leaves residue, a
+// disable leaves the chunk retrievable, a move or copy misses documents.
+// Missing indices are not an error; the by-query call reports those itself.
+func (r *Repository) refreshBeforeByQuery(ctx context.Context, indices ...string) error {
+	allow, ignore := true, true
+	resp, err := r.client.Indices.Refresh(ctx, &osapi.IndicesRefreshReq{
+		Indices: indices,
+		Params:  osapi.IndicesRefreshParams{AllowNoIndices: &allow, IgnoreUnavailable: &ignore},
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("opensearch: refresh before by-query: %w", wrapTransport(err))
+	}
+	if resp != nil {
+		drainAndClose(resp.Inspect().Response.Body)
 	}
 	return nil
 }

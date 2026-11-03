@@ -92,6 +92,9 @@ func (r *Repository) updateByQueryScript(
 	if err != nil {
 		return fmt.Errorf("opensearch: marshal update_by_query body: %w", err)
 	}
+	if err := r.refreshBeforeByQuery(ctx, r.baseIndex+"_*"); err != nil {
+		return err
+	}
 	// Q2: UpdateByQueryParams.Refresh is *bool — the wire value "wait_for" is
 	// not expressible via the typed SDK, so we force an immediate refresh.
 	refresh := true
