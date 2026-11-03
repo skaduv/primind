@@ -93,6 +93,11 @@ require (
 )
 
 require (
+	github.com/vesoft-inc/fbthrift v0.0.0-20230214024353-fa2f34755b28
+	github.com/vesoft-inc/nebula-go/v3 v3.8.0
+)
+
+require (
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect

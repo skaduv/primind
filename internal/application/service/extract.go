@@ -85,7 +85,7 @@ Please output in the following format (one paragraph per column):
 
 // NewChunkExtractTask creates a new chunk extract task. It returns
 // (enqueued, err): enqueued is true only when a task was actually placed on
-// the queue. When NEO4J is disabled the call is a no-op and returns
+// the queue. When the knowledge graph is disabled the call is a no-op and returns
 // (false, nil) — callers that seeded a pending-subtask counter for this chunk
 // MUST release that slot, otherwise the parent knowledge stays stuck in
 // "finalizing" forever (the graph subtask it's waiting on was never enqueued).
@@ -99,8 +99,8 @@ func NewChunkExtractTask(
 	attempt int,
 	chunkIndex int,
 ) (bool, error) {
-	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
-		logger.Warn(ctx, "NEO4J is not enabled, skip chunk extract task")
+	if !types.GraphRAGEnabled() {
+		logger.Warn(ctx, "knowledge graph is disabled, skip chunk extract task")
 		return false, nil
 	}
 	taskPayload := types.ExtractChunkPayload{
@@ -280,6 +280,14 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 			s.tracker().EndSpan(ctx, gSpan, graphOut)
 		}
 	}()
+
+	// Tasks enqueued before the graph backend was switched off finish without
+	// an LLM call; the deferred finalize still releases their pending slot.
+	if !types.GraphRAGEnabled() {
+		logger.Infof(ctx, "graph extract: knowledge graph disabled, skipping chunk %s", p.ChunkID)
+		graphOut["skipped"] = "graph_disabled"
+		return nil
+	}
 
 	// Short-circuit when the parent knowledge has been cancelled / deleted.
 	// Each graph extract is per-chunk and runs one LLM call — the most

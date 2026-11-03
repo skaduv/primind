@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "constants": {
+    "S": "泵\"Q\\X\n第二行",
+    "T": "标记\"型\\X"
+  },
+  "cases": [
+    {
+      "id": "A1-base",
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-a1-01"
+              ],
+              "attributes": [
+                "型号:PX-1"
+              ]
+            },
+            {
+              "name": "调节阀B",
+              "chunks": [
+                "c-a1-01"
+              ],
+              "attributes": []
+            },
+            {
+              "name": "主泵A-备用",
+              "chunks": [
+                "c-a1-03"
+              ],
+              "attributes": [
+                "备用"
+              ]
+            },
+            {
+              "name": "孤立标签",
+              "chunks": [
+                "c-a1-04"
+              ],
+              "attributes": [
+                "独立"
+              ]
+            },
+            {
+              "name": "泵\"Q\\X\n第二行",
+              "chunks": [
+                "c-a1-special"
+              ],
+              "attributes": [
+                "说明:\"引号\"\\路径\n结束"
+              ]
+            }
+          ],
+          "relation": [
+            {
+              "node1": "主泵A",
+              "node2": "调节阀B",
+              "type": "连接"
+            },
+            {
+              "node1": "主泵A",
+              "node2": "调节阀B",
+              "type": "供液"
+            },
+            {
+              "node1": "调节阀B",
+              "node2": "主泵A",
+              "type": "反馈"
+            },
+            {
+              "node1": "主泵A",
+              "node2": "主泵A",
+              "type": "自检"
+            },
+            {
+              "node1": "主泵A-备用",
+              "node2": "调节阀B",
+              "type": "旁路"
+            },
+            {
+              "node1": "泵\"Q\\X\n第二行",
+              "node2": "调节阀B",
+              "type": "标记\"型\\X"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A1-more-source",
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-a1-02"
+              ],
+              "attributes": [
+                "型号:PX-1"
+              ]
+            }
+          ],
+          "relation": []
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a2"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-a2-01"
+              ],
+              "attributes": [
+                "型号:PX-2"
+              ]
+            },
+            {
+              "name": "储罐C",
+              "chunks": [
+                "c-a2-01"
+              ],
+              "attributes": []
+            }
+          ],
+          "relation": [
+            {
+              "node1": "主泵A",
+              "node2": "储罐C",
+              "type": "连接"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "B1",
+      "namespace": {
+        "knowledge_base": "kb-b",
+        "knowledge": "doc-b1"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-b1-01"
+              ],
+              "attributes": [
+                "型号:PX-3"
+              ]
+            },
+            {
+              "name": "调节阀B",
+              "chunks": [
+                "c-b1-01"
+              ],
+              "attributes": []
+            }
+          ],
+          "relation": [
+            {
+              "node1": "主泵A",
+              "node2": "调节阀B",
+              "type": "连接"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "supplemental_cases": [
+    {
+      "id": "A1-concurrent-05",
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-a1-05"
+              ],
+              "attributes": [
+                "型号:PX-1"
+              ]
+            }
+          ],
+          "relation": []
+        }
+      ]
+    },
+    {
+      "id": "A1-concurrent-06",
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "graphs": [
+        {
+          "node": [
+            {
+              "name": "主泵A",
+              "chunks": [
+                "c-a1-06"
+              ],
+              "attributes": [
+                "型号:PX-1"
+              ]
+            }
+          ],
+          "relation": []
+        }
+      ]
+    }
+  ]
+}
