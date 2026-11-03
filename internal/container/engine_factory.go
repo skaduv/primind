@@ -149,7 +149,7 @@ func createOpenSearchEngine(
 		storeID = ""
 	}
 	repo, err := openSearchRepo.NewRepository(ctx, client, storeID, &store.IndexConfig,
-		openSearchRepo.WithAuditSink(auditSink))
+		openSearchRepo.WithAuditSink(auditSink), openSearchRepo.WithOwnedClient())
 	if err != nil {
 		openSearchRepo.CloseIdleConnections(client)
 		return nil, fmt.Errorf("create opensearch repository: %w", err)

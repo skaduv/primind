@@ -286,6 +286,23 @@ func CloseIdleConnections(client *osapi.Client) {
 	}
 }
 
+// WithOwnedClient declares that the Repository exclusively owns its client,
+// so Close releases the client's connection pool.
+func WithOwnedClient() Option {
+	return func(r *Repository) { r.ownsClient = true }
+}
+
+// Close releases idle pooled connections of an owned client. In-flight
+// requests keep their connections and stay bounded by their operation
+// deadline; a connection they return afterwards expires with the idle
+// timeout. Borrowed clients are left untouched. Safe to call repeatedly.
+func (r *Repository) Close() error {
+	if r != nil && r.ownsClient {
+		CloseIdleConnections(r.client)
+	}
+	return nil
+}
+
 func operationContext(ctx context.Context, client *osapi.Client) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()

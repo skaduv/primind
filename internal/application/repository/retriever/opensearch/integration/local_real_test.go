@@ -42,9 +42,19 @@ type localCluster struct {
 
 func newLocalCluster(t *testing.T) *localCluster {
 	t.Helper()
+	return newLocalClusterVia(t, "")
+}
+
+// newLocalClusterVia builds the repository against repoAddr (e.g. a fault
+// proxy) while raw checks and cleanup still talk to the cluster directly.
+func newLocalClusterVia(t *testing.T, repoAddr string) *localCluster {
+	t.Helper()
 	endpoint := os.Getenv("PRIMIND_OS_LOCAL_URL")
 	if endpoint == "" {
 		t.Skip("PRIMIND_OS_LOCAL_URL not set")
+	}
+	if repoAddr == "" {
+		repoAddr = endpoint
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
@@ -59,7 +69,7 @@ func newLocalCluster(t *testing.T) *localCluster {
 	c := &localCluster{t: t, endpoint: strings.TrimRight(endpoint, "/"), storeID: storeID,
 		base: "primind_os_it_" + storeID[:12]}
 
-	client, err := adapter.NewOpenSearchClient(&types.ConnectionConfig{Addr: endpoint})
+	client, err := adapter.NewOpenSearchClient(&types.ConnectionConfig{Addr: repoAddr})
 	if err != nil {
 		t.Fatal(err)
 	}
