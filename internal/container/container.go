@@ -42,7 +42,6 @@ import (
 	elasticsearchRepoV7 "github.com/primind/primind/internal/application/repository/retriever/elasticsearch/v7"
 	elasticsearchRepoV8 "github.com/primind/primind/internal/application/repository/retriever/elasticsearch/v8"
 	milvusRepo "github.com/primind/primind/internal/application/repository/retriever/milvus"
-	neo4jRepo "github.com/primind/primind/internal/application/repository/retriever/neo4j"
 	openSearchRepo "github.com/primind/primind/internal/application/repository/retriever/opensearch"
 	postgresRepo "github.com/primind/primind/internal/application/repository/retriever/postgres"
 	qdrantRepo "github.com/primind/primind/internal/application/repository/retriever/qdrant"
@@ -175,7 +174,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewAuthTokenRepository))
 	must(container.Provide(repository.NewSystemSettingRepository))
 	must(container.Provide(repository.NewModelCatalogRepository))
-	must(container.Provide(neo4jRepo.NewNeo4jRepository))
+	must(container.Provide(initGraphRepository))
 	must(container.Provide(repository.NewMCPServiceRepository))
 	must(container.Provide(repository.NewMCPToolApprovalRepository))
 	must(container.Provide(repository.NewMCPOAuthRepository))
@@ -1718,8 +1717,12 @@ func initOllamaService() (*ollama.OllamaService, error) {
 
 func initNeo4jClient() (neo4j.Driver, error) {
 	ctx := context.Background()
-	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
-		logger.Debugf(ctx, "NOT SUPPORT RETRIEVE GRAPH")
+	sel, err := types.CurrentGraphBackend()
+	if err != nil {
+		return nil, err
+	}
+	if sel.Backend != types.GraphBackendNeo4j {
+		logger.Debugf(ctx, "Neo4j not selected (GRAPH_BACKEND=%s), skipping driver", sel.Backend)
 		return nil, nil
 	}
 	uri := os.Getenv("NEO4J_URI")
@@ -1731,7 +1734,6 @@ func initNeo4jClient() (neo4j.Driver, error) {
 	retryInterval := 2 * time.Second // Wait between retries
 
 	var driver neo4j.Driver
-	var err error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		driver, err = neo4j.NewDriver(uri, neo4j.BasicAuth(username, password, ""))

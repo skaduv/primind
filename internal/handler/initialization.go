@@ -752,9 +752,9 @@ func validateNodeExtractConfig(ctx context.Context, req *InitializationRequest) 
 	if !req.NodeExtract.Enabled {
 		return nil
 	}
-	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
+	if !types.GraphRAGEnabled() {
 		logger.Error(ctx, "Node Extractor configuration incomplete")
-		return errors.NewBadRequestError("请正确配置环境变量NEO4J_ENABLE")
+		return errors.NewBadRequestError("知识图谱未启用：请设置 GRAPH_BACKEND=neo4j|nebulagraph（或旧的 NEO4J_ENABLE=true）")
 	}
 	if req.NodeExtract.Text == "" || len(req.NodeExtract.Tags) == 0 {
 		logger.Error(ctx, "Node Extractor configuration incomplete")

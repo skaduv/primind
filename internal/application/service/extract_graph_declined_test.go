@@ -47,6 +47,7 @@ func (r graphKBRepo) GetKnowledgeBaseByID(context.Context, string) (*types.Knowl
 // Issue #3600: a prose refusal finishes the per-chunk task (no asynq retry),
 // while the same prose cut off by the output budget stays a retriable error.
 func TestChunkExtractHandle_ModelDeclinedIsSkipNotRetry(t *testing.T) {
+	setGraphBackendForTest(t, types.GraphBackendNebula)
 	const prose = "抱歉，该文本为目录页，没有可抽取的实体和关系。"
 	payload, err := json.Marshal(types.ExtractChunkPayload{TenantID: 1, ChunkID: "c1", ModelID: "m1"})
 	if err != nil {
@@ -85,4 +86,75 @@ func TestChunkExtractHandle_ModelDeclinedIsSkipNotRetry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setGraphBackendForTest(t *testing.T, backend string) {
+	t.Helper()
+	types.SetGraphBackendForTest(types.GraphBackendSelection{Backend: backend})
+	t.Cleanup(func() {
+		types.SetGraphBackendForTest(types.GraphBackendSelection{Backend: types.GraphBackendDisabled})
+	})
+}
+
+type countingGraphRepo struct {
+	interfaces.RetrieveGraphRepository
+	adds int
+}
+
+func (r *countingGraphRepo) AddGraph(context.Context, types.NameSpace, []*types.GraphData) error {
+	r.adds++
+	return nil
+}
+
+type countingChat struct {
+	graphReplyChat
+	calls *int
+}
+
+func (c countingChat) Chat(ctx context.Context, m []chat.Message, o *chat.ChatOptions) (*types.ChatResponse, error) {
+	*c.calls++
+	return c.graphReplyChat.Chat(ctx, m, o)
+}
+
+// NG-02-AC02: with the graph disabled, NewChunkExtractTask enqueues nothing
+// and a task queued before the switch finishes without an LLM or graph call.
+func TestChunkExtractDisabledBackendSkipsWithoutWork(t *testing.T) {
+	setGraphBackendForTest(t, types.GraphBackendDisabled)
+	enq := &countingEnqueuer{}
+	ok, err := NewChunkExtractTask(context.Background(), enq, 1, "c1", "m1", "k1", 1, 0)
+	if ok || err != nil || enq.calls != 0 {
+		t.Fatalf("disabled enqueue: ok=%v err=%v calls=%d", ok, err, enq.calls)
+	}
+
+	calls := 0
+	graph := &countingGraphRepo{}
+	svc := &ChunkExtractService{
+		template:     &types.PromptTemplateStructured{Description: "extract"},
+		modelService: &stubModelService{chatModel: countingChat{calls: &calls}},
+		knowledgeBaseRepo: graphKBRepo{kb: &types.KnowledgeBase{
+			ID: "kb1", ExtractConfig: &types.ExtractConfig{Enabled: true},
+		}},
+		chunkRepo:   graphChunkRepo{chunk: &types.Chunk{ID: "c1", KnowledgeBaseID: "kb1", Content: "x"}},
+		graphEngine: graph,
+	}
+	payload, _ := json.Marshal(types.ExtractChunkPayload{TenantID: 1, ChunkID: "c1", ModelID: "m1"})
+	if err := svc.Handle(context.Background(), asynq.NewTask(types.TypeChunkExtract, payload)); err != nil {
+		t.Fatalf("Handle = %v, want nil", err)
+	}
+	if calls != 0 || graph.adds != 0 {
+		t.Fatalf("disabled handle did work: llm=%d adds=%d", calls, graph.adds)
+	}
+
+	setGraphBackendForTest(t, types.GraphBackendNebula)
+	ok, err = NewChunkExtractTask(context.Background(), enq, 1, "c1", "m1", "k1", 1, 0)
+	if !ok || err != nil || enq.calls != 1 {
+		t.Fatalf("nebulagraph enqueue: ok=%v err=%v calls=%d", ok, err, enq.calls)
+	}
+}
+
+type countingEnqueuer struct{ calls int }
+
+func (e *countingEnqueuer) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
+	e.calls++
+	return &asynq.TaskInfo{ID: "t", Queue: types.QueueGraph}, nil
 }
