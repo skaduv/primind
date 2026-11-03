@@ -72,7 +72,7 @@ AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动�
 
 ## OS-C 生命周期（AC-OS03-01~03）
 
-状态：适配器层已在真实集群验证并修复一个缺陷；应用级（重解析、删文档/知识库任务、移动/复制入口）待模型。
+状态：适配器层和应用级均已在真实环境验证，修复了两个缺陷（按查询操作看不到刚写入的数据、4096 维复制）；仅“删除任务失败不被当作完成”未覆盖。
 
 已修复缺陷：按查询执行的操作看不到刚写入的数据。
 
@@ -92,7 +92,20 @@ AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动�
   - 部分写入失败时，报错带上已复制的条数。
 - 测试：`TestLocalRealCopyLargeDim`（真实集群，4096 维，620 条，跨扫描页）：源、目标各 620 条，抽查首尾和页边界的 chunk，正文、启用状态、knowledge_id 映射和 4096 维向量都与源一致。单测 `TestSplitForBulk_EveryGroupFitsBatchSaveLimits`（500×4096、500×768、1500 条无向量、16000 维）确认每组都能通过 `buildBulkBody`，并且顺序和覆盖完整；`TestCopyScanPageSize_FollowsDimensionAndCap` 覆盖页大小计算。
 
-待做（需模型）：通过应用入口重跑修改/重解析、停用、标签、移动、复制、删除文档、删除知识库，核对 OpenSearch 中无残留、不误删，以及异步任务失败不被当作删除完成。
+应用级复核（真实应用 8081 + 公司 Embedding 4096 维，绑定 OpenSearch store `8896d60e…`）：每一步都用 SQL 查 `chunks` 中未删除的 ID，并与 OpenSearch 中按 knowledge_id 或 knowledge_base_id 搜到的 `_id` 逐条比对（先 refresh）。以下各项均通过：
+
+| 场景 | 操作 | 结果 |
+| --- | --- | --- |
+| 修改 | `PUT /knowledge/manual/:id`，第一版标记 ALPHAOSC111，改为第二版 BETAOSC222 | 重新生成 chunk，数据库与 OpenSearch 一致；检索旧标记 0 条，新标记命中 |
+| 重解析 | `POST /knowledge/:id/reparse`（样本 A） | 见 AC-OS02-02：新 ID 与数据库一致，旧 ID 全部消失 |
+| 停用/启用 | `PUT /chunks/:knowledge_id/:id {"is_enabled":false/true}` | 停用后服务层从索引删除该 chunk（GET 返回 `found:false`），检索不再返回；启用后重新写入（`is_enabled:true`），检索恢复 |
+| 标签范围 | `PUT /knowledge/tags` 给样本 A 打标签，问答请求带 `tag_ids` | 打标签后，即使问 B 的标记，引用也只来自 A；清除标签后，同一范围的问答引用为空。注意：`hybrid-search` 的 `scope_tag_ids` 只用于追踪，文档标签的过滤在问答链路中先解析成 knowledge_ids 再下发给 OpenSearch；`tag_ids` 在 hybrid-search 中是 FAQ chunk 标签的物理过滤。Postgres 知识库表现相同 |
+| 同 store 移动 | `POST /knowledge/move`（reuse_vectors），手工文档移到同 store 的第二个知识库 `d6267cca…` | chunk ID 保持不变；OpenSearch 中 knowledge_base_id 改为目标知识库；源知识库检索不再命中，目标命中；源知识库其他文档保留（数据库 4 条 = OpenSearch 4 条） |
+| 知识库复制 | `POST /knowledge-bases/copy`，任务完成 | 目标知识库绑定同一 store 和同一 Embedding；源、目标各 4 条，数据库 = OpenSearch；复制后的向量与源逐字节相同（摘要一致）；源知识库仍可检索 |
+| 删除文档 | `DELETE /knowledge/:id`（复制出的知识库中的样本 B，异步任务） | 该文档的 2 个 chunk 在 OpenSearch 中 `found:false`，数据库 0 条；同一知识库的另一文档和源知识库中的样本 B 不受影响 |
+| 删除知识库 | `DELETE /knowledge-bases/:id`（复制出的知识库） | 该知识库在 OpenSearch 中 0 条，原有 chunk ID 均 `found:false`，数据库 0 条，GET 返回 not found；共用的物理索引保留，其他两个 OS 知识库的计数不变，A/B 仍可检索。没有任何通配删除 |
+
+未覆盖：“异步删除任务失败时不被当作完成”需要在删除过程中让 OpenSearch 不可用（停止容器）。当前只获授权重启容器，这一项没有做；适配器层的删除响应完整性校验见 `TestOS01_DeleteRequiresCompletion`。
 
 另记：`MoveKnowledgeIndices`、停用/标签更新、无维度关键词检索使用 `<base>_*` 通配。env 路径的 base 是裸 `primind`，可能匹配到同集群其他 store 的索引；因为过滤条件是唯一的 chunk/KB ID，实际不会串数据，暂不处理。
 
