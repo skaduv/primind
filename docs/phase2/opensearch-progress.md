@@ -160,7 +160,7 @@ go test ./internal/application/service/retriever ./internal/application/reposito
 
 ## OS-F 性能（AC-OS02-07、AC-OS03-09）
 
-状态：适配器层基线已测；含 Embedding/LLM 的应用级基线和业务目标值待模型与用户确认。
+状态：适配器层基线和真实 Embedding（4096 维）的应用级基线已测；业务目标值待用户确认，AC-OS02-07 和 AC-OS03-09 未关闭。
 
 ```bash
 PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags integration ./internal/application/repository/retriever/opensearch/integration -run '^TestLocalRealBaseline$' -count=1 -v -timeout 20m
@@ -176,6 +176,18 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
 | by-query 前 refresh（OS-C 修复的代价） | 每轮先写 40 条（dim 768）再操作，50 轮 | 单独 refresh：p50 9.9 ms、p95 68.1 ms、max 82 ms；停用 1 个 chunk 全程：p50 27.7 ms、p95 119.3 ms、max 144.3 ms |
 
 加入 refresh 测量后重跑了一次，写入 12.05 s（约 830 chunk/s），向量检索 p95 56.4 ms，关键词检索 p95 8.4 ms，和首轮在同一量级。
+
+应用级基线（2026-11-03，真实应用 8081，公司 Embedding Qwen3-Embedding-8B 4096 维 + 问答模型做摘要，OpenSearch 单节点，导入为默认并发，没有其他业务负载；与 NG 会话共用本机）：
+
+| 项 | 规模 | 结果 |
+| --- | --- | --- |
+| 导入总耗时 | 20 篇手工文档（每篇 12 段，约 1.6k 字），连续提交 | 共 80 个 chunk（60 text + 20 summary），从第一篇创建到最后一篇完成 85.7 s，失败 0；数据库与 OpenSearch 都是 80 条 |
+| 分段（每篇，来自 `knowledge_processing_spans`） | 20 篇 | chunking p50 11 ms / p95 17 ms；embedding+写 OpenSearch p50 1368 ms / p95 2148 ms（每篇 3 个 text chunk）；主流程 knowledge_processing p50 2126 ms / p95 2697 ms；摘要（LLM）p50 51.9 s / p95 58.1 s，是总耗时的主要来源 |
+| 应用检索延迟（`hybrid-search`，TopK 10，30 次，含 HTTP、鉴权、查询向量化、OpenSearch 和融合） | 80 chunk 的知识库 | 关键词 p50 141 ms / p95 212 ms；向量 p50 216 ms / p95 238 ms；混合 p50 227 ms / p95 252 ms；全部成功 |
+
+对比：适配器层在 4096 维下纯写入约 268 chunk/s，向量检索 p95 78 ms；应用级的延迟差主要来自查询向量化的网络调用和服务层开销。导入的瓶颈是模型调用（Embedding 和摘要），不是 OpenSearch。
+
+仍待定：业务目标值（规模、导入窗口或最低吞吐、p95、错误率、资源和队列上限）需要用户确认；并发写查混合、有限突发和资源曲线没有做，所以 AC-OS02-07 和 AC-OS03-09 都不能关闭。为避免压到公司共用的模型服务，本次只做了小规模测量。
 
 这只是纯索引和检索子路径的基线，不能关闭 AC-OS02-07 或 AC-OS03-09。待做：应用级导入（解析、Embedding、索引确认、可检索）和三路检索、问答的分段耗时，并发写查混合，以及向用户确认业务目标值（规模、导入窗口或最低吞吐、p95、错误率、资源上限）。
 
