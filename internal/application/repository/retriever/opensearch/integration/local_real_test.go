@@ -311,3 +311,107 @@ func TestLocalRealKeywordOnlyAndCopy(t *testing.T) {
 		t.Fatalf("copied doc wrong: %v", got["knowledge_id"])
 	}
 }
+
+// Same-store document move rewrites knowledge_base_id in both the vector and
+// the keyword index, clears tags, and leaves other documents of the source KB.
+func TestLocalRealMoveWithinStore(t *testing.T) {
+	c := newLocalCluster(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	vecIndex, kw := c.ownIndices()[0], c.ownIndices()[1]
+	kbSrc, kbDst := "kb-msrc-"+c.storeID, "kb-mdst-"+c.storeID
+
+	moved := sampleChunks(kbSrc, "docM", 3, 0)
+	moved[0].info.TagID = "tag-src"
+	stay := sampleChunks(kbSrc, "docStay", 2, 4)
+	for _, set := range [][]localChunk{moved, stay} {
+		infos, params := batchParams(set)
+		if err := c.repo.BatchSave(ctx, infos, params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kwOnly := sampleChunks(kbSrc, "docM", 1, 7)
+	kwOnly[0].info.ChunkID, kwOnly[0].info.SourceID = "docM-kw", "docM-kw"
+	kwInfos, _ := batchParams(kwOnly)
+	if err := c.repo.BatchSave(ctx, kwInfos, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	mover, ok := c.repo.(interface {
+		MoveKnowledgeIndices(context.Context, string, string, string, []string, int, string) error
+	})
+	if !ok {
+		t.Fatal("repository does not support MoveKnowledgeIndices")
+	}
+	if err := mover.MoveKnowledgeIndices(ctx, kbSrc, kbDst, "docM", nil, localDim, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	byKB := func(index, kb string) int {
+		return c.count(index, fmt.Sprintf(`{"query":{"term":{"knowledge_base_id":%q}}}`, kb))
+	}
+	if got := [4]int{byKB(vecIndex, kbSrc), byKB(vecIndex, kbDst), byKB(kw, kbSrc), byKB(kw, kbDst)}; got != [4]int{2, 3, 0, 1} {
+		t.Fatalf("vec src/dst, kw src/dst = %v, want [2 3 0 1]", got)
+	}
+	if tag := c.source(vecIndex, "docM-c0")["tag_id"]; tag != "" {
+		t.Fatalf("tag not cleared after move: %v", tag)
+	}
+	vr, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
+		Embedding: moved[1].emb, KnowledgeBaseIDs: []string{kbSrc}, TopK: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range chunkIDs(vr) {
+		if strings.HasPrefix(id, "docM-") {
+			t.Fatalf("moved chunk %s still hit in source KB", id)
+		}
+	}
+}
+
+// By-query operations issued right after a write (no refresh in between, as
+// in the service's cleanup and enable/disable paths) must still see that write.
+func TestLocalRealByQueryOpsSeeFreshWrites(t *testing.T) {
+	c := newLocalCluster(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	vecIndex := c.ownIndices()[0]
+	kb := "kb-fresh-" + c.storeID
+	byKnowledge := func(doc string) string {
+		return fmt.Sprintf(`{"query":{"term":{"knowledge_id":%q}}}`, doc)
+	}
+	write := func(doc string) []localChunk {
+		set := sampleChunks(kb, doc, 3, 0)
+		infos, params := batchParams(set)
+		if err := c.repo.BatchSave(ctx, infos, params); err != nil {
+			t.Fatal(err)
+		}
+		return set
+	}
+
+	write("docDel")
+	if err := c.repo.DeleteByKnowledgeIDList(ctx, []string{"docDel"}, localDim, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if n := c.count(vecIndex, byKnowledge("docDel")); n != 0 {
+		t.Errorf("delete right after write left %d chunks", n)
+	}
+
+	write("docDis")
+	if err := c.repo.BatchUpdateChunkEnabledStatus(ctx, map[string]bool{"docDis-c0": false}); err != nil {
+		t.Fatal(err)
+	}
+	if v := c.source(vecIndex, "docDis-c0")["is_enabled"]; v != false {
+		t.Errorf("disable right after write not applied: is_enabled=%v", v)
+	}
+
+	src := write("docCp")
+	chunkMap := map[string]string{}
+	for _, ch := range src {
+		chunkMap[ch.info.ChunkID] = "cp-" + ch.info.ChunkID
+	}
+	if err := c.repo.CopyIndices(ctx, kb, map[string]string{"docCp": "docCp2"}, chunkMap, kb+"-dst", localDim, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if n := c.count(vecIndex, byKnowledge("docCp2")); n != 3 {
+		t.Errorf("copy right after write copied %d of 3", n)
+	}
+}

@@ -35,6 +35,9 @@ func (r *Repository) MoveKnowledgeIndices(
 	if err != nil {
 		return fmt.Errorf("opensearch: marshal move: %w", err)
 	}
+	if err := r.refreshBeforeByQuery(ctx, r.baseIndex+"_*"); err != nil {
+		return err
+	}
 	refresh := true
 	resp, err := r.client.UpdateByQuery(ctx, osapi.UpdateByQueryReq{
 		Indices: []string{r.baseIndex + "_*"}, Body: bytes.NewReader(body),

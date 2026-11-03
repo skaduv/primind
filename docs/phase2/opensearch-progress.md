@@ -33,7 +33,19 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-C 生命周期（AC-OS03-01~03）
 
-状态：未开始。
+状态：适配器层已在真实集群验证并修复一个缺陷；应用级（重解析、删文档/知识库任务、移动/复制入口）待模型。
+
+已修复缺陷：按查询执行的操作看不到刚写入的数据。
+
+- 现象（真实集群复现）：`BatchSave` 后立即执行以下操作，它们只读已 refresh 的快照，而 bulk 写入不带 refresh。结果是：`DeleteByKnowledgeIDList` 留下全部 3 条残留；`BatchUpdateChunkEnabledStatus` 停用无效，片段仍可检索；`CopyIndices` 只复制了 0/3；`MoveKnowledgeIndices` 返回成功但 0 条被移动。服务层的索引失败清理、写入后检测到删除时的清理、停用和标签更新都是这种紧跟写入的调用。
+- 修复：新增 `refreshBeforeByQuery`，在 delete_by_query、update_by_query（停用/标签）、移动、复制扫描前，先 refresh 对应的本 store 索引（`<base>_*` 或当前维度 alias）。没有改变 bulk 写入的刷新策略，也没有改刷新间隔。
+- 测试：`TestLocalRealByQueryOpsSeeFreshWrites` 与 `TestLocalRealMoveWithinStore` 修复前失败、修复后通过。单测替身改为把 `_refresh` 当作非数据写入，并断言 refresh 先于移动执行。
+
+适配器层已覆盖（真实集群，见 OS-A 命令）：停用片段不再被检索、标签更新、删除文档不误删其他知识库、同 store 移动（向量和关键词索引都改为目标知识库并清空标签，源知识库不再命中，其余文档保留）、同 store 复制（源保留、目标 ID 重映射、向量完整）。
+
+待做（需模型）：通过应用入口重跑修改/重解析、停用、标签、移动、复制、删除文档、删除知识库，核对 OpenSearch 中无残留、不误删，以及异步任务失败不被当作删除完成。
+
+另记：`MoveKnowledgeIndices`、停用/标签更新、无维度关键词检索使用 `<base>_*` 通配。env 路径的 base 是裸 `primind`，可能匹配到同集群其他 store 的索引；因为过滤条件是唯一的 chunk/KB ID，实际不会串数据，暂不处理。
 
 ## OS-D 权限（AC-OS03-04）
 
