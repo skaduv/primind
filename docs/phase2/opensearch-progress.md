@@ -41,7 +41,8 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 - 适配器允许的维度为 1..16000；`TestLocalRealBaseline` 以 dim=4096、lucene HNSW 实测 2000 条：写入约 268 chunk/s，向量检索 p95 78.2 ms，关键词检索 p95 27.9 ms，计数一致。
 - 导入路径没有问题：索引器每批 40 条，约 1.8 MB，低于 bulk 10 MB 上限。
-- **问题：知识库复制在 4096 维下会失败。** `CopyIndices` 每扫一页 500 条，就用一次 BatchSave 写入；4096 维估算单条约 21.6 KB（真实 JSON 约 45 KB），超过 10 MB 上限，返回 `ErrBatchTooLarge`。真实集群临时复现：复制 320 条全部未发送（`320 not sent`），目标为 0 条，错误会明确返回，不会静默。按当前上限，大约超过 220 条的知识库就无法复制。最小修复方案：复制写入时按字节或条数再拆分（例如每次 BatchSave 不超过 40 条，与索引器一致），只改 `copy.go`。待确认后再修。
+- **问题：知识库复制在 4096 维下会失败。** `CopyIndices` 每扫一页 500 条，就用一次 BatchSave 写入；4096 维估算单条约 21.6 KB（真实 JSON 约 45 KB），超过 10 MB 上限，返回 `ErrBatchTooLarge`。真实集群临时复现：复制 320 条全部未发送（`320 not sent`），目标为 0 条，错误会明确返回，不会静默。按当前上限，大约超过 220 条的知识库就无法复制。**已修复**，见 OS-C“4096 维知识库复制”。
+- SSRF：系统设置白名单这条路径没有验证，原因是测试用户不是系统管理员（不通过 SQL 提权）；本机改用 `SSRF_WHITELIST_EXTRA`。
 
 ## OS-C 生命周期（AC-OS03-01~03）
 
@@ -55,6 +56,15 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 - 测试：`TestLocalRealByQueryOpsSeeFreshWrites` 与 `TestLocalRealMoveWithinStore` 修复前失败、修复后通过。单测替身改为把 `_refresh` 当作非数据写入，并断言 refresh 先于移动执行。
 
 适配器层已覆盖（真实集群，见 OS-A 命令）：停用片段不再被检索、标签更新、删除文档不误删其他知识库、同 store 移动（向量和关键词索引都改为目标知识库并清空标签，源知识库不再命中，其余文档保留）、同 store 复制（源保留、目标 ID 重映射、向量完整）。
+
+已修复缺陷：4096 维知识库复制失败（AC-OS03-01）。
+
+- 现象：`CopyIndices` 每扫一页 500 条，就用一次 BatchSave 写入。4096 维时一次 bulk 超过 10 MB 上限，返回 `ErrBatchTooLarge`；拆分写入后，500 条的扫描响应又超过客户端 16 MB 的响应上限，返回 `ErrResponseTooLarge`。真实复现：复制 320 条，目标 0 条。
+- 修复（只改适配器）：
+  - 新增 `splitForBulk`，按 BatchSave 的三项上限切分写入批：条数 `maxBulkItems`、预估字节 `estimateBulkBodyBytes`、实际序列化字节 `maxBulkBytes`。字节数用与发送时相同的投影和 `jsonSize` 精确计算，不写死条数。
+  - 扫描页大小 `copyScanPageSize` 按维度和该客户端实际的响应上限计算（768 维仍是 500，4096 维为 120）。遇到 `ErrResponseTooLarge`（例如正文特别长）时，同一偏移量的页大小减半后重试。
+  - 部分写入失败时，报错带上已复制的条数。
+- 测试：`TestLocalRealCopyLargeDim`（真实集群，4096 维，620 条，跨扫描页）：源、目标各 620 条，抽查首尾和页边界的 chunk，正文、启用状态、knowledge_id 映射和 4096 维向量都与源一致。单测 `TestSplitForBulk_EveryGroupFitsBatchSaveLimits`（500×4096、500×768、1500 条无向量、16000 维）确认每组都能通过 `buildBulkBody`，并且顺序和覆盖完整；`TestCopyScanPageSize_FollowsDimensionAndCap` 覆盖页大小计算。
 
 待做（需模型）：通过应用入口重跑修改/重解析、停用、标签、移动、复制、删除文档、删除知识库，核对 OpenSearch 中无残留、不误删，以及异步任务失败不被当作删除完成。
 

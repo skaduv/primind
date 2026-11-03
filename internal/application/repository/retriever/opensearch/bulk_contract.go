@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -163,6 +164,42 @@ func jsonSize(v any, remaining int) (int, error) {
 		return 0, ErrConfigInvalid
 	}
 	return n, nil
+}
+
+// splitForBulk partitions infos into consecutive groups that each satisfy
+// BatchSave's limits: at most maxBulkItems documents, the pre-marshal
+// estimate (estimateBulkBodyBytes) and the exact encoded NDJSON size
+// (maxBulkBytes). Sizes come from the same projection BatchSave sends, so the
+// split follows the actual vector dimension instead of a fixed count. A
+// document that alone exceeds a limit gets a group of its own; BatchSave then
+// rejects it explicitly.
+func splitForBulk(alias string, infos []*types.IndexInfo, embBySource map[string][]float32) ([][]*types.IndexInfo, error) {
+	var groups [][]*types.IndexInfo
+	start, size, dim := 0, 0, 0
+	for i, info := range infos {
+		emb := embBySource[info.SourceID]
+		action := map[string]any{"index": map[string]any{"_index": alias, "_id": info.ChunkID}}
+		n := 0
+		for _, value := range []any{action, toDoc(info, emb, info.IsEnabled)} {
+			k, err := jsonSize(value, maxBulkBytes)
+			if err != nil && !errors.Is(err, ErrBatchTooLarge) {
+				return nil, err
+			}
+			n += k + 1
+		}
+		count := i - start + 1
+		if count > 1 && (count > maxBulkItems || size+n > maxBulkBytes ||
+			estimateBulkBodyBytes(count, max(dim, len(emb))) > maxBulkBytes) {
+			groups = append(groups, infos[start:i])
+			start, size, dim = i, 0, 0
+		}
+		size += n
+		dim = max(dim, len(emb))
+	}
+	if start < len(infos) {
+		groups = append(groups, infos[start:])
+	}
+	return groups, nil
 }
 
 func buildBulkBody(alias string, infos []*types.IndexInfo, emb [][]float32, params map[string]any) ([]byte, error) {
