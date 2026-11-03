@@ -111,7 +111,7 @@ AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动�
 
 ## OS-D 权限（AC-OS03-04）
 
-状态：ID 越权与共享/撤销已在真实应用验证；检索命中内容级复核待模型。
+状态：通过。ID 越权、共享和撤销在元数据层和 OpenSearch 检索内容层都已验证。
 
 环境：应用 8081，两个独立租户 A（10000）、B（10001），测试账号存于未跟踪的 `.local-run/test-accounts.env`。A 建 OpenSearch store `8896d60e…` 并绑定关键词知识库 `ad7f1580…`，文档 `1e2168fe…`（因无 Embedding 模型解析失败，元数据仍在）。B 直接带 A 的 KB/文档 ID 请求：
 
@@ -128,7 +128,12 @@ AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动�
 
 共享流程：A `POST /organizations` → B `POST /organizations/join`（邀请码）→ A `POST /knowledge-bases/:id/shares`（viewer）→ A `DELETE /knowledge-bases/:id/shares/:share_id`。撤销后同样的请求立即失效。
 
-未完成：有模型后，用已入索引的样本重跑上表，核对 hybrid-search 返回的 OpenSearch 命中在越权/撤销时为空，共享时只包含被共享知识库的片段。
+内容级复核（有 Embedding 后，在已入索引的 OpenSearch 知识库 `60e8a63c…` 上进行，B 发送 Q-HYB）：
+
+- 共享前：B 对该知识库和同 store 的另一知识库 `d6267cca…` 调用 hybrid-search，都返回 403，没有内容。
+- 共享（viewer）后：B 对 `60e8a63c…` 返回 200，命中只来自该知识库（knowledge_base_id 只有这一个，文档为样本 A/B）；对未共享的 `d6267cca…` 仍是 403。
+- 绕过尝试：B 在共享期间请求 `/knowledge-bases/60e8a63c…/hybrid-search`，在 body 里用 `knowledge_base_ids` 覆盖为 `[d6267cca…]` 或 `[60e8a63c…, d6267cca…]`，都返回 404 “knowledge base not found”，拿不到未授权知识库的内容。
+- 撤销后：同样的请求立即返回 403。
 
 ## OS-E 故障恢复（AC-OS03-05~08）
 
