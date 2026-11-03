@@ -70,17 +70,20 @@ func initGraphRepository(
 type nebulaOpener func(context.Context, nebulaRepo.EnvConfig) (*nebulaRepo.Repository, error)
 
 // newNebulaRepository opens the adapter; with AutoSchema an existing but empty
-// dedicated Space gets its schema created once.
+// dedicated Space gets its schema created first. InitializeSchema refuses a
+// non-empty Space (ErrSchema), in which case NewRepository validates what is
+// there and rejects anything incompatible.
 func newNebulaRepository(ctx context.Context, cfg nebulaRepo.EnvConfig) (*nebulaRepo.Repository, error) {
-	repo, err := nebulaRepo.NewRepository(ctx, cfg.Config)
-	if err == nil || !cfg.AutoSchema || !errors.Is(err, nebulaRepo.ErrSchema) {
-		return repo, err
-	}
-	logger.Infof(ctx, "[Graph] NebulaGraph space %s has no compatible schema, initializing", cfg.Space)
-	if ierr := nebulaRepo.InitializeSchema(ctx, cfg.Config, nebulaRepo.SchemaAuthorization{
-		Space: cfg.Space, CreateInEmptyDedicatedSpace: true,
-	}); ierr != nil {
-		return nil, fmt.Errorf("initialize NebulaGraph schema: %w", ierr)
+	if cfg.AutoSchema {
+		err := nebulaRepo.InitializeSchema(ctx, cfg.Config, nebulaRepo.SchemaAuthorization{
+			Space: cfg.Space, CreateInEmptyDedicatedSpace: true,
+		})
+		switch {
+		case err == nil:
+			logger.Infof(ctx, "[Graph] created NebulaGraph schema in empty space %s", cfg.Space)
+		case !errors.Is(err, nebulaRepo.ErrSchema):
+			return nil, fmt.Errorf("initialize NebulaGraph schema: %w", err)
+		}
 	}
 	return nebulaRepo.NewRepository(ctx, cfg.Config)
 }
