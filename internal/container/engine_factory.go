@@ -151,6 +151,7 @@ func createOpenSearchEngine(
 	repo, err := openSearchRepo.NewRepository(ctx, client, storeID, &store.IndexConfig,
 		openSearchRepo.WithAuditSink(auditSink))
 	if err != nil {
+		openSearchRepo.CloseIdleConnections(client)
 		return nil, fmt.Errorf("create opensearch repository: %w", err)
 	}
 	return retriever.NewKVHybridRetrieveEngine(repo, types.OpenSearchRetrieverEngineType), nil

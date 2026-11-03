@@ -31,6 +31,8 @@ func (r *Repository) Retrieve(
 	ctx context.Context,
 	params types.RetrieveParams,
 ) ([]*types.RetrieveResult, error) {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	dim, multiIndex := resolveDim(params)
 
 	switch params.RetrieverType {

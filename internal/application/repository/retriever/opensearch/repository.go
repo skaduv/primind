@@ -20,55 +20,24 @@ import (
 	"github.com/primind/primind/internal/types/interfaces"
 )
 
-// EngineAwareNormalizer applies the documented per-engine cosine-score
-// formula. (Repository implements interfaces.RetrieveEngineRepository for
-// OpenSearch k-NN. Safe for concurrent use after construction: all fields
-// except the once / initErr maps are read-only after NewRepository returns;
-// per-dimension index initialization is guarded by sync.Once.
-//
-// Lifecycle: NewRepository validates connectivity + cluster version +
-// k-NN plugin, but does NOT create any index. Index creation happens
-// lazily on first Save / BatchSave / Retrieve once the embedding
-// dimension is known (see ensureReady — per-dimension index naming).
-//
-// Concurrency: A single Repository instance is shared across N goroutines
-// concurrently retrieving from the same store (the multi-store fan-out
-// dispatcher in the service layer). The struct is therefore designed to
-// be allocation-stable after construction; the only mutable state is the
-// sync.Once + initErr maps, each guarded by its own mutex.
-//
-// CRITICAL INVARIANT: initErr[dim] = err must be written INSIDE the
-// once.Do closure — moving it outside opens a TOCTOU where a concurrent
-// caller reads zero before the first caller persists.
+// Repository shares an immutable client/config and per-index initialization results.
+// Each attempt publishes its own error before waking waiters. Transient failures
+// are removed only for future callers, so existing waiters cannot see false success.
 type Repository struct {
 	client    *osapi.Client
 	baseIndex string      // pre-suffix base name, e.g. "primind_abcdef012345"
 	cfg       internalCfg // immutable after construction (value, not pointer)
 
-	// Per-dimension lazy initialization. ensureReady(ctx, dim) inserts an
-	// entry the first time dim is seen, runs the create-index work inside
-	// sync.Once, and persists any permanent error so subsequent callers
-	// see the same failure without re-attempting the PUT. Transient
-	// errors (ErrTransport, ErrCircuitBreaker) are NOT persisted — the
-	// next caller retries.
-	onceMu  sync.Mutex
-	once    map[int]*sync.Once
-	initMu  sync.Mutex
-	initErr map[int]error
-
-	// Lazy init state for the dim-less keyword-only index used by the
-	// no-embedding path (concurrentBatchSaveNoEmbedding in the service
-	// layer). Mutex + flag pattern (rather than sync.Once) so transient
-	// failures can be retried by the next caller — sync.Once does not
-	// support reset.
-	keywordsMu    sync.Mutex
-	keywordsReady bool
-	keywordsErr   error
+	initMu          sync.Mutex
+	initializations map[int]*indexInitialization
+	keywordsMu      sync.Mutex
+	keywordsReady   bool
 
 	// sink receives audit events (index created / reindex executed). nil
 	// means no auditing; use r.auditSink() to get a non-nil sink. Set via
 	// WithAuditSink at construction.
-	sink AuditSink
+	sink          AuditSink
+	writeObserver func(WriteObservation)
 }
 
 // Compile-time interface satisfaction (Go best practice — keeps the build
@@ -105,6 +74,8 @@ func NewRepository(
 	indexCfg *types.IndexConfig,
 	opts ...Option,
 ) (interfaces.RetrieveEngineRepository, error) {
+	ctx, cancel := operationContext(ctx, client)
+	defer cancel()
 	log := logger.GetLogger(ctx)
 
 	if storeID != "" && len(storeID) < 16 {
@@ -139,11 +110,10 @@ func NewRepository(
 	}
 
 	r := &Repository{
-		client:    client,
-		baseIndex: base,
-		cfg:       icfg,
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		client:          client,
+		baseIndex:       base,
+		cfg:             icfg,
+		initializations: make(map[int]*indexInitialization),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -153,63 +123,72 @@ func NewRepository(
 	return r, nil
 }
 
-// ensureReady creates the per-dimension index (alias-backed) the first
-// time a given embedding dimension is seen. Concurrent callers for the
-// same dim block on the same sync.Once.
-//
-// Transient vs permanent error handling:
-//   - PERMANENT failures (ErrConfigInvalid, ErrAuth, ErrVersionUnsupported,
-//     ErrDimensionMismatch) are persisted in initErr[dim] and re-served to
-//     all future callers without retry — caller must restart or fix config.
-//   - TRANSIENT failures (ErrTransport, ErrCircuitBreaker) are NOT
-//     persisted; the sync.Once is reset for that dim so the next caller
-//     can retry. This prevents a single cluster blip from permanently
-//     locking out a dim.
-//
-// Caller MUST pass a real ctx; nil is rejected. dim must be in (0, 16000]
-// (OpenSearch knn_vector hard limit).
-//
-// CRITICAL INVARIANT: initErr[dim] = err is written INSIDE the once.Do
-// closure. Moving it outside opens a TOCTOU where a concurrent caller
-// reads zero before the first caller persists.
+// indexInitialization is immutable after done is closed.
+type indexInitialization struct {
+	done chan struct{}
+	err  error
+}
+
 func (r *Repository) ensureReady(ctx context.Context, dim int) error {
 	if ctx == nil {
 		return fmt.Errorf("opensearch: ensureReady requires non-nil ctx")
 	}
 	if dim <= 0 || dim > 16000 {
-		return fmt.Errorf("opensearch: dim %d out of range (1..16000): %w",
-			dim, ErrDimensionMismatch)
+		return fmt.Errorf("opensearch: dim %d out of range (1..16000): %w", dim, ErrDimensionMismatch)
 	}
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
+	return r.ensureIndex(ctx, dim, func(ownedCtx context.Context) error { return r.createIndexAndAlias(ownedCtx, dim) })
+}
 
-	r.onceMu.Lock()
-	once, ok := r.once[dim]
-	if !ok {
-		once = &sync.Once{}
-		r.once[dim] = once
+func waitForInitialization(ctx context.Context, attempt *indexInitialization) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-attempt.done:
+		return attempt.err
 	}
-	r.onceMu.Unlock()
+}
 
-	once.Do(func() {
-		err := r.createIndexAndAlias(ctx, dim)
-		if err != nil && isTransientErr(err) {
-			// Do NOT persist transient errors. Reset the sync.Once so
-			// the next caller retries (requires once map mutation).
-			r.onceMu.Lock()
-			delete(r.once, dim)
-			r.onceMu.Unlock()
-			// Fall through — caller still sees this attempt's err.
-		}
-		r.initMu.Lock()
-		if err == nil || !isTransientErr(err) {
-			r.initErr[dim] = err // nil on success, persist permanent failures
-		}
-		r.initMu.Unlock()
-	})
-
+func (r *Repository) ensureIndex(ctx context.Context, dim int, create func(context.Context) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.initMu.Lock()
-	err := r.initErr[dim]
+	existing := r.initializations[dim]
 	r.initMu.Unlock()
-	return err
+	if existing != nil {
+		return waitForInitialization(ctx, existing)
+	}
+
+	// Acquire outside initMu, before publishing: otherwise admitted BatchSave
+	// waiters could consume every write slot needed by this initializer's PUT.
+	// A BatchSave initializer borrows its already-held encoding/write lease.
+	ctx, release, err := admitWriteOperation(ctx, r.client)
+	if err != nil {
+		return err
+	}
+	r.initMu.Lock()
+	if existing = r.initializations[dim]; existing != nil {
+		r.initMu.Unlock()
+		release() // another owner won while admission was pending
+		return waitForInitialization(ctx, existing)
+	}
+	if r.initializations == nil {
+		r.initializations = make(map[int]*indexInitialization)
+	}
+	attempt := &indexInitialization{done: make(chan struct{})}
+	r.initializations[dim] = attempt
+	r.initMu.Unlock()
+	defer release()
+	attempt.err = create(ctx)
+	r.initMu.Lock()
+	close(attempt.done)
+	if isTransientErr(attempt.err) || errors.Is(attempt.err, context.Canceled) || errors.Is(attempt.err, context.DeadlineExceeded) {
+		delete(r.initializations, dim)
+	}
+	r.initMu.Unlock()
+	return attempt.err
 }
 
 // indexAlias returns the alias name for a given dimension. All reads /
@@ -349,8 +328,8 @@ func probeKNNPlugin(ctx context.Context, client *osapi.Client) error {
 // driver's sentinel errors based on HTTP status ONLY. The cluster-side
 // error message (err.Error()) is intentionally NOT included in the
 // wrapped public error — it may contain internal index names, shard
-// IDs, node hostnames, or document content snippets. The full SDK
-// error is routed to log.Debug for operator forensics.
+// IDs, node hostnames, or document content snippets. Raw SDK errors are not
+// logged; only bounded sentinel classifications are exposed.
 //
 // Classification:
 //   - 401 / 403  → ErrAuth
@@ -364,10 +343,12 @@ func wrapTransport(err error) error {
 	if err == nil {
 		return nil
 	}
-	// Route the verbose SDK message to debug log (operator-visible, not
-	// user-visible). Background ctx is intentional — wrapTransport may
-	// be invoked from any caller including the constructor.
-	logger.GetLogger(context.Background()).Debugf("[OpenSearch] transport err: %v", err)
+	// Never log raw SDK errors: they can contain document bodies or credentials.
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, ErrRequestBudgetFull, ErrResponseTooLarge} {
+		if errors.Is(err, sentinel) {
+			return fmt.Errorf("%w: %w", ErrTransport, sentinel)
+		}
+	}
 
 	var se *opensearch.StructError
 	if errors.As(err, &se) {
@@ -435,10 +416,9 @@ func sanitizeIndexName(name string) (string, error) {
 	return name, nil
 }
 
-// drainAndClose closes the response body after draining unread bytes —
-// required for HTTP keep-alive connection reuse. opensearch-go does NOT
-// drain the body for us; failing to drain on every response will starve
-// the per-host connection pool under load.
+// drainAndClose releases the SDK's response view. Managed clients already
+// consumed and closed the wire body in boundedRoundTripper; this remaining
+// in-memory body is finite. Legacy injected clients retain their own contract.
 func drainAndClose(body io.ReadCloser) {
 	if body == nil {
 		return

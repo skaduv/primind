@@ -69,6 +69,8 @@ func (r *Repository) CopyIndices(
 	dimension int,
 	knowledgeType string,
 ) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	log := logger.GetLogger(ctx)
 	if len(sourceToTargetChunkIDMap) == 0 {
 		log.Warn("[OpenSearch] CopyIndices: empty chunk mapping, skipping")
@@ -85,6 +87,9 @@ func (r *Repository) CopyIndices(
 
 	var total int64
 	for from := 0; ; from += copyBatchSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		docs, err := r.copyScanBatch(ctx, alias, sourceKnowledgeBaseID, from, copyBatchSize)
 		if err != nil {
 			return err
