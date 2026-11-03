@@ -106,4 +106,17 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 - `primind_ng` 库：测试账号 `ng-a` 设为系统管理员（直接改 `users.is_system_admin`，仓库无引导管理员的入口）；系统设置 `ssrf.whitelist` 由空改为 `["172.16.16.120"]`，环境变量 `SSRF_WHITELIST_EXTRA=127.0.0.1` 不变。
 - 向量检索（`RETRIEVE_DRIVER=postgres`）：`embeddings.embedding` 是不定长 `halfvec`，4096 维可存可算（pgvector 0.8.4 实测）。但现有 HNSW 只有 798/1024/3584 三个按维度的部分索引，应用不会为新维度建索引，且 halfvec HNSW 上限 4000 维，所以 4096 维检索走精确顺序扫描。本机少量文档可用；数据量大时需要换维度（若模型支持截断）或换检索后端。
 
-## NG-D、NG-E — NOT_RUN
+## NG-D NG-03 生命周期
+
+本节未修改任何业务代码（含 `knowledgebase.go`）：现有删除/取消/重解析流程经 `RetrieveGraphRepository` 调到 Nebula 适配器即可满足下列结果。
+
+| AC | 项 | 状态 | 验证方式 | 结果 |
+| --- | --- | --- | --- | --- |
+| AC02 | 删文档 | PASS | 同 KB 两篇文档（共有实体名 宁海动力/青鸾分拣机），`DELETE /knowledge/<doc1>` | doc1 实体 19→0、其关系/来源全部清除；doc2 的 9 实体/6 关系/9 来源不变，同名实例互不影响 |
+| AC02 | 删知识库 | PASS | 新建 KB 上传一篇后 `DELETE /knowledge-bases/<kb>` | 该 KB 图数据 14→0；另一 KB 24 行不变 |
+| AC02/AC04 | 重解析 | PASS | `POST /knowledge/<id>/reparse` | 新 attempt 写入 19 实体/18 关系，全部指向新 chunk；旧 chunk 数据 0 条 |
+| AC04 | 抽图进行中取消 | PASS | 图 span `running` 时 `POST /knowledge/<id>/cancel-parse` | 任务 ctx 取消，进行中的 LLM 请求 `context canceled`，未调用 AddGraph；Nebula 中该文档 0 行；`parse_status=cancelled`、`pending_subtasks_count=0` |
+| AC03 | 跨租户权限 | **FAIL（既有缺陷，待决定修复归属）** | 租户 B 普通问答传入租户 A 的 `knowledge_base_ids` | 文本检索按租户过滤为 0 条，但 `chat_pipeline/search_entity.go` 以请求 KB 列表作为 `allowedKBs`，图检索仍查询 A 的 KB，命中 chunk 进入模型上下文与 references。与图后端无关（Neo4j 同路径）。修复需改共享文件（`search_entity.go` 或问答入口），已报主控 |
+| AC05 | 运行期连接失败 | PARTIAL | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中暂停 graphd 的实测被自动模式拦截（共享环境），待用户放行 |
+
+## NG-E — NOT_RUN
