@@ -76,4 +76,34 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 
 决定：新字段只接受三个小写精确值；显式空字符串按“未设置”处理（compose 常以空值透传变量）。
 
+| AC | 状态 | 验证方式 | 结果 |
+| --- | --- | --- | --- |
+| AC01 未知值 | PASS | 本机启动 `GRAPH_BACKEND=nebula` | 依赖注入阶段报 `invalid GRAPH_BACKEND "nebula": want one of disabled, neo4j, nebulagraph`，进程退出，不降级 |
+| AC01/AC02 nebulagraph | PASS | 本机启动（`.env.local`，Space `primind_ng_app`） | 日志 `Neo4j not selected ... skipping driver`；空 Space 自动建 Schema 后连接成功；`/api/v1/system/info` 返回 `graph_database_engine: NebulaGraph` |
+| AC01/AC02 disabled + 冲突 | PASS | 本机启动 `GRAPH_BACKEND=disabled NEO4J_ENABLE=true` | 一次脱敏警告 `GRAPH_BACKEND=disabled overrides legacy NEO4J_ENABLE (which implies neo4j)`；Neo4j/Nebula 均不连接；`graph_database_engine: Not Enabled` |
+| AC02 禁用不积压 | PASS | `TestChunkExtractDisabledBackendSkipsWithoutWork` | 禁用时不入队；禁用前已入队的任务消费时零 LLM、零写图并释放 pending 槽位 |
+| AC05 Wiki / AC06 Agent 回归 | PASS（单测） | `./internal/agent/tools -run 'KnowledgeGraph\|Graph'`、`./internal/application/service/chat_pipeline -run 'Entity\|Graph'`、`./internal/application/service -run Wiki` | 全部通过；Agent 仍经容器注入同一 `RetrieveGraphRepository` |
+| AC03 真实抽图→Nebula→问答 | PASS | 见下“真实链路” | 实际模型抽出实体/关系写入 `primind_ng_app`，普通问答经 Nebula 召回并给出正确答案与原文引用 |
+| AC04 图/文本召回可区分 | PASS（有限） | 服务日志 `search_entity.go` 与 `[PIPELINE] stage=SearchParallel` | 图召回 `7 nodes, 5 relations` → `entity_results=1`，文本 `chunk_results=9`，分开记录。测试文档只有 1 个 chunk，图命中的 chunk 与文本命中重合，合并去重后最终引用保留文本得分版本（`match_type=0`）；“图独有证据”题未覆盖 |
+| AC05 模型可用性 | PASS | 直连 47501 chat、47503 embedding 最小调用（Key 不输出） | 均 HTTP 200，Embedding 4096 维；图客户端就绪另由启动日志/系统信息验证 |
+| AC07 业务端到端性能 | BLOCKED | — | 业务目标未冻结；单文档实测见下 |
+
+### 真实链路（2026-11-03，用户 `ng-a`，KB `fcd13be2-…`，文档 `ebd21d3f-…`）
+
+1. 测试资料：虚构的“星河精密第 44 周项目周报”（408 字，1 个 chunk），含人物/产品线/供应商/协议等实体及负责、供应、汇报、任职关系。KB 开启 `graph_enabled`，抽图样例与标签为 负责/供应/汇报/任职/合作，抽图模型 `builtin-company-chat`，Embedding `builtin-company-embedding`。
+2. 第一次处理：上传后入队 1 个图任务，Qwen3-Coder-Next 用时 77s（769→546 tokens），span `nodes_added=17, relations_added=0`。Nebula 读回 17 个实体，来源均指向真实 KB/文档/chunk。模型这次没有输出关系（解析器没有丢弃任何组），属模型输出波动。
+3. 重解析：span `nodes_added=19, relations_added=20`（179s，1271 tokens）。Nebula 读回 19 实体、18 条不同关系（如 陈立伟-负责-鲲鹏 AGV 产品线、苏州光栅科技-供应-GS-360、许明远-任职-苏州光栅科技），全部来源指向新 chunk `100ae451-…`，旧 chunk `e323123a-…` 的数据为 0 条（重解析无旧写残留）。
+4. 普通问答（非 Agent）：“鲲鹏 AGV 产品线由谁负责？它的核心激光雷达传感器由哪家供应商提供，对方的客户经理是谁？” → 回答“陈立伟（总经理），技术负责人林晓舟；苏州光栅科技供应 GS-360；客户经理许明远”，与原文一致并引用 `xinghe-weekly.md`。管线总耗时 14.6s。
+5. 读回方式：nebula-console `LOOKUP ON primind_entity/primind_relation/primind_source WHERE <tag>.kb == "<base64url(kb)>"`，再 base64url 解码（适配器所有业务属性均为 base64url 编码）。
+
+备注：Windows 上 curl 以中文文件名 multipart 上传会被拒（“文件名包含非法字符”，疑为 curl 编码），改用 ASCII 文件名；与图后端无关。
+
+### 模型与运行准备（2026-11-03）
+
+- `config/builtin_models.yaml` 已就位（被 `.git/info/exclude` 忽略）：问答/抽图 47501、视觉 47502、Embedding 47503（4096 维）、重排 47504（本机不可达，不选用）。启动日志确认内置模型已 upsert。
+- `.env.local` 追加 `PRIMIND_LOCAL_{CHAT,EMBEDDING,VISION,RERANK}_API_KEY=` 空占位，以及含 `172.16.16.120` 的 `NO_PROXY/no_proxy`（本机代理访问该地址返回 502）。
+- `AUTO_MIGRATE=true`（`.env`）。
+- `primind_ng` 库：测试账号 `ng-a` 设为系统管理员（直接改 `users.is_system_admin`，仓库无引导管理员的入口）；系统设置 `ssrf.whitelist` 由空改为 `["172.16.16.120"]`，环境变量 `SSRF_WHITELIST_EXTRA=127.0.0.1` 不变。
+- 向量检索（`RETRIEVE_DRIVER=postgres`）：`embeddings.embedding` 是不定长 `halfvec`，4096 维可存可算（pgvector 0.8.4 实测）。但现有 HNSW 只有 798/1024/3584 三个按维度的部分索引，应用不会为新维度建索引，且 halfvec HNSW 上限 4000 维，所以 4096 维检索走精确顺序扫描。本机少量文档可用；数据量大时需要换维度（若模型支持截断）或换检索后端。
+
 ## NG-D、NG-E — NOT_RUN
