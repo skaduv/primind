@@ -29,7 +29,20 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-B 真实闭环（AC-OS02-01~06）
 
-状态：配置已准备，等待用户填写模型 Key。
+状态：AC-OS02-01~04 已通过；AC-05（重启 OpenSearch 后数据保留）、AC-06（原后端与 Wiki 冒烟）见下文。
+
+样本与问题：沿用 `integration/testdata` 中冻结的合成样本 `OS_SAMPLE_A.txt`、`OS_SAMPLE_B.txt`，以及 `oracle.json` 里的 Q-KW/Q-VEC/Q-HYB/Q-QA/Q-NEG。请求体用 UTF-8 文件发送（Git Bash 下把中文直接放在 curl 参数里会乱码）。
+
+模型鉴权：`POST /initialization/remote/check`（chat）和 `POST /initialization/embedding/test` 只带 `modelId`，由服务端补全已保存的 Key，返回“连接正常”和“向量维度=4096”。应用重启后复核结果相同。
+
+| AC | 结果 |
+| --- | --- |
+| AC-OS02-01 存储与绑定 | 用户 A 的 OpenSearch store `8896d60e…`（`http://127.0.0.1:9200`，index_name `primind_os_app`）绑定新知识库 `60e8a63c…`（Embedding `builtin-company-embedding`，向量+关键词）。上传样本后自动建索引 `primind_os_app_8896d60e-a60_4096_v1`（alias `…_4096`），并有真实写入和读取。 |
+| AC-OS02-02 标识一致、维度、重复写 | 解析完成后，数据库 `chunks` 与 OpenSearch 文档 `_id` 逐条一致：每个样本 1 个 text + 1 个 summary，共 4 条，knowledge_base_id 一致，is_enabled=true。存储的向量长度 4096。Postgres `embeddings` 表中该知识库为 0 条，数据只在 OpenSearch。对样本 A `POST /knowledge/:id/reparse`：生成新 chunk ID，OpenSearch 与数据库仍逐条一致，旧 ID 全部消失，没有重复。 |
+| AC-OS02-03 三路召回 | `POST /knowledge-bases/:id/hybrid-search`。Q-KW（关闭向量）：只命中 A 的 text 和 summary，match_type=关键词。Q-VEC（关闭关键词）：A 的两条排在前面（0.749/0.712），B 的两条在后（0.459/0.418），作为补充命中。Q-HYB：A 的 text 排第 1，结果中没有重复 chunk ID，沿用现有融合逻辑。所有结果都只来自本知识库。 |
+| AC-OS02-04 问答引用 | 新会话 `POST /knowledge-chat/:session_id`，限定本知识库，问答模型 `builtin-company-chat`。Q-QA 的回答给出 SEAL_A_101 和 WO_A_001，注明来源 `OS_SAMPLE_A.txt`，正文引用 `chunk_id=2d3f12d8…`（A 的 text chunk，存在于 OpenSearch）；references 中是 A 的 text/summary 和 B 的补充片段。Q-NEG 回答资料未提及 COMP_C 及其部件，没有把 A/B 的部件安到 COMP_C 上。回答原文以数据库 `messages` 表为准。 |
+
+问答流的问题（未定位）：Q-QA 两次请求，服务端日志都在约 21 秒内显示 `Knowledge QA service completed`、`channel_close`，但 SSE 没有发出 `complete` 事件，连接一直不关闭，直到客户端超时（590 秒）。Q-NEG 那次正常收到 `complete`。数据库中消息是完整的（`is_completed=t`）。是否与 OpenSearch 有关，待用原后端知识库对照。
 
 准备情况（均为未跟踪的本机文件，不提交）：
 
