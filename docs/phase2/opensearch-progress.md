@@ -29,7 +29,19 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-B 真实闭环（AC-OS02-01~06）
 
-状态：未开始。
+状态：配置已准备，等待用户填写模型 Key。
+
+准备情况（均为未跟踪的本机文件，不提交）：
+
+- 模型：`config/builtin_models.yaml`（由 `.git/info/exclude` 忽略），指向公司内网 172.16.16.120 上的服务：问答 47501、视觉 47502、Embedding 47503（Qwen3-Embedding-8B，4096 维）、重排 47504（本机直连超时，知识库不选用）。Key 通过 `${PRIMIND_LOCAL_*_API_KEY}` 从 `.env.local` 读取，加载器 `LoadBuiltinModelsConfig` 会自行展开；`AUTO_MIGRATE=true`（来自 `.env`）。
+- `.env.local` 追加了 4 个空的 Key 占位，`NO_PROXY`/`no_proxy` 包含 `172.16.16.120`（本机 HTTP(S)_PROXY 走 7890 会返回 502）。
+- SSRF 白名单：本库的测试用户不是系统管理员，系统设置 API 返回 403。我没有通过 SQL 提权，改为在 `.env.local` 设置 `SSRF_WHITELIST_EXTRA=127.0.0.1,172.16.16.120`；应用启动时会把它与系统设置里的白名单合并（`applySSRFWhitelist`），原有条目保留（当前系统设置为空）。
+
+4096 维核对：
+
+- 适配器允许的维度为 1..16000；`TestLocalRealBaseline` 以 dim=4096、lucene HNSW 实测 2000 条：写入约 268 chunk/s，向量检索 p95 78.2 ms，关键词检索 p95 27.9 ms，计数一致。
+- 导入路径没有问题：索引器每批 40 条，约 1.8 MB，低于 bulk 10 MB 上限。
+- **问题：知识库复制在 4096 维下会失败。** `CopyIndices` 每扫一页 500 条，就用一次 BatchSave 写入；4096 维估算单条约 21.6 KB（真实 JSON 约 45 KB），超过 10 MB 上限，返回 `ErrBatchTooLarge`。真实集群临时复现：复制 320 条全部未发送（`320 not sent`），目标为 0 条，错误会明确返回，不会静默。按当前上限，大约超过 220 条的知识库就无法复制。最小修复方案：复制写入时按字节或条数再拆分（例如每次 BatchSave 不超过 40 条，与索引器一致），只改 `copy.go`。待确认后再修。
 
 ## OS-C 生命周期（AC-OS03-01~03）
 
