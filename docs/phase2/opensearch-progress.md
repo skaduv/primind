@@ -37,7 +37,24 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-D 权限（AC-OS03-04）
 
-状态：未开始。
+状态：ID 越权与共享/撤销已在真实应用验证；检索命中内容级复核待模型。
+
+环境：应用 8081，两个独立租户 A（10000）、B（10001），测试账号存于未跟踪的 `.local-run/test-accounts.env`。A 建 OpenSearch store `8896d60e…` 并绑定关键词知识库 `ad7f1580…`，文档 `1e2168fe…`（因无 Embedding 模型解析失败，元数据仍在）。B 直接带 A 的 KB/文档 ID 请求：
+
+| 请求 | B 越权 | A 共享给组织（viewer）后 B | 撤销共享后 B |
+| --- | --- | --- | --- |
+| `GET /knowledge-bases/:id` | 403 | 200 | 403 |
+| `GET /knowledge-bases/:id/knowledge` | 403 | 200 | 403 |
+| `GET /knowledge/:id` | 403 | 200 | 403 |
+| `GET /chunks/:knowledge_id` | 403 | 200 | 403 |
+| `POST /knowledge-bases/:id/hybrid-search` | 403 | 200 | 403 |
+| `GET /knowledge/search?kb_id=` | 200，结果为空（按调用者租户过滤） | 200 | 200，结果为空 |
+| `POST /knowledge-bases/:id/knowledge/manual` | 403 | 403（viewer 不能写） | 403 |
+| `DELETE /knowledge/:id` | 403 | 403 | 403 |
+
+共享流程：A `POST /organizations` → B `POST /organizations/join`（邀请码）→ A `POST /knowledge-bases/:id/shares`（viewer）→ A `DELETE /knowledge-bases/:id/shares/:share_id`。撤销后同样的请求立即失效。
+
+未完成：有模型后，用已入索引的样本重跑上表，核对 hybrid-search 返回的 OpenSearch 命中在越权/撤销时为空，共享时只包含被共享知识库的片段。
 
 ## OS-E 故障恢复（AC-OS03-05~08）
 
