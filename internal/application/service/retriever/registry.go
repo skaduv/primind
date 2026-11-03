@@ -3,6 +3,7 @@ package retriever
 import (
 	"context"
 	"fmt"
+	"io"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -186,13 +187,32 @@ func (r *RetrieveEngineRegistry) GetAllRetrieveEngineServices() []interfaces.Ret
 // Upsert semantics: existing entry is overwritten silently.
 func (r *RetrieveEngineRegistry) RegisterWithStoreID(storeID string, svc interfaces.RetrieveEngineService) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	old := r.byStoreID[storeID]
 	r.byStoreID[storeID] = svc
 	// Count this alongside unregistrations: an on-demand build that started
 	// earlier must not overwrite the entry published here, which would leave
 	// the engine this call installed orphaned with its connections open.
 	r.bumpGenerationLocked(storeID)
+	r.mu.Unlock()
+
+	if old != nil && old != svc {
+		closeEngine(storeID, old)
+	}
+}
+
+// closeEngine releases resources of an engine the registry no longer
+// publishes, when the engine owns any (implements io.Closer). Callers that
+// already obtained the engine keep using it; owned pools close only their
+// idle connections, so in-flight requests finish within their own deadlines.
+func closeEngine(storeID string, svc interfaces.RetrieveEngineService) {
+	c, ok := svc.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := c.Close(); err != nil {
+		logger.GetLogger(context.Background()).Warnf(
+			"[retriever.registry] closing retired engine for store %s: %v", storeID, err)
+	}
 }
 
 // bumpGenerationLocked invalidates any on-demand build already in flight for
@@ -298,7 +318,9 @@ func (r *RetrieveEngineRegistry) GetOrLoadByStoreID(
 		if !r.registerIfGenUnchanged(storeID, gen, svc) {
 			// The entry changed while this engine was being built, so this one
 			// is stale before it is published. Whatever landed instead is
-			// authoritative; the caller retries and picks it up.
+			// authoritative; the caller retries and picks it up. Nobody else
+			// holds this engine, so release what it owns.
+			closeEngine(storeID, svc)
 			return nil, ErrVectorStoreUnavailable
 		}
 		return svc, nil
@@ -336,13 +358,17 @@ func (r *RetrieveEngineRegistry) GetOrLoadByStoreID(
 // Phase 2 should add Close() to RetrieveEngineService interface and call it here.
 func (r *RetrieveEngineRegistry) UnregisterByStoreID(storeID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	old := r.byStoreID[storeID]
 	delete(r.byStoreID, storeID)
 	r.bumpGenerationLocked(storeID)
 	// Let an operator retry immediately after removing a store rather than
 	// waiting out a cooldown left over from the previous configuration.
 	delete(r.failedUntil, storeID)
+	r.mu.Unlock()
+
+	if old != nil {
+		closeEngine(storeID, old)
+	}
 }
 
 // Compile-time assertion: *RetrieveEngineRegistry satisfies the

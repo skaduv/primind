@@ -38,6 +38,9 @@ type Repository struct {
 	// WithAuditSink at construction.
 	sink          AuditSink
 	writeObserver func(WriteObservation)
+	// ownsClient marks the client as exclusively owned (set by the engine
+	// factory). Only an owner releases the pool in Close; borrowers do not.
+	ownsClient bool
 }
 
 // Compile-time interface satisfaction (Go best practice — keeps the build

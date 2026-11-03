@@ -41,7 +41,26 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-E 故障恢复（AC-OS03-05~08）
 
-状态：未开始。
+状态：不依赖模型的部分已完成；索引任务期间断连、真实重放与 OpenSearch 容器重启待模型/用户操作。
+
+验证命令（真实集成测试同 OS-A，新增 `local_real_fault_test.go`）：
+
+```bash
+PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/application/repository/retriever/opensearch/integration -run '^TestLocalReal' -count=1 -v
+go test ./internal/application/service/retriever ./internal/application/repository/retriever/opensearch/... ./internal/container -count=1
+```
+
+| AC | 状态 | 方式与结果 |
+| --- | --- | --- |
+| AC-OS03-05 bulk 部分失败 | 通过（适配器层，真实集群） | `TestLocalRealBulkPartialFailure`：一条 tag_id 超过 Lucene 32766 字节，真实返回 HTTP 200 + errors=true；`BulkWriteError` 为 2 confirmed / 1 failed / 0 unknown，失败位置=1，类型 `illegal_argument_exception`，索引实际 2 条。注：整请求级 400（如 `_id` 超 512 字节）会被记为全部 unknown，结果偏保守但不误报成功。服务层遇到错误会删除该文档的 chunk 与索引并按重试/失败处理（`knowledge_process.go` BatchIndex 失败分支）。 |
+| AC-OS03-06 断连与对账 | 适配器层通过；任务期间断连待做 | `TestLocalRealConnectionLossAndReconcile`：经可断开的 TCP 代理写入，断开后 BatchSave 返回 `BulkWriteError`（4 unknown，`errors.Is(ErrTransport)`），检索也报错；恢复后重写同批，数量 4、内容逐条一致、无重复。`TestLocalRealStaleReplayIsLastWriterWins` 记录现状：适配器按 `_id=chunk_id` 后写覆盖，无版本守卫，延迟重放会覆盖新内容、复活已删 chunk，顺序须由任务层保证。 |
+| AC-OS03-07 registry 资源回收 | 已修复并通过单测 | 缺陷：注销、同 store 替换、并发构建落败时，被丢弃的 OpenSearch 引擎从不释放连接池（registry 原注释已承认）。最小修复：`opensearch.WithOwnedClient()` + `Repository.Close()` 只在拥有 client 时释放空闲连接（engine_factory 创建的 client 标记为拥有；env 路径是借用者，不关闭）；`KeywordsVectorHybridRetrieveEngineService.Close()` 转发给实现了 `io.Closer` 的仓库；`registry.go` 在注销/替换/落败构建时调用。在途请求保留各自连接，受 operation deadline 约束，归还后的连接随 idle 超时关闭。测试：`close_test.go`（拥有者关闭、借用者不关）、`registry_close_test.go`（注销、替换只关旧、同引擎重复注册不关、落败构建被关闭、非 Closer 不受影响）。其他检索后端仓库都没有 `Close()`，行为不变。冷却/重建沿用已有 `TestGetOrLoadByStoreID_*`，全部通过。 |
+| AC-OS03-08 应用重启恢复 | 注册恢复已验证；优雅退出未覆盖 | 真实应用：用户 A 建 OpenSearch store（`8896d60e…`，`POST /vector-stores/:id/test` 成功），重启后日志 `Loading 1 vector store(s)` → `Registered DB vector store … engine=opensearch`。Windows 下只能强杀进程，没有走到优雅退出的 cleanup；进程级资源由进程退出回收。 |
+
+待办/风险：
+
+- `knowledge_process.go` 的 BatchIndex 失败分支按 knowledge ID 删除 chunk 和索引；如果旧 attempt 的失败晚于新 attempt 写入，可能误删新数据（对所有后端都成立，不限 OpenSearch）。需要用模型跑真实重解析交错来复现，确认后再给最小方案。
+- 显式 `number_of_replicas: 0` 因 `omitempty` 和 `config.go` 默认值投影不会生效（spec 候选缺陷），单节点上新索引副本未分配（yellow），不影响读写；是否修复待定。
 
 ## OS-F 性能（AC-OS02-07、AC-OS03-09）
 
