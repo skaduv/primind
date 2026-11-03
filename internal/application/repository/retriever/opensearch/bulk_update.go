@@ -21,6 +21,8 @@ import (
 // not known here, and the same chunk_id is unique across the store's dim
 // indices + the keyword-only index.
 func (r *Repository) BatchUpdateChunkEnabledStatus(ctx context.Context, chunkStatusMap map[string]bool) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	if len(chunkStatusMap) == 0 {
 		return nil
 	}
@@ -45,6 +47,8 @@ func (r *Repository) BatchUpdateChunkEnabledStatus(ctx context.Context, chunkSta
 
 // BatchUpdateChunkTagID sets tag_id for the given chunks, grouped by tag.
 func (r *Repository) BatchUpdateChunkTagID(ctx context.Context, chunkTagMap map[string]string) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	if len(chunkTagMap) == 0 {
 		return nil
 	}

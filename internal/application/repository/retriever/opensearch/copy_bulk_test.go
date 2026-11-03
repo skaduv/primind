@@ -73,7 +73,7 @@ func TestCopyIndices_ScanThenBatchSave(t *testing.T) {
 			mu.Lock()
 			bulkBody = string(b)
 			mu.Unlock()
-			_, _ = w.Write([]byte(`{"errors":false,"items":[]}`))
+			_, _ = w.Write([]byte(`{"errors":false,"items":[{"index":{"_id":"tgtChunk","status":201}}]}`))
 		default:
 			_, _ = w.Write([]byte(`{}`))
 		}

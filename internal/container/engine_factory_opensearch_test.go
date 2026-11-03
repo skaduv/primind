@@ -2,9 +2,12 @@ package container
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -12,6 +15,32 @@ import (
 	"github.com/primind/primind/internal/config"
 	"github.com/primind/primind/internal/types"
 )
+
+func TestCreateOpenSearchEngine_FailureClosesOwnedPool(t *testing.T) {
+	var live atomic.Int32
+	ts := httptest.NewUnstartedServer(osClusterHandler("elasticsearch", "8.10.4", true))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			live.Add(1)
+		}
+		if state == http.StateClosed {
+			live.Add(-1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+	_, err := createOpenSearchEngine(context.Background(), types.VectorStore{ConnectionConfig: types.ConnectionConfig{Addr: ts.URL}}, nil)
+	if err == nil {
+		t.Fatal("expected construction failure")
+	}
+	until := time.Now().Add(time.Second)
+	for live.Load() != 0 && time.Now().Before(until) {
+		time.Sleep(time.Millisecond)
+	}
+	if live.Load() != 0 {
+		t.Fatalf("failed construction retained %d connections", live.Load())
+	}
+}
 
 // osClusterHandler simulates an OpenSearch cluster for the driver's
 // construction probe: GET / (version) + /_cat/plugins (k-NN on every node).

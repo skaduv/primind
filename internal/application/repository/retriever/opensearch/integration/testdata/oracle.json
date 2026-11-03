@@ -1,0 +1,23 @@
+{
+  "status": "FROZEN_SYNTHETIC_EXPECTATIONS_NOT_REAL_RESULTS",
+  "encoding": "UTF-8 without BOM; LF including final newline",
+  "files": [
+    {"alias":"A","file":"OS_SAMPLE_A.txt","sha256":"2a286c79629479c8ebde7b0d37f89d0be3d3de0a137ef836e7bc18820e89b87a","marker":"OSFIXA20261022","device":"PUMP_A","part":"SEAL_A_101","work_order":"WO_A_001"},
+    {"alias":"B","file":"OS_SAMPLE_B.txt","sha256":"c683a23b265c5ba754d08cad1dfccedd57a647cbbfbe92557cb7ee5cfce48b2d","marker":"OSFIXB20261022","device":"FAN_B","part":"BEARING_B_202","work_order":"WO_B_002"}
+  ],
+  "queries": [
+    {"id":"Q-KW","text":"OSFIXA20261022","disable_vector_match":true,"disable_keywords_match":false,"expect":"A effective evidence from the application-generated ledger; exact authorized KB; no invented source"},
+    {"id":"Q-VEC","text":"泵 PUMP_A 发生轴封渗漏时，工单要求更换什么？","disable_vector_match":false,"disable_keywords_match":true,"expect":"A effective evidence using the real query embedding; fixed model/parameters; synthetic-vector roundtrip cannot satisfy this"},
+    {"id":"Q-HYB","text":"OSFIXA20261022，WO_A_001 要更换的部件号是什么？","disable_vector_match":false,"disable_keywords_match":false,"expect":"A evidence, no duplicated effective chunk; existing application RRF unchanged"},
+    {"id":"Q-QA","text":"给出泵 PUMP_A 轴封渗漏应更换的部件号、工单号并注明来源。","disable_vector_match":false,"disable_keywords_match":false,"expect":"Fresh ordinary session; facts SEAL_A_101 and WO_A_001; complete SSE answer and citations resolve to actual A evidence, not B/old/unknown"},
+    {"id":"Q-NEG","text":"资料是否给出了压缩机 COMP_C 的齿轮部件号？","disable_vector_match":false,"disable_keywords_match":false,"expect":"Fresh ordinary session restricted to this KB; record actual no-evidence response; no A/B part assigned to COMP_C; do not special-case this query"}
+  ],
+  "rules": [
+    "Do not assume one file equals one chunk; bind actual generated IDs after task completion.",
+    "B as a supplementary retrieval hit is not automatically a failure.",
+    "Do not require an exact rank, raw score or answer wording; do not tune thresholds until passing.",
+    "Parent context requires the actual id/sub_chunk_id/parent_chunk_id chain; only effective evidence IDs count.",
+    "All expected facts above come from fixed source text, not the returned model answer.",
+    "Current retrieval helper verifies scope, duplicate effective IDs and A evidence; Q-QA/Q-NEG need retained SSE plus human source/fact review."
+  ]
+}
