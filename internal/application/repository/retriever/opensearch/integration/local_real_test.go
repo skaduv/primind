@@ -415,3 +415,55 @@ func TestLocalRealByQueryOpsSeeFreshWrites(t *testing.T) {
 		t.Errorf("copy right after write copied %d of 3", n)
 	}
 }
+
+// KB copy at 4096 dims: a 500-doc scan page is ~22MB of NDJSON, above the
+// 10MB bulk cap, so the copy must write in size-bounded groups. 620 chunks
+// also cross the scan page boundary.
+func TestLocalRealCopyLargeDim(t *testing.T) {
+	c := newLocalCluster(t)
+	const dim, n = 4096, 620
+	index := fmt.Sprintf("%s_%d_v1", c.base, dim)
+	t.Cleanup(func() { c.raw(http.MethodDelete, "/"+index, "") })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	kbSrc, kbDst := "kb-big-src-"+c.storeID, "kb-big-dst-"+c.storeID
+	chunkMap := map[string]string{}
+	for off := 0; off < n; off += 40 {
+		infos := make([]*types.IndexInfo, 0, 40)
+		emb := map[string][]float32{}
+		for i := off; i < min(off+40, n); i++ {
+			id := fmt.Sprintf("big-%04d", i)
+			infos = append(infos, &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: "docBig",
+				KnowledgeBaseID: kbSrc, IsEnabled: i%7 != 0, Content: "large dim chunk " + id})
+			v := make([]float32, dim)
+			for j := range v {
+				v[j] = float32((i*31+j)%997)/997 - 0.5
+			}
+			emb[id] = v
+			chunkMap[id] = "cp-" + id
+		}
+		if err := c.repo.BatchSave(ctx, infos, map[string]any{"embedding": emb}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.repo.CopyIndices(ctx, kbSrc, map[string]string{"docBig": "docBig-copy"}, chunkMap, kbDst, dim, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	byKB := func(kb string) int {
+		return c.count(index, fmt.Sprintf(`{"query":{"term":{"knowledge_base_id":%q}}}`, kb))
+	}
+	if s, d := byKB(kbSrc), byKB(kbDst); s != n || d != n {
+		t.Fatalf("src=%d dst=%d, want %d each", s, d, n)
+	}
+	for _, i := range []int{0, 7, 499, 500, n - 1} {
+		id := fmt.Sprintf("big-%04d", i)
+		src, dst := c.source(index, id), c.source(index, "cp-"+id)
+		if dst["content"] != src["content"] || dst["is_enabled"] != src["is_enabled"] || dst["knowledge_id"] != "docBig-copy" {
+			t.Fatalf("chunk %s copied wrong: %v / %v / %v", id, dst["content"], dst["is_enabled"], dst["knowledge_id"])
+		}
+		sv, dv := src["embedding"].([]any), dst["embedding"].([]any)
+		if len(dv) != dim || fmt.Sprint(sv) != fmt.Sprint(dv) {
+			t.Fatalf("chunk %s vector differs (len %d)", id, len(dv))
+		}
+	}
+}

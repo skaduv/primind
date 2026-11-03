@@ -286,6 +286,17 @@ func CloseIdleConnections(client *osapi.Client) {
 	}
 }
 
+// responseCap returns the client's response byte cap, or the default cap for
+// a client not built by NewOpenSearchClient (tests).
+func responseCap(client *osapi.Client) int64 {
+	if client != nil && client.Client != nil {
+		if t, ok := client.Client.Transport.(*runtimeTransport); ok {
+			return t.options.MaxResponseBytes
+		}
+	}
+	return DefaultRuntimeOptions().MaxResponseBytes
+}
+
 // WithOwnedClient declares that the Repository exclusively owns its client,
 // so Close releases the client's connection pool.
 func WithOwnedClient() Option {
