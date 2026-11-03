@@ -39,6 +39,7 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 - 现象（真实集群复现）：`BatchSave` 后立即执行以下操作，它们只读已 refresh 的快照，而 bulk 写入不带 refresh。结果是：`DeleteByKnowledgeIDList` 留下全部 3 条残留；`BatchUpdateChunkEnabledStatus` 停用无效，片段仍可检索；`CopyIndices` 只复制了 0/3；`MoveKnowledgeIndices` 返回成功但 0 条被移动。服务层的索引失败清理、写入后检测到删除时的清理、停用和标签更新都是这种紧跟写入的调用。
 - 修复：新增 `refreshBeforeByQuery`，在 delete_by_query、update_by_query（停用/标签）、移动、复制扫描前，先 refresh 对应的本 store 索引（`<base>_*` 或当前维度 alias）。没有改变 bulk 写入的刷新策略，也没有改刷新间隔。
+- 性能代价：每次 by-query 操作前多一次 refresh 请求，并强制生成新段。本机在 40 条新写入后测得：单独 refresh p50 9.9 ms、p95 68.1 ms；停用 1 个 chunk 的整个调用（refresh + update_by_query + 自带 refresh）p50 27.7 ms、p95 119.3 ms。这些操作都是低频的管理/清理调用，不在导入和检索热路径上。批量删除或停用时，每次调用只 refresh 一次，不随 chunk 数增加。如果高频调用（例如大量逐条停用）产生过多小段，可以考虑改为调用方合并请求。详见 OS-F。
 - 测试：`TestLocalRealByQueryOpsSeeFreshWrites` 与 `TestLocalRealMoveWithinStore` 修复前失败、修复后通过。单测替身改为把 `_refresh` 当作非数据写入，并断言 refresh 先于移动执行。
 
 适配器层已覆盖（真实集群，见 OS-A 命令）：停用片段不再被检索、标签更新、删除文档不误删其他知识库、同 store 移动（向量和关键词索引都改为目标知识库并清空标签，源知识库不再命中，其余文档保留）、同 store 复制（源保留、目标 ID 重映射、向量完整）。
@@ -106,6 +107,9 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
 | 写入 | 10,000 chunk，dim 768，batch 40 | 13.0 s，约 768 chunk/s；单批 p50 40.8 ms、p95 86.8 ms、max 444.9 ms；写后计数 10,000，与写入一致 |
 | 向量检索 | 200 次，TopK 10，按 KB 过滤 | p50 55.4 ms、p95 63.2 ms、p99 77.5 ms、max 110.9 ms |
 | 关键词检索 | 200 次，TopK 10，按 KB 过滤 | p50 9.1 ms、p95 15.2 ms、p99 20.1 ms、max 36.5 ms |
+| by-query 前 refresh（OS-C 修复的代价） | 每轮先写 40 条（dim 768）再操作，50 轮 | 单独 refresh：p50 9.9 ms、p95 68.1 ms、max 82 ms；停用 1 个 chunk 全程：p50 27.7 ms、p95 119.3 ms、max 144.3 ms |
+
+加入 refresh 测量后重跑了一次，写入 12.05 s（约 830 chunk/s），向量检索 p95 56.4 ms，关键词检索 p95 8.4 ms，和首轮在同一量级。
 
 这只是纯索引和检索子路径的基线，不能关闭 AC-OS02-07 或 AC-OS03-09。待做：应用级导入（解析、Embedding、索引确认、可检索）和三路检索、问答的分段耗时，并发写查混合，以及向用户确认业务目标值（规模、导入窗口或最低吞吐、p95、错误率、资源上限）。
 
