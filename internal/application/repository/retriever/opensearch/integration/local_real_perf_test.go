@@ -108,6 +108,41 @@ func TestLocalRealBaseline(t *testing.T) {
 		return err
 	})
 
+	// Cost of refreshBeforeByQuery: every by-query op (delete, disable/tag,
+	// move, copy) now refreshes first. Measure, right after a fresh batch so
+	// the refresh has segments to publish, a bare refresh and a full
+	// single-chunk disable (refresh + update_by_query + its own refresh).
+	var refreshLat, disableLat []time.Duration
+	for i := 0; i < 50; i++ {
+		write := func(tag string) string {
+			infos := make([]*types.IndexInfo, batch)
+			emb := make(map[string][]float32, batch)
+			for j := range infos {
+				id := fmt.Sprintf("perf-%s-%03d-%03d", tag, i, j)
+				infos[j] = &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: "doc-r", KnowledgeBaseID: kb,
+					IsEnabled: true, SourceType: types.ChunkSourceType, Content: "refresh cost " + id}
+				emb[id] = randVec()
+			}
+			if err := c.repo.BatchSave(ctx, infos, map[string]any{"embedding": emb}); err != nil {
+				t.Fatal(err)
+			}
+			return infos[0].ChunkID
+		}
+		write("r")
+		t0 := time.Now()
+		c.raw("POST", "/"+c.base+"_*/_refresh", "")
+		refreshLat = append(refreshLat, time.Since(t0))
+		id := write("d")
+		t0 = time.Now()
+		if err := c.repo.BatchUpdateChunkEnabledStatus(ctx, map[string]bool{id: false}); err != nil {
+			t.Fatal(err)
+		}
+		disableLat = append(disableLat, time.Since(t0))
+	}
+	t.Logf("refresh-after-write n=50 p50=%v p95=%v max=%v; disable-1-chunk (incl. refresh) p50=%v p95=%v max=%v",
+		pct(refreshLat, 50), pct(refreshLat, 95), pct(refreshLat, 100),
+		pct(disableLat, 50), pct(disableLat, 95), pct(disableLat, 100))
+
 	t.Logf("write chunks=%d dim=%d batch=%d total=%v throughput=%.0f chunks/s batch_p50=%v batch_p95=%v batch_max=%v",
 		nChunks, dim, batch, writeDur.Round(time.Millisecond), float64(nChunks)/writeDur.Seconds(),
 		pct(batchDur, 50), pct(batchDur, 95), pct(batchDur, 100))
