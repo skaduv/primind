@@ -29,7 +29,7 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 go test -tags integration ./internal/
 
 ## OS-B 真实闭环（AC-OS02-01~06）
 
-状态：AC-OS02-01~05 已通过；AC-06（原后端与 Wiki 冒烟）见下文。
+状态：AC-OS02-01~06 已通过（AC-06 中 Wiki 自动生成失败，属于与 OpenSearch 无关的已有问题，见下文）。
 
 样本与问题：沿用 `integration/testdata` 中冻结的合成样本 `OS_SAMPLE_A.txt`、`OS_SAMPLE_B.txt`，以及 `oracle.json` 里的 Q-KW/Q-VEC/Q-HYB/Q-QA/Q-NEG。请求体用 UTF-8 文件发送（Git Bash 下把中文直接放在 curl 参数里会乱码）。
 
@@ -49,7 +49,13 @@ AC-OS02-05 重启 OpenSearch 后数据保留：通过。
 - 重启：约 16 秒后可连接，状态先是 red（分片恢复中），再过约 2 秒变为 yellow。
 - 重启后：同一索引仍是 4 条，该知识库的 4 个 chunk `_id` 不变；应用端 Q-KW/Q-VEC/Q-HYB 返回的 chunk ID 和顺序与重启前完全一致（逐行 diff 相同）。应用不需要重启就恢复检索。
 
-问答流的问题（未定位）：Q-QA 两次请求，服务端日志都在约 21 秒内显示 `Knowledge QA service completed`、`channel_close`，但 SSE 没有发出 `complete` 事件，连接一直不关闭，直到客户端超时（590 秒）。Q-NEG 那次正常收到 `complete`。数据库中消息是完整的（`is_completed=t`）。是否与 OpenSearch 有关，待用原后端知识库对照。
+问答流的问题（未定位）：Q-QA 两次请求，服务端日志都在约 21 秒内显示 `Knowledge QA service completed`、`channel_close`，但 SSE 没有发出 `complete` 事件，连接一直不关闭，直到客户端超时（590 秒）。Q-NEG 那次正常收到 `complete`。数据库中消息是完整的（`is_completed=t`）。对照：同一 Q-QA 分别针对原 Postgres 后端知识库和 OpenSearch 知识库各跑一次，两边都收到 33 个 answer 事件、0 个 complete，120 秒后由客户端断开。所以这是问答 SSE 的通用问题，与 OpenSearch 无关，不在本分支修复，另行跟进。
+
+AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动生成失败，属于已有的通用问题。
+
+- 原后端：知识库 `825e42be…`（未绑定 store，即 Postgres 后端，`RETRIEVE_DRIVER=postgres`）上传样本 A 后解析完成；Postgres `embeddings` 中 2 条，OpenSearch 中该知识库 0 条；hybrid-search 命中样本 A 的 text/summary。问答同样可用，SSE 表现见上一段。
+- Wiki 页面入口：wiki 知识库 `ef9a9db2…`（Postgres 后端，`wiki_config.synthesis_model_id=builtin-company-chat`）上，`POST /knowledgebase/:kb_id/wiki/pages` 返回 201；`GET pages`、`GET pages/:slug`、`GET search?q=PUMP_A`、`GET index`、`GET stats` 均返回 200，能读回新建页面。
+- Wiki 自动生成（未通过，与 OpenSearch 无关）：上传文档后 wiki ingest 任务确实执行，但每次调用 LLM 都返回 400：“maximum context length is 32768 tokens. However, you requested 32768 output tokens”。原因是 `internal/application/service/wiki_ingest.go:192` 写死了 `wikiLLMMaxTokens = 32768`，没有按模型上下文窗口收敛；本机问答模型只有 32k 上下文，所以 wiki 抽取必然失败，重试 5 次后放弃，页面数为 0。这在 main 上就存在，本分支不改，另行跟进（可选：按模型 `context_window` 限制 MaxTokens，或在本机模型配置上调整）。
 
 准备情况（均为未跟踪的本机文件，不提交）：
 
