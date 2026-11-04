@@ -17,8 +17,8 @@
 | AC-OS02-06 原后端与 Wiki 冒烟 | 通过 | ceba0ea | Wiki 自动生成受 `wikiLLMMaxTokens=32768` 影响，属已有问题，未修 |
 | AC-OS02-07 性能（纯索引/持续写查） | 部分：适配器和应用级基线已测 | 621f1bb、a05c88e、72a61ac | 未做并发混合负载和资源曲线；不能关闭 |
 | AC-OS03-01 修改/重解析/停用/标签/移动/复制 | 通过 | 07e8452、2c51ff3、7cbeb6e | — |
-| AC-OS03-02 删除文档 | 通过（正常路径） | 07e8452、7cbeb6e | OpenSearch 不可用时删除任务的失败处理：待用户放行 `docker pause` 后补测 |
-| AC-OS03-03 删除知识库 | 通过（正常路径） | 7cbeb6e | 同上，待放行后补测 |
+| AC-OS03-02 删除文档 | 通过（含 OpenSearch 不可用时） | 07e8452、7cbeb6e、本次提交 | 暂停 40 秒期间保持 deleting，恢复后完成，无残留 |
+| AC-OS03-03 删除知识库 | 通过（含 OpenSearch 不可用时，已修复） | 7cbeb6e、本次提交 | 修复删向量失败仍报完成、留下孤儿索引的缺陷 |
 | AC-OS03-04 权限 | 通过 | 467511e、c67791c、9ba3f7b | 9ba3f7b 修复了问答图检索路径上的跨租户越权；图路径用 mock 覆盖，没有起 Nebula |
 | AC-OS03-05 bulk 部分失败 | 通过 | 47d6ca8 | — |
 | AC-OS03-06 断连与对账 | 通过 | 47d6ca8、c0ff6a1、64a6669 | 64a6669 修复了摘要阶段断连后的摘要 chunk 残留；旧写重放为后写覆盖，顺序由任务层保证 |
@@ -185,7 +185,14 @@ AC-OS03-06 后半（索引任务进行中断连，真实应用）：通过。反
 - **新缺陷：** 断连时正在生成摘要的 5 篇，数据库各多出 1 条 summary chunk（数据库 37 条，OpenSearch 32 条）。原因是 `knowledge_process.go` 摘要任务（约 1697–1740 行）先 `CreateChunks` 写入摘要 chunk，再 `BatchIndex`；索引失败时直接返回错误，没有删除刚写入的数据库行；重试又用新的 UUID 生成一条摘要 chunk。所以每次在摘要阶段索引失败，都会留下 1 条没有进索引的摘要 chunk。检索走 OpenSearch，不会命中它，但 chunk 列表和按数据库读取片段的地方能看到，计数也对不上。这段是通用服务层代码，所有检索后端都会遇到。最小修复建议：`BatchIndex` 失败时删除这条摘要 chunk 的数据库行，并尽力删除其索引（outcome 为 unknown 时可能已写入）；或者重试前先清理该 knowledge 上没有进索引的旧摘要 chunk。待决定是否在本分支修。
 - **已修复：** 新增 `storeSummaryChunk`。同一文档如果已有摘要 chunk，就复用它并更新内容，多出来的删掉（数据库行和索引都删），保证最后只有一条；本次新建的摘要 chunk 如果索引失败，就删除它的数据库行，并尽力删除索引（bulk 结果为 unknown 时可能已写入）。清理失败只记日志，返回的仍是原来的索引错误。单测 `knowledge_summary_store_test.go` 覆盖：索引失败后数据库没有摘要行；重试后只有一条；复用已有摘要并清掉多余的；复用的行在索引失败时保留。真实复现（同一代理、同样上传 8 篇后断连约 40 秒）：断连期间 5 个摘要 span 失败，数据库摘要行为 0；恢复后约 78 秒全部完成，8 篇逐条对账一致，数据库 32 条 = OpenSearch 32 条（24 text + 8 summary），修复前是 37 对 32。
 
-AC-OS03-02/03 补充（OpenSearch 不可用时删除任务的失败处理）：待用户放行 `docker pause` 后补测。本会话的自动权限判定拒绝了暂停容器，命令没有执行。
+AC-OS03-02/03 补充（OpenSearch 不可用时删除任务的失败处理）：已测，发现并修复 1 个缺陷。
+
+- 方式：用户放行后，单独执行 `wsl.exe -e docker pause primind-dev-opensearch` 和 `wsl.exe -e docker unpause primind-dev-opensearch`，每次暂停不超过 60 秒；恢复后核对 9200 健康状态（yellow）和对照组数量。对照组是 OpenSearch 知识库 `60e8a63c…`，3 轮前后都是数据库 4 条 = OpenSearch 4 条。
+- 第 1 轮（暂停约 3 秒，短于 30 秒请求超时）：删文档后状态停在 `deleting`，没有显示成功；删知识库接口立即返回成功（软删除，异步清理）。恢复后两个任务都完成，残留归零。说明短暂断连时请求只是等待，不会出错。
+- 第 2 轮（暂停约 40 秒）：删文档任务在暂停期间保持 `deleting`，恢复后完成，OpenSearch 中 0 条残留，通过。**删知识库发现缺陷**：`ProcessKBDelete`（`knowledgebase.go`）删向量超时（`refresh before by-query … context deadline exceeded`）后只记 Warning，继续删除数据库 chunk 和 knowledge 行，并记录 “KB delete task completed successfully”。结果 OpenSearch 中留下 4 条孤儿记录，而能用来重试定位它们的数据库行已经删掉，再也不会被清理。这正是“异步任务失败不能被当作删除完成”。
+- 修复（最小改动，`knowledgebase.go`）：删向量失败时返回错误，交给 asynq 重试，并且在删除 chunk 和 knowledge 行之前就返回，保证重试还能找到这些向量。单测 `TestProcessKBDeleteVectorDeleteFailureRetries`：去掉修复时失败（任务返回 nil），加上修复后通过，并断言 knowledge 行未被删除。
+- 第 3 轮（修复后，暂停约 40 秒，删一个 KB 副本）：暂停期间 knowledge 行 2 条、chunk 4 条都保留；恢复约 14 秒后重试成功，OpenSearch、knowledge 行和 chunk 都归零，对照组 4/4 不变。
+- 第 2 轮遗留的 4 条孤儿记录是本测试自己产生的，已按 `knowledge_base_id` 精确条件从该 store 的索引中删除（`deleted: 4`），没有用通配。
 
 待办/风险：
 

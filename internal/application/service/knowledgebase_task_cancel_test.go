@@ -396,3 +396,67 @@ func TestCancelTasksForKnowledgeBaseForwardsKnowledgeIDs(t *testing.T) {
 	assert.Equal(t, []string{"knowledge-1", "knowledge-2"}, inspector.calls[0].knowledgeIDs)
 	assert.Equal(t, []string{"datasource-1"}, inspector.calls[0].dataSourceIDs)
 }
+
+// kbDeleteFailingEngine resolves, but its vector deletes fail (e.g. the
+// OpenSearch cluster is unreachable while the KB delete task runs).
+type kbDeleteFailingEngine struct {
+	interfaces.RetrieveEngineService
+	err   error
+	calls int
+}
+
+func (e *kbDeleteFailingEngine) EngineType() types.RetrieverEngineType {
+	return types.OpenSearchRetrieverEngineType
+}
+
+func (e *kbDeleteFailingEngine) Support() []types.RetrieverType {
+	return []types.RetrieverType{types.KeywordsRetrieverType, types.VectorRetrieverType}
+}
+
+func (e *kbDeleteFailingEngine) DeleteByKnowledgeIDList(context.Context, []string, int, string) error {
+	e.calls++
+	return e.err
+}
+
+type kbDeleteEngineRegistry struct {
+	kbDeleteDeferredRegistry
+	engine interfaces.RetrieveEngineService
+}
+
+func (r kbDeleteEngineRegistry) GetOrLoadByStoreID(
+	context.Context, uint64, string,
+) (interfaces.RetrieveEngineService, error) {
+	return r.engine, nil
+}
+
+// A failed vector delete must not be reported as a completed KB delete: the
+// task returns the error so asynq retries, and the knowledge rows the retry
+// needs to find the vectors again are kept.
+func TestProcessKBDeleteVectorDeleteFailureRetries(t *testing.T) {
+	const storeID = "00000000-0000-0000-0000-0000000000ff"
+	storeIDPtr := storeID
+	repo := &kbDeleteTrackingKnowledgeRepo{populatedKBKnowledgeRepo: populatedKBKnowledgeRepo{items: []*types.Knowledge{
+		{ID: "knowledge-1", KnowledgeBaseID: "kb-1", EmbeddingModelID: "model-1"},
+	}}}
+	engineErr := errors.New("opensearch: transport error: context deadline exceeded")
+	engine := &kbDeleteFailingEngine{err: engineErr}
+	svc := &knowledgeBaseService{
+		kgRepo:         repo,
+		chunkRepo:      kbCleanupChunkRepo{},
+		modelService:   kbCleanupModelService{},
+		retrieveEngine: kbDeleteEngineRegistry{engine: engine},
+		ownership:      &kbDeleteOwnership{owned: map[string]uint64{storeID: 1}},
+	}
+	payload, err := json.Marshal(types.KBDeletePayload{
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		VectorStoreID:   &storeIDPtr,
+	})
+	require.NoError(t, err)
+
+	err = svc.ProcessKBDelete(context.Background(), asynq.NewTask(types.TypeKBDelete, payload))
+
+	require.ErrorIs(t, err, engineErr)
+	assert.Equal(t, 1, engine.calls)
+	assert.Equal(t, 0, repo.deleteCalls, "knowledge rows must survive until the vectors are gone")
+}
