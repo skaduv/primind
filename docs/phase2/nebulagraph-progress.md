@@ -118,6 +118,8 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC02/AC04 | 重解析 | PASS | `POST /knowledge/<id>/reparse` | 新 attempt 写入 19 实体/18 关系，全部指向新 chunk；旧 chunk 数据 0 条 |
 | AC04 | 抽图进行中取消 | PASS | 图 span `running` 时 `POST /knowledge/<id>/cancel-parse` | 任务 ctx 取消，进行中的 LLM 请求 `context canceled`，未调用 AddGraph；Nebula 中该文档 0 行；`parse_status=cancelled`、`pending_subtasks_count=0` |
 | AC03 | 跨租户权限 | PASS（修复后） | 租户 B 普通问答传入租户 A 的 `knowledge_base_ids`；对照组为 A 本人同题 | 修复前：文本检索 0 条，但 `search_entity.go` 信任请求 KB 列表，图检索命中 A 的 chunk 并进入 references（FAIL）。修复：cherry-pick OS 分支 `9ba3f7b`“安全修复：跨租户 KB 越权”（问答入口 `session_qa_helpers.go` 过滤无读权限的 KB，`search_entity.go` 只在授权范围内图检索）。修复后真实 Nebula 复测：B 无检索调用、无 references、回答“资料中未提及”，A 的内容出现 0 次；A 对照组仍有图召回（7 nodes/6 relations，`entity_results=2`）和 references。修复在共享代码上，Neo4j 后端走同一路径，一并生效 |
-| AC05 | 运行期连接失败 | PARTIAL | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中暂停 graphd 的实测被自动模式拦截（共享环境），待用户放行 |
+| AC04 | 过期 attempt 不写旧图 | PASS（修复） | `TestChunkExtractSupersededAttemptWritesNothing`（单测，红→绿） | 发现缺口：图任务只在开始时检查 attempt，LLM 调用期间若开始重解析（新 attempt 已先 DelGraph，且旧 chunk 在 finalizing 期间仍存在），旧任务返回后仍会 AddGraph 留下旧数据。修复：`extract.go` 在 AddGraph 前再查一次 attempt，被取代则丢弃结果，并以 superseded 标记收尾，不消耗新 attempt 的 pending 槽位。去掉该检查时“抽取期间被取代”用例失败（adds=1），恢复后通过 |
+| AC05 | 写图失败重试 | PASS | `TestChunkExtractGraphWriteFailureIsRetriedNotSwallowed`（单测）；适配器级重放见 NG-B 会话恢复测试 | 写图失败作为任务错误返回（由 asynq 重试，MaxRetry 3），不吞错；重试成功后只写一次。适配器本身不重放写入，结果未知的写由上层重试，AddGraph 幂等 |
+| AC05 | 运行期连接失败 | PARTIAL（待用户放行） | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中 docker pause graphd 的实测待用户放行（自动权限拦截，未尝试绕过） |
 
 ## NG-E — NOT_RUN
