@@ -1,17 +1,16 @@
 package service
 
 import (
-	"context"
 	"testing"
 
 	"github.com/primind/primind/internal/types"
 )
 
 func TestResolveKnowledgeBasesFiltersImplicitAgentDefaultsForRestrictedAPIKey(t *testing.T) {
-	ctx := types.WithTenantAPIKeyScope(context.Background(), types.TenantAPIKeyScope{
+	ctx := types.WithTenantAPIKeyScope(ownerTenantContext(10000), types.TenantAPIKeyScope{
 		KnowledgeBaseIDs: types.StringArray{"kb-allowed"},
 	})
-	svc := &sessionService{}
+	svc := ownerTenantSessionService(10000, "kb-allowed", "kb-blocked")
 
 	kbIDs, knowledgeIDs, err := svc.resolveKnowledgeBases(ctx, &types.QARequest{
 		Session: &types.Session{TenantID: 10000},
@@ -35,10 +34,10 @@ func TestResolveKnowledgeBasesFiltersImplicitAgentDefaultsForRestrictedAPIKey(t 
 }
 
 func TestResolveKnowledgeBasesRejectsExplicitOutOfScopeKBForRestrictedAPIKey(t *testing.T) {
-	ctx := types.WithTenantAPIKeyScope(context.Background(), types.TenantAPIKeyScope{
+	ctx := types.WithTenantAPIKeyScope(ownerTenantContext(10000), types.TenantAPIKeyScope{
 		KnowledgeBaseIDs: types.StringArray{"kb-allowed"},
 	})
-	svc := &sessionService{}
+	svc := ownerTenantSessionService(10000, "kb-allowed", "kb-blocked")
 
 	_, _, err := svc.resolveKnowledgeBases(ctx, &types.QARequest{
 		Session:          &types.Session{TenantID: 10000},
