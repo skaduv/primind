@@ -240,7 +240,7 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
 - 宿主机技能文件与软链接 `TestWriteHostSkillFilesRejectsEscapes`、`TestHostVersionDirSymlinksAreNotFollowed`（2 个）
 - MCP 服务更新 `TestUpdateMCPService_AppliesNonScalarUpdateWithoutName`（1 个）
 
-问答 SSE 不发 `complete`、连接不关闭（与 OpenSearch 无关，未修；在时限内只定位到范围，没有定位到具体行）：
+问答 SSE 不发 `complete`、连接不关闭（与 OpenSearch 无关；根因已定位为本机时钟问题，见下）：
 
 - 现象：普通问答（快速回答路径）的 answer 事件都已发出，服务端日志显示 `Knowledge QA service completed`（`internal/handler/session/qa.go:1377`）、消息已持久化（`is_completed=t`）、`[PIPELINE] stage=Stream action=channel_close`，但 SSE 循环 `handleAgentEventsForSSE`（`internal/handler/session/stream.go:331` 起）一直没读到 `complete` 事件，直到客户端断开。Postgres 和 OpenSearch 知识库上都能复现（2026-11-03 再次复现：session `9eab2504…`）。之前的 Q-NEG 那一次正常结束，所以是间歇或与回答内容有关。
 - 已排除：
@@ -249,3 +249,5 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
   - 写入失败：`completeStreamAssistantMessage`（`qa.go:2009` 一带）在 `publishCompletion` 出错时会记录 `Append persisted message completion failed`，复现时没有这条日志；消息持久化也成功，没有走错误分支。
   - SSE 读循环本身：读到 `complete` 就会结束（`stream.go:398` 一带）。
 - 主要怀疑（待验证）：`internal/stream/redis_manager.go` 的 `GetEvents` 在 `json.Unmarshal` 失败时静默跳过该事件，但 offset 照常前进（约 135 行起）。如果 `complete` 事件的 `Data`（含 `final_content`、`usage` 等）反序列化失败，读端会永久错过它，而且不留日志。其次怀疑 `publishCompletion` 执行时 `completionEvent` 已经为 nil，例如 `handleComplete` 中途 return 或被重复调用。复现后 Redis 中该消息的事件 key 已不存在（TTL 已过或未命中 key 前缀），所以没能直接查看原始事件。下一步：在 `GetEvents` 的反序列化失败处加日志，或在 `publishCompletion` 记录是否真的写入，再复现一次。
+- **根因（2026-11-04 定位，本机环境问题，不是代码缺陷）：** WSL 虚拟机的系统时钟每隔几秒在两个时间之间来回跳，相差 57,583 秒（约 16 小时，即 Windows 时区设为太平洋时间导致的偏差）。在 Redis 容器里连续执行 `TIME`，与 Windows 时间的差值在 0 和 57,583 秒之间交替。时钟往前跳时，Redis 会立即判定所有 1 小时 TTL 的 key 过期：`expired_keys` 累计 18.8 万，已完成消息的 stream key 的 TTL 反常地显示为 61,044 秒。问答进行中，SSE 事件列表 `os::<session>:<message>` 被中途删除，之后的事件写进一个从下标 0 重新开始的新列表；读端此时已经停在 offset 37，再也读不到后面的事件和 `complete`，事后用 continue-stream 也查不到这条消息的事件。插桩确认：`publishCompletion` 确实成功写入了 complete，读端停在 37 之后再没有拿到新事件。同一机制也会让 asynq 任务、live-run 标记等 Redis key 提前失效。
+- 处理：代码不改行为，只保留两处诊断日志：`redis_manager.go GetEvents` 丢弃无法解析的事件时告警；`publishCompletion` 没有可发布的 complete 时告警。修复需要用户把 Windows 时区改为 UTC+08:00 北京（或修正 WSL 的时间同步），属于系统设置，由用户操作。时钟稳定之后，应复测确认问答都能正常收到 complete。

@@ -931,6 +931,8 @@ func (h *AgentStreamHandler) publishCompletion(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.completionEvent == nil {
+		logger.GetLogger(ctx).Warnf("publishCompletion: no completion event prepared for session=%s message=%s",
+			h.sessionID, h.assistantMessageID)
 		return nil
 	}
 	if err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *h.completionEvent); err != nil {
