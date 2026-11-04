@@ -193,6 +193,7 @@ AC-OS03-02/03 补充（OpenSearch 不可用时删除任务的失败处理）：�
 - 修复（最小改动，`knowledgebase.go`）：删向量失败时返回错误，交给 asynq 重试，并且在删除 chunk 和 knowledge 行之前就返回，保证重试还能找到这些向量。单测 `TestProcessKBDeleteVectorDeleteFailureRetries`：去掉修复时失败（任务返回 nil），加上修复后通过，并断言 knowledge 行未被删除。
 - 第 3 轮（修复后，暂停约 40 秒，删一个 KB 副本）：暂停期间 knowledge 行 2 条、chunk 4 条都保留；恢复约 14 秒后重试成功，OpenSearch、knowledge 行和 chunk 都归零，对照组 4/4 不变。
 - 第 2 轮遗留的 4 条孤儿记录是本测试自己产生的，已按 `knowledge_base_id` 精确条件从该 store 的索引中删除（`deleted: 4`），没有用通配。
+- 重试用尽后的最终状态（读代码确认，未修）：`DeleteKnowledgeBase` 在入队清理任务之前就把 KB 行软删除，并立即返回 “Knowledge base deleted successfully”，界面上 KB 马上消失。清理任务 `TypeKBDelete` 设置 `MaxRetry(3)`；OpenSearch 一直不可用时，按 8e7b820 的修复，每次都返回错误，共 4 次尝试后被 asynq 归档（archived）。最终状态：KB 行已软删除，knowledge 行、chunk 和 OpenSearch 中的向量都还在，只有 ERROR 日志（`KB delete task deferred`）和 asynq 里的归档任务；用户看不到任何失败状态，也没有定期扫描会去重新清理（housekeeping 只处理文档的处理状态，`task_inspector` 明确不取消 KB 删除任务）。从用户角度看是**静默卡住**：数据不会被误标为已清理，但残留只能靠运维在 asynq 中手动重跑归档任务。删除单个文档则不同，失败期间 knowledge 保持 `deleting`，用户能看到。待决定：可以给 KB 增加“删除失败”状态，或者为软删除的 KB 加残留扫描，或者在最后一次重试失败时写审计告警。
 
 待办/风险：
 
