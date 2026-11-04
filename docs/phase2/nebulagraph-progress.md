@@ -19,7 +19,7 @@
 | NG-02-AC01 选择矩阵 | PASS | c6550be, 7b69387 | 显式空值按未设置处理（本分支决定） |
 | NG-02-AC02 五处耦合/禁用不积压 | PASS | c6550be, 7b69387 | — |
 | NG-02-AC03 真实抽图→Nebula→问答 | PASS | 7b69387 | 模型输出有波动（一次抽取 0 关系） |
-| NG-02-AC04 图/文本召回可区分 | PARTIAL | 7b69387, 05afbc9, 5c85053 | 追踪可区分，图能产出文本未命中的 chunk；但“只有图能答”的题被 disabled 对照组推翻（同文档相邻 chunk 合并），严格证明未做 |
+| NG-02-AC04 图/文本召回可区分 | PASS（严格证明） | 7b69387, 05afbc9, 5c85053, 本次提交 | 首轮单文档题被对照组推翻（相邻 chunk 合并、文档摘要泄露答案）；重设计后 disabled 答不出、nebulagraph 答对，见下“AC04 严格证明” |
 | NG-02-AC05 模型可用性/字段兼容/Wiki | PASS | 7b69387 | — |
 | NG-02-AC06 Agent 注入 | PASS（单测） | 7b69387 | Agent 真实链路未跑 |
 | NG-02-AC07 业务端到端性能 | BLOCKED | 7b69387 | 业务目标未冻结；4096 维向量无 HNSW 索引（走顺序扫描） |
@@ -119,6 +119,7 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC03 真实抽图→Nebula→问答 | PASS | 见下“真实链路” | 实际模型抽出实体/关系写入 `primind_ng_app`，普通问答经 Nebula 召回并给出正确答案与原文引用 |
 | AC04 图/文本召回可区分 | PASS（有限） | 服务日志 `search_entity.go` 与 `[PIPELINE] stage=SearchParallel` | 图召回 `7 nodes, 5 relations` → `entity_results=1`，文本 `chunk_results=9`，分开记录。测试文档只有 1 个 chunk，图命中的 chunk 与文本命中重合，合并去重后最终引用保留文本得分版本（`match_type=0`）；“图独有证据”题未覆盖 |
 | AC04 图独有证据 | PARTIAL（对照组推翻“图独有”结论） | 多 chunk 文档 `xuanwu.md`（3 chunk）：“玄武项目”只在 chunk0，“所长葛清远”只在 chunk2（不含“玄武”）。以单文档抽图覆盖（承担/领导 标签与示例）重解析后，图中有 北辰研究所-承担-玄武项目、葛清远-领导-北辰研究所，北辰研究所来源含 chunk0/chunk2。问题“玄武项目的承担单位的所长是谁？” | 文本检索 14 条，chunk2（`abf4e536-…`）不在文本结果中；图检索 2 nodes/1 relation，`filterSeenChunk new chunkIDs count: 2`（文本未见过的 chunk）。回答“北辰研究所，所长葛清远”，并以内联引用 `chunk_id=abf4e536-…` 标出该图独有 chunk。观察：消息的 references 列表只存了 5 条文本命中，未列出这个图独有 chunk（模型上下文里有）；另一篇已取消文档的 chunk 仍出现在文本检索结果中。两项都在文本/引用链路，不属图后端 ；**对照**：同题在 `GRAPH_BACKEND=disabled` 下（实体抽取跳过、`entity_results=0`）回答仍引用 chunk2——问答管线的 Merge 阶段会拼接同文档相邻 chunk（该文档仅约 1100 字），chunk2 内容经文本命中的 chunk0 带入上下文。结论：图召回确实独立产出文本初检未命中的 chunk，但本题答案并非只能靠图得到。要严格证明需让答案 chunk 与问题实体相距足够远（超出合并窗口）的长文档，未做 |
+| AC04 严格证明（重做） | PASS | 新 KB `c7fa62f1…`（Postgres 向量）：关键文档 `key.md`（2 个 chunk，单文档关闭摘要）：chunk0 含“玄武项目由北辰研究所承担”，chunk1 含“北辰研究所的掌门人是葛清远”（与问题无“玄武/项目/单位/所长”任何字面重合，且长度 ≥350 字不触发相邻扩展）；另上传 5 篇台账类填充文档（35 个 chunk，按文件关闭抽图），内容为其他项目/承担单位/所长，把答案 chunk 挤出文本前 30（hybrid-search 中排第 39/43）。图中有 北辰研究所-承担-玄武项目、葛清远-领导-北辰研究所，北辰研究所来源含两个 chunk。问题“玄武项目的承担单位的所长是谁？” | **nebulagraph**：图检索 2 nodes/1 relation，`filterSeenChunk new chunkIDs count: 2`，`chunk_results=30 entity_results=2`；回答“北辰研究所，所长葛清远”，并引用“三、人物介绍…掌门人是葛清远”（只在答案 chunk `454dd633`）。**disabled 对照**：`skipping extract entity`，`entity_results=0`；回答找不到所长，未出现“葛清远”，还误把填充资料里的“刘思远”当作答案。过程中发现两处会让文本侧拿到答案、已在设计中规避：① 文档摘要 chunk 会复述答案；② 小于 350 字的命中 chunk 会被相邻 chunk 扩展。另：问答时的实体抽取偶尔返回空（一次），此时图检索被跳过 |
 | AC05 模型可用性 | PASS | 直连 47501 chat、47503 embedding 最小调用（Key 不输出） | 均 HTTP 200，Embedding 4096 维；图客户端就绪另由启动日志/系统信息验证 |
 | AC07 业务端到端性能 | BLOCKED | — | 业务目标未冻结；单文档实测见下 |
 
