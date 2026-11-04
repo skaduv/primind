@@ -60,3 +60,29 @@ func TestQueuedKnowledgeIDsReportsBackendErrors(t *testing.T) {
 		t.Fatal("expected an error when Redis is down")
 	}
 }
+
+// The residue sweep asks whether a kb:delete task is still queued for a KB;
+// only kb:delete payloads naming that exact KB count.
+func TestHasQueuedKBDeleteTasksMatchesOnlyThatKB(t *testing.T) {
+	server := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	asynqClient := asynq.NewClientFromRedisClient(redisClient)
+	t.Cleanup(func() {
+		_ = asynqClient.Close()
+		_ = redisClient.Close()
+	})
+	inspector := &asynqTaskInspector{inspector: asynq.NewInspectorFromRedisClient(redisClient), redis: redisClient}
+
+	enqueueTask(t, asynqClient, types.TypeKBDelete, `{"tenant_id":1,"knowledge_base_id":"kb-a"}`, "kbdel-a")
+	enqueueTask(t, asynqClient, types.TypeKBClone, `{"knowledge_base_id":"kb-b"}`, "clone-b")
+
+	for kb, want := range map[string]bool{"kb-a": true, "kb-b": false, "kb-c": false} {
+		got, err := inspector.HasQueuedKBDeleteTasks(context.Background(), kb)
+		if err != nil {
+			t.Fatalf("%s: %v", kb, err)
+		}
+		if got != want {
+			t.Fatalf("%s: queued=%v, want %v", kb, got, want)
+		}
+	}
+}

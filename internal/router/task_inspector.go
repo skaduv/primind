@@ -263,6 +263,30 @@ func (a *asynqTaskInspector) HasQueuedDeleteTasksForKnowledge(
 	return false, nil
 }
 
+// HasQueuedKBDeleteTasks reports whether a kb:delete task for kbID is still
+// pending, scheduled, retrying or running. The housekeeping residue sweep
+// uses it so a knowledge base is never cleaned by two tasks at once.
+func (a *asynqTaskInspector) HasQueuedKBDeleteTasks(ctx context.Context, kbID string) (bool, error) {
+	if a == nil || a.inspector == nil || kbID == "" {
+		return false, nil
+	}
+	matcher := func(taskType string, payload []byte) bool {
+		if taskType != types.TypeKBDelete {
+			return false
+		}
+		var probe types.KBDeletePayload
+		return json.Unmarshal(payload, &probe) == nil && probe.KnowledgeBaseID == kbID
+	}
+	for _, queue := range queuesScanned {
+		for _, state := range a.cancellableTaskStates() {
+			if a.queueStateHasMatch(ctx, queue, state.name, state.list, matcher) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // QueueStats returns a depth snapshot for every queue this app enqueues
 // into. Read-only: it calls Inspector.GetQueueInfo per queue and maps
 // the result onto types.QueueStat, attaching static pool/weight metadata
