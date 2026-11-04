@@ -1018,7 +1018,12 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 					continue
 				}
 				if err := retrieveEngine.DeleteByKnowledgeIDList(ctx, knowledgeGroup, embeddingModel.GetDimensions(), key.Type); err != nil {
-					logger.Warnf(ctx, "Failed to delete embeddings for model %s: %v", key.EmbeddingModelID, err)
+					// Stop before chunks and knowledge rows go: they are what a
+					// retry uses to find these vectors again. Reporting success
+					// here would leave them orphaned in the vector store.
+					logger.Errorf(ctx, "KB delete task deferred: deleting embeddings for model %s failed: %v",
+						key.EmbeddingModelID, err)
+					return fmt.Errorf("delete embeddings for knowledge base %s: %w", kbID, err)
 				}
 			}
 		}
