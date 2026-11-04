@@ -168,11 +168,12 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 
 ## 补充记录（2026-11-04）
 
-### 同 store 移动后图数据缺失（发现，未修）
+### 同 store 移动后图数据缺失（已修，单测验证）
 
 - 实测：把 qingluan 文档从 KB1 `fcd13be2…` 以 `reuse_vectors` 移到同 store 的新 KB `e78a60ca…`（开启抽图）。移动完成后，源 KB 中该文档的图数据 9→0（源范围无残留，符合预期）；但目标 KB 中该文档图数据为 0，文档和 2 个 chunk 已在目标 KB。
 - 定位：`knowledge_clone_move.go` 的 `moveKnowledgeReuseVectors` 删除源图命名空间后，没有在目标 KB 投递抽图任务，也没有迁移图数据。结果是移动后的文档在目标 KB 无法被图检索命中，需重解析才能恢复。
-- 建议修法（待决定）：移动完成后，若目标 KB 开启抽图，按 chunk 投递 `NewChunkExtractTask`（会再调 LLM）；或在适配器层按命名空间改写 kb 字段迁移（不需要 LLM，但适配器要新增能力）。
+- 修复（主控选定第一种修法）：`moveKnowledgeReuseVectors` 删除源图命名空间并完成移动后，调用 `enqueueMovedGraphExtract`：目标 KB 开启抽图时（`ResolveProcessConfig(targetKB, overrides).GraphEnabled`），对移动过去的文本 chunk（经 `selectGraphChunks`）逐个投递 `NewChunkExtractTask`，任务带 KnowledgeID 与当前 attempt，沿用取消/删除/attempt 过期检查。不预置 pending 槽位：移动后的文档已是 completed，任务结束时的槽位释放在计数为 0 时是空操作（`FinalizeSubtask` 以 `pending_subtasks_count > 0` 为条件），不会把文档拉回 finalizing。图后端 disabled 时 `NewChunkExtractTask` 不投递。投递失败只记日志，不回滚已完成的移动。
+- 验证：`TestEnqueueMovedGraphExtract`——目标开启抽图且 nebulagraph 时投递数 = chunk 数（3）；图后端 disabled 时 0；目标未开抽图时 0。原有移动/转移单测通过。真实 LLM 重抽未跑（额度原因）；会按 chunk 数产生 LLM 调用，移动大量文档时耗时与模型成本相应增加。改动文件：`knowledge_clone_move.go`（未改 `knowledgebase.go`）。
 - 知识库复制：代码上 `CloneChunk` 不复制图数据，复制出的 KB 预计没有图，需重解析；本次未实测核对。
 
 ### Wiki 输出上限（已修，`36bc5e7`）
