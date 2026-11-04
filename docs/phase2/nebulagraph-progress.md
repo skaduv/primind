@@ -85,6 +85,7 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC05 Wiki / AC06 Agent 回归 | PASS（单测） | `./internal/agent/tools -run 'KnowledgeGraph\|Graph'`、`./internal/application/service/chat_pipeline -run 'Entity\|Graph'`、`./internal/application/service -run Wiki` | 全部通过；Agent 仍经容器注入同一 `RetrieveGraphRepository` |
 | AC03 真实抽图→Nebula→问答 | PASS | 见下“真实链路” | 实际模型抽出实体/关系写入 `primind_ng_app`，普通问答经 Nebula 召回并给出正确答案与原文引用 |
 | AC04 图/文本召回可区分 | PASS（有限） | 服务日志 `search_entity.go` 与 `[PIPELINE] stage=SearchParallel` | 图召回 `7 nodes, 5 relations` → `entity_results=1`，文本 `chunk_results=9`，分开记录。测试文档只有 1 个 chunk，图命中的 chunk 与文本命中重合，合并去重后最终引用保留文本得分版本（`match_type=0`）；“图独有证据”题未覆盖 |
+| AC04 图独有证据 | PASS | 多 chunk 文档 `xuanwu.md`（3 chunk）：“玄武项目”只在 chunk0，“所长葛清远”只在 chunk2（不含“玄武”）。以单文档抽图覆盖（承担/领导 标签与示例）重解析后，图中有 北辰研究所-承担-玄武项目、葛清远-领导-北辰研究所，北辰研究所来源含 chunk0/chunk2。问题“玄武项目的承担单位的所长是谁？” | 文本检索 14 条，chunk2（`abf4e536-…`）不在文本结果中；图检索 2 nodes/1 relation，`filterSeenChunk new chunkIDs count: 2`（文本未见过的 chunk）。回答“北辰研究所，所长葛清远”，并以内联引用 `chunk_id=abf4e536-…` 标出该图独有 chunk。观察：消息的 references 列表只存了 5 条文本命中，未列出这个图独有 chunk（模型上下文里有）；另一篇已取消文档的 chunk 仍出现在文本检索结果中。两项都在文本/引用链路，不属图后端 |
 | AC05 模型可用性 | PASS | 直连 47501 chat、47503 embedding 最小调用（Key 不输出） | 均 HTTP 200，Embedding 4096 维；图客户端就绪另由启动日志/系统信息验证 |
 | AC07 业务端到端性能 | BLOCKED | — | 业务目标未冻结；单文档实测见下 |
 
