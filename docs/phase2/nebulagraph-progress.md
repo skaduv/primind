@@ -28,7 +28,7 @@
 | NG-03-AC03 权限边界 | PASS（修复后） | 8266191, 6b69618 | 跨租户越权由 OS 会话修复后 cherry-pick；组织共享场景只有单测 |
 | NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
 | NG-03-AC05 失败可定位/重试有界 | PASS | 84d5f05, 62c4a00, 本次提交 | graphd 运行中暂停约 25s 实测：删除时写图失败明确报错，asynq 约 50s 后重试成功清理；恢复后首次图检索即成功，无需重启应用；应用清理关闭 Nebula 连接池（graphd 会话 10→14→10） |
-| NG-03-AC06 Agent/共享/移动路径 | 未覆盖（额度原因，后续补） | — | Agent 真实图检索、移动、复制的真实路径未跑完：内置 `builtin-smart-reasoning` 在本租户未配置 model_id，另建测试 Agent `91cfcaca…` 后提问被中断；复制任务已发起（目标 KB `bba1e3e5…`）未核对结果。同 store 移动（reuse_vectors）有一次实测，发现缺口见下 |
+| NG-03-AC06 Agent/共享/移动路径 | PASS（真实） | 5e65515, df2c9fa, 621f39c, 本次提交 | 同 store 移动、知识库复制修复后真实验证通过；Agent 真实图检索通过（模型汇总时漏掉一条已返回的关系，见下）。仅本地单测覆盖：组织共享；未测：跨 store 移动（reparse 模式，走重解析链路） |
 | NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
 | NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
 | NG-04-AC03 切回覆盖说明 | PASS | 5c85053 | — |
@@ -196,3 +196,11 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 
 - WSL 异常重启后，`internal/application/service/tenant_skill_host_test.go` 从第 4097 字节起有 4 KB 被写成乱码（文件大小与修改时间未变，所以 `git status` 未显示），导致 service 包测试编译失败。
 - 处理：对全部 4550 个跟踪文件按内容哈希与索引比对，只有这一个文件损坏；已用 `git show HEAD:<文件>` 恢复，哈希与 HEAD 一致。未跟踪的 `.env.local`、`config/builtin_models.yaml` 检查无控制字符。
+
+### Agent 问答走图检索（真实）
+
+- 准备：内置 `builtin-smart-reasoning` 在本租户未设 `model_id`，不改内置配置，另建测试 Agent。含 `search_knowledge` 工具的 Agent 必须配置重排模型（`agentRequiresRerankModel`），本机重排服务不可达，所以测试 Agent 只开 `query_knowledge_graph`、`read_document`、`list_documents`（`b7ce2099…`，`model_id=builtin-company-chat`，KB 限定为复制出的 `37677598…`）。这样图工具是唯一的检索途径。
+- 问题：“请使用知识图谱查询工具回答：常州驰远电气为哪个产品供应什么部件？这个产品还有哪些供应商？”
+- 结果：Agent 3 轮调用 `query_knowledge_graph`（参数 `knowledge_base_ids=[37677598…]`、`query="常州驰远电气 产品 零部件 供应商"`），`execute_done success=true`。工具返回内容来自 Nebula，包含 常州驰远电气-供应-伺服电机/青鸾分拣机，以及 宁海动力-供应-青鸾分拣机。
+- 回答：“常州驰远电气为青鸾分拣机供应伺服电机（销售代表孙一帆）”，引用副本 KB 下的 chunk `6a6d7f31…`，正确。但称“未显示其他供应商”——工具结果里已有 宁海动力，模型汇总时漏掉。属于模型推理问题，图检索与工具链路本身正确。
+- 观察：Agent 只要启用 `search_knowledge` 就强制要求重排模型；本机环境因重排不可达，无法测“文本 + 图”混合的 Agent。
