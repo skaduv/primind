@@ -3,10 +3,13 @@ package container
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	esv7 "github.com/elastic/go-elasticsearch/v7"
@@ -43,11 +46,51 @@ import (
 // injected into VectorStoreService for dynamic registry updates. The
 // EngineFactory type itself is unchanged — the audit sink is captured in the
 // closure rather than added to the signature.
-func NewEngineFactory(db *gorm.DB, cfg *config.Config, auditSvc interfaces.AuditLogService) interfaces.EngineFactory {
+//
+// On shutdown it closes the resources every DB-store engine it built still
+// owns (see ownedEngines); the registry already closes the ones it retires.
+func NewEngineFactory(
+	db *gorm.DB, cfg *config.Config, auditSvc interfaces.AuditLogService, cleaner interfaces.ResourceCleaner,
+) interfaces.EngineFactory {
 	sink := newAuditSinkAdapter(auditSvc)
+	cleaner.RegisterWithName("RetrieveEngines", ownedEngines.closeAll)
 	return func(ctx context.Context, store types.VectorStore) (interfaces.RetrieveEngineService, error) {
 		return createEngineServiceFromStore(ctx, store, db, cfg, sink)
 	}
+}
+
+// ownedEngines records DB-store engines that own closable resources (today
+// OpenSearch clients built by createOpenSearchEngine). Both the startup load
+// and on-demand rebuilds go through createEngineServiceFromStore, so every
+// such engine is closed at shutdown, after the HTTP server has drained.
+// Closing an engine the registry already retired is a harmless no-op repeat.
+var ownedEngines = &engineCloserSet{closers: map[io.Closer]struct{}{}}
+
+type engineCloserSet struct {
+	mu      sync.Mutex
+	closers map[io.Closer]struct{}
+}
+
+func (s *engineCloserSet) track(svc interfaces.RetrieveEngineService) {
+	if c, ok := svc.(io.Closer); ok {
+		s.mu.Lock()
+		s.closers[c] = struct{}{}
+		s.mu.Unlock()
+	}
+}
+
+func (s *engineCloserSet) closeAll() error {
+	s.mu.Lock()
+	closers := s.closers
+	s.closers = map[io.Closer]struct{}{}
+	s.mu.Unlock()
+	var errs []error
+	for c := range closers {
+		if err := c.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // createEngineServiceFromStore creates a RetrieveEngineService from a VectorStore's config.
@@ -81,7 +124,11 @@ func createEngineServiceFromStore(
 	case types.TencentVectorDBRetrieverEngineType:
 		return createTencentVectorDBEngine(store)
 	case types.OpenSearchRetrieverEngineType:
-		return createOpenSearchEngine(ctx, store, auditSink)
+		svc, err := createOpenSearchEngine(ctx, store, auditSink)
+		if err == nil {
+			ownedEngines.track(svc)
+		}
+		return svc, err
 	default:
 		return nil, fmt.Errorf("unsupported engine type: %s", store.EngineType)
 	}
