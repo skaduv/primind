@@ -4,6 +4,39 @@
 
 状态取值：PASS / PARTIAL / BLOCKED / NOT_RUN / FAIL。证据只保留在本机临时目录，不入库；本文件记录命令和结论。
 
+## 最终 AC 状态总表（2026-11-04）
+
+基线：本地 `main`（`fc23efc`，领先 `origin/main`）；本分支无需 rebase。收尾验证：`go build ./...` 通过；`nebula`、`chat_pipeline`、`container`、`types` 包测试全部通过；`internal/application/service` 失败 58 个，与 main 同一集合（均与图无关）。未推送、未开 PR。
+
+| AC | 状态 | 提交 | 未覆盖 / 备注 |
+| --- | --- | --- | --- |
+| NG-01-AC01 契约/夹具可重复 | PASS | c6550be | — |
+| NG-01-AC02 版本/SDK/Schema/身份 | PASS | c6550be | v3.8.0 + nebula-go v3.8.0 |
+| NG-01-AC03 真实写查删闭环 | PASS | 84d5f05 | 首次刚建 Schema 后 C1 出现一次 `-1002`，后续 4 次连过 |
+| NG-01-AC04 同名/多来源/方向/删除风险 | PASS | 84d5f05 | — |
+| NG-01-AC05 运行证据 | PASS | 84d5f05 | 证据在本机临时目录，不入库 |
+| NG-01-AC06 批量/池/并发/取消 + P6/P7 | PASS（仅测量） | 84d5f05 | 业务性能目标未冻结 |
+| NG-02-AC01 选择矩阵 | PASS | c6550be, 7b69387 | 显式空值按未设置处理（本分支决定） |
+| NG-02-AC02 五处耦合/禁用不积压 | PASS | c6550be, 7b69387 | — |
+| NG-02-AC03 真实抽图→Nebula→问答 | PASS | 7b69387 | 模型输出有波动（一次抽取 0 关系） |
+| NG-02-AC04 图/文本召回可区分 | PARTIAL | 7b69387, 05afbc9, 5c85053 | 追踪可区分，图能产出文本未命中的 chunk；但“只有图能答”的题被 disabled 对照组推翻（同文档相邻 chunk 合并），严格证明未做 |
+| NG-02-AC05 模型可用性/字段兼容/Wiki | PASS | 7b69387 | — |
+| NG-02-AC06 Agent 注入 | PASS（单测） | 7b69387 | Agent 真实链路未跑 |
+| NG-02-AC07 业务端到端性能 | BLOCKED | 7b69387 | 业务目标未冻结；4096 维向量无 HNSW 索引（走顺序扫描） |
+| NG-03-AC01 重复/并发/部分失败 | PASS | 84d5f05 | 适配器级（C1、重放幂等） |
+| NG-03-AC02 删除/重解析/移动不留残留 | PASS（删文档、删 KB、重解析） | ecfe7cd | 移动/复制未测 |
+| NG-03-AC03 权限边界 | PASS（修复后） | 8266191, 6b69618 | 跨租户越权由 OS 会话修复后 cherry-pick；组织共享场景只有单测 |
+| NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
+| NG-03-AC05 失败可定位/重试有界 | PARTIAL | 84d5f05, 62c4a00 | 应用运行中 docker pause graphd 实测待用户放行 |
+| NG-03-AC06 Agent/共享/移动路径 | PARTIAL | — | 只覆盖普通问答与共享单测；Agent、移动/复制真实路径未测 |
+| NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
+| NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
+| NG-04-AC03 切回覆盖说明 | PASS | 5c85053 | — |
+| NG-04-AC04 交付演练前置 | NOT_RUN | — | 归交付阶段 |
+| NG-04-AC05 Wiki/Agent/无 mock 冒充 | PASS | 5c85053 | — |
+
+已知问题（不在图后端，留给后续）：references 列表不含图独有 chunk；已取消文档的 chunk 仍可被文本检索命中。
+
 ## 本机环境与隔离
 
 | 项 | 值 |
