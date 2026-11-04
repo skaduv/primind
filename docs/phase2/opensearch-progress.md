@@ -194,3 +194,14 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
 ## 与 NebulaGraph 会话的共享文件
 
 - `internal/application/service/knowledgebase.go`：暂未改动。
+
+## 已有问题（与本分支改动无关）
+
+`go test ./internal/application/service` 在本机 Windows 上有 58 个失败。在不含本分支未提交改动的干净 HEAD 副本上，失败的正好是同一批 58 个：
+
+- 沙箱查询模板 `TestQueryTemplates*`（15 个）
+- 沙箱配置更新/删除时的快照与封锁 `TestUpdate*`、`TestDelete*`（沙箱/技能快照相关，约 25 个）
+- SQLite 数据源与调度 `TestDataSource*`、`TestDeleteKnowledgeBaseCleansUpSQLiteDataSources`（9 个）
+- 技能 Python 校验与本地执行 `TestSkillPythonVerifier*`、`TestSeededSkillHelperIsDirectlyExecutable`、`TestRuntimePrerequisitesResolveSkillLocalCLI`（7 个）
+- 宿主机技能文件与软链接 `TestWriteHostSkillFilesRejectsEscapes`、`TestHostVersionDirSymlinksAreNotFollowed`（2 个）
+- MCP 服务更新 `TestUpdateMCPService_AppliesNonScalarUpdateWithoutName`（1 个）
