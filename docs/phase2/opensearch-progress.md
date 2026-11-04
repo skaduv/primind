@@ -3,6 +3,29 @@
 分支：`claude/os-phase2-9b4d6d`（从 main 切出）。验收 ID 来自 `docs/specs/phase-2-ai-development/03-opensearch.md` 第 5、6 节。
 本记录只保留状态、验证方式、结果和未完成项，不另存证据文件。
 
+## 最终 AC 状态（2026-11-03）
+
+分支基于最新本地 main（`fc23efc`），无需 rebase。`go build ./...` 通过；opensearch（含 integration 和 `-tags integration` 真实测试）、service/retriever、container、chat_pipeline 全部通过；service 包仍只有已知的 58 个本机失败（见“已有问题”）。
+
+| AC | 状态 | 主要提交 | 未覆盖 / 备注 |
+| --- | --- | --- | --- |
+| AC-OS02-01 存储与绑定 | 通过 | 03fb800、e7e786b | — |
+| AC-OS02-02 标识一致、维度、重复写 | 通过 | 03fb800、e7e786b | — |
+| AC-OS02-03 三路召回 | 通过 | e7e786b | — |
+| AC-OS02-04 问答引用 | 通过 | e7e786b | 问答 SSE 不发 complete 是通用问题，未修（见“已有问题”） |
+| AC-OS02-05 重启后数据保留 | 通过 | fd3e479 | — |
+| AC-OS02-06 原后端与 Wiki 冒烟 | 通过 | ceba0ea | Wiki 自动生成受 `wikiLLMMaxTokens=32768` 影响，属已有问题，未修 |
+| AC-OS02-07 性能（纯索引/持续写查） | 部分：适配器和应用级基线已测 | 621f1bb、a05c88e、72a61ac | 未做并发混合负载和资源曲线；不能关闭 |
+| AC-OS03-01 修改/重解析/停用/标签/移动/复制 | 通过 | 07e8452、2c51ff3、7cbeb6e | — |
+| AC-OS03-02 删除文档 | 通过（正常路径） | 07e8452、7cbeb6e | OpenSearch 不可用时删除任务的失败处理：待用户放行 `docker pause` 后补测 |
+| AC-OS03-03 删除知识库 | 通过（正常路径） | 7cbeb6e | 同上，待放行后补测 |
+| AC-OS03-04 权限 | 通过 | 467511e、c67791c、9ba3f7b | 9ba3f7b 修复了问答图检索路径上的跨租户越权；图路径用 mock 覆盖，没有起 Nebula |
+| AC-OS03-05 bulk 部分失败 | 通过 | 47d6ca8 | — |
+| AC-OS03-06 断连与对账 | 通过 | 47d6ca8、c0ff6a1、64a6669 | 64a6669 修复了摘要阶段断连后的摘要 chunk 残留；旧写重放为后写覆盖，顺序由任务层保证 |
+| AC-OS03-07 registry 资源回收/冷却/替换 | 通过 | 47d6ca8 | — |
+| AC-OS03-08 重启恢复与退出释放 | 通过（单测验证退出释放） | 47d6ca8、f8b527e | Windows 下无法对后台进程发 Ctrl+C，没有在真实进程上走一遍优雅退出 |
+| AC-OS03-09 业务性能目标 | 未关闭 | 72a61ac | 目标值待用户确认；未做正常/突发混合负载 |
+
 ## 本机环境与运行约定
 
 - 依赖：WSL Docker 中的 PG(ParadeDB pg17) 5432、Redis 6379、MinIO 9000、OpenSearch 2.19.3 `http://127.0.0.1:9200`、docreader 50051。
