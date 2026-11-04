@@ -262,6 +262,9 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 	var handleErr error
+	// supersededLate is set when a newer attempt starts while this task is
+	// waiting on the LLM; its counter slot then belongs to the old attempt.
+	supersededLate := false
 	graphOut := types.JSONMap{}
 	defer func() {
 		// Decrement the parent's enrichment counter on terminal exit so a
@@ -270,7 +273,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		// payload field; legacy in-flight tasks without it are skipped.
 		finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
-			handleErr, false, isFinalAsynqAttempt(ctx))
+			handleErr, supersededLate, isFinalAsynqAttempt(ctx))
 		if gSpan == nil {
 			return
 		}
@@ -380,6 +383,15 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		logger.Warnf(ctx, "graph ignore chunk %s: %v", p.ChunkID, err)
 		graphOut["skipped"] = "chunk_disappeared"
+		return nil
+	}
+	// The LLM call can outlast a reparse that already cleared this document's
+	// graph; writing now would leave the old attempt's data behind.
+	if attemptSuperseded(ctx, s.tracker(), p.KnowledgeID, p.Attempt) {
+		logger.Infof(ctx, "graph extract: attempt %d superseded during extraction for %s, dropping result",
+			p.Attempt, p.KnowledgeID)
+		supersededLate = true
+		graphOut["skipped"] = "attempt_superseded"
 		return nil
 	}
 
