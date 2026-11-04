@@ -216,3 +216,13 @@ PRIMIND_OS_LOCAL_URL=http://127.0.0.1:9200 PRIMIND_OS_LOCAL_PERF=1 go test -tags
 - 技能 Python 校验与本地执行 `TestSkillPythonVerifier*`、`TestSeededSkillHelperIsDirectlyExecutable`、`TestRuntimePrerequisitesResolveSkillLocalCLI`（7 个）
 - 宿主机技能文件与软链接 `TestWriteHostSkillFilesRejectsEscapes`、`TestHostVersionDirSymlinksAreNotFollowed`（2 个）
 - MCP 服务更新 `TestUpdateMCPService_AppliesNonScalarUpdateWithoutName`（1 个）
+
+问答 SSE 不发 `complete`、连接不关闭（与 OpenSearch 无关，未修；在时限内只定位到范围，没有定位到具体行）：
+
+- 现象：普通问答（快速回答路径）的 answer 事件都已发出，服务端日志显示 `Knowledge QA service completed`（`internal/handler/session/qa.go:1377`）、消息已持久化（`is_completed=t`）、`[PIPELINE] stage=Stream action=channel_close`，但 SSE 循环 `handleAgentEventsForSSE`（`internal/handler/session/stream.go:331` 起）一直没读到 `complete` 事件，直到客户端断开。Postgres 和 OpenSearch 知识库上都能复现（2026-11-03 再次复现：session `9eab2504…`）。之前的 Q-NEG 那一次正常结束，所以是间歇或与回答内容有关。
+- 已排除：
+  - 事件总线：`qa.go:757` 使用 `event.NewEventBus()`，是同步模式（`internal/event/event.go:165`），`completeQuickAnswerTurn`（`qa.go:1955`）中 `EventAgentComplete` 的处理（`agent_stream_handler.go:713 handleComplete`）先于 `publishCompletion`（`agent_stream_handler.go:930`）执行，不存在先后竞争。
+  - 消息 ID 不匹配：`completeQuickAnswerTurn` 用 `streamCtx.assistantMessage.ID`，与 `setupStreamHandler`（`qa.go:825`）的 assistantMessageID 一致。
+  - 写入失败：`completeStreamAssistantMessage`（`qa.go:2009` 一带）在 `publishCompletion` 出错时会记录 `Append persisted message completion failed`，复现时没有这条日志；消息持久化也成功，没有走错误分支。
+  - SSE 读循环本身：读到 `complete` 就会结束（`stream.go:398` 一带）。
+- 主要怀疑（待验证）：`internal/stream/redis_manager.go` 的 `GetEvents` 在 `json.Unmarshal` 失败时静默跳过该事件，但 offset 照常前进（约 135 行起）。如果 `complete` 事件的 `Data`（含 `final_content`、`usage` 等）反序列化失败，读端会永久错过它，而且不留日志。其次怀疑 `publishCompletion` 执行时 `completionEvent` 已经为 nil，例如 `handleComplete` 中途 return 或被重复调用。复现后 Redis 中该消息的事件 key 已不存在（TTL 已过或未命中 key 前缀），所以没能直接查看原始事件。下一步：在 `GetEvents` 的反序列化失败处加日志，或在 `publishCompletion` 记录是否真的写入，再复现一次。
