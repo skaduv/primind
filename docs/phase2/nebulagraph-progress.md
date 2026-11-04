@@ -175,10 +175,23 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 - 修复（主控选定第一种修法）：`moveKnowledgeReuseVectors` 删除源图命名空间并完成移动后，调用 `enqueueMovedGraphExtract`：目标 KB 开启抽图时（`ResolveProcessConfig(targetKB, overrides).GraphEnabled`），对移动过去的文本 chunk（经 `selectGraphChunks`）逐个投递 `NewChunkExtractTask`，任务带 KnowledgeID 与当前 attempt，沿用取消/删除/attempt 过期检查。不预置 pending 槽位：移动后的文档已是 completed，任务结束时的槽位释放在计数为 0 时是空操作（`FinalizeSubtask` 以 `pending_subtasks_count > 0` 为条件），不会把文档拉回 finalizing。图后端 disabled 时 `NewChunkExtractTask` 不投递。投递失败只记日志，不回滚已完成的移动。
 - 验证：`TestEnqueueMovedGraphExtract`——目标开启抽图且 nebulagraph 时投递数 = chunk 数（3）；图后端 disabled 时 0；目标未开抽图时 0。原有移动/转移单测通过。真实 LLM 重抽未跑（额度原因）；会按 chunk 数产生 LLM 调用，移动大量文档时耗时与模型成本相应增加。改动文件：`knowledge_clone_move.go`（未改 `knowledgebase.go`）。
 - 真实验证（2026-11-04，`5e65515` 构建）：把已抽图的 `key.md`（2 个 chunk）以 `reuse_vectors` 从 KB `c7fa62f1…` 移到同 store、开启抽图的 KB `e78a60ca…`。移动后日志投递 2 个图任务（chunk `3ea3aa57…`、`454dd633…`），两次抽取完成；源 KB 中该文档图数据 4→0，目标 KB 生成 9 行（含 葛清远-任职-北辰研究所）；文档 `completed`、pending 0。目标 KB 普通问答“葛清远在哪个机构任职？”：`entity search result count: 3 nodes, 2 relations`、`entity_results=2`，回答“北辰研究所”并引用目标 KB 下的 chunk `454dd633…`。抽取结果有模型波动：这次未抽出 北辰研究所-承担-玄武项目。
-- 知识库复制：代码上 `CloneChunk` 不复制图数据，复制出的 KB 预计没有图，需重解析；本次未实测核对。
 
 ### Wiki 输出上限（已修，`36bc5e7`）
 
 - 原问题：`wiki_ingest.go` 写死 `wikiLLMMaxTokens=32768`，本机问答模型上下文只有 32768，每次 Wiki 抽取都返回 400（输入+输出超出上下文），Wiki 自动生成全部失败（main 上即存在）。
 - 修复：按模型 `context_window` 的 1/4 计算，夹在 [4096, 32768]；模型配置了 `max_output_tokens` 时不超过它；上下文未知时用 16384。
 - 验证：单测 `TestWikiMaxTokensForContextWindow`、`TestGenerateWithTemplateSizesMaxTokensToModel`（32k 模型实际请求 8192）及原有 Wiki 相关单测通过。真实 Wiki 生成未跑（额度原因）。
+
+### 知识库复制后没有图（已修，单测 + 真实验证）
+
+- 现象：复制已抽图的 KB 后，副本 `indexing_strategy.graph_enabled=false`、`extract_config` 为空，图数据 0 行。
+- 定位：`knowledgebase.go` 的 `CopyKnowledgeBase` 构建目标 KB 时未带 `IndexingStrategy`、`ExtractConfig`（副本被 `EnsureDefaults` 设为默认的向量+关键词）；`knowledge_clone_move.go` 的 `CloneChunk` 只复制 chunk 与向量，不复制、也不重建图数据。
+- 修复（最小改动）：`CopyKnowledgeBase` 复制 `IndexingStrategy` 与 `ExtractConfig`（`cloneExtractConfig` 深拷贝标签/示例，避免两个 KB 共用切片）；`CloneChunk` 在新 chunk 落库后调用 `enqueueTransferredGraphExtract`（与移动修复共用，原名 `enqueueMovedGraphExtract` 改为通用名），目标 KB 开启抽图且图后端可用时按 chunk 投递抽图任务。`knowledgebase.go` 只在 `CopyKnowledgeBase` 的字段列表里加 2 行，不涉及 OS 会话改过的 `ProcessKBDelete`。
+- 单测：`TestCloneExtractConfigCopiesWithoutAliasing`（复制保留开启状态、不共用切片）；`TestEnqueueMovedGraphExtract` 改调通用函数后仍通过。
+- 真实验证：复制 KB `e78a60ca…`（含 qingluan、key.md）得副本 `37677598…`。副本 `graph_enabled=true`、`extract_config.enabled=true`；投递 3 个图任务（qingluan 1 + key.md 2），3 次抽取完成、0 失败；副本图数据 54 行，两篇文档 `completed`、pending 0。随后删除源 KB：源 KB 图数据 0，副本图数据仍 54 行、chunk 4 个；副本问答“青鸾分拣机的伺服电机由哪家公司供应？”：`entity search result count: 5 nodes, 4 relations`、`entity_results=1`，回答“常州驰远电气”并引用副本下的 chunk `6a6d7f31…`。
+- 代价：复制会按 chunk 数重新调用抽图模型。
+
+### 本地文件损坏（环境问题，已恢复）
+
+- WSL 异常重启后，`internal/application/service/tenant_skill_host_test.go` 从第 4097 字节起有 4 KB 被写成乱码（文件大小与修改时间未变，所以 `git status` 未显示），导致 service 包测试编译失败。
+- 处理：对全部 4550 个跟踪文件按内容哈希与索引比对，只有这一个文件损坏；已用 `git show HEAD:<文件>` 恢复，哈希与 HEAD 一致。未跟踪的 `.env.local`、`config/builtin_models.yaml` 检查无控制字符。
