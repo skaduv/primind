@@ -19,6 +19,8 @@ func (r *Repository) MoveKnowledgeIndices(
 	_ int,
 	_ string,
 ) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	body, err := json.Marshal(map[string]any{
 		"query": map[string]any{"bool": map[string]any{"filter": []any{
 			map[string]any{"term": map[string]any{"knowledge_base_id": sourceKB}},
@@ -32,6 +34,9 @@ func (r *Repository) MoveKnowledgeIndices(
 	})
 	if err != nil {
 		return fmt.Errorf("opensearch: marshal move: %w", err)
+	}
+	if err := r.refreshBeforeByQuery(ctx, r.baseIndex+"_*"); err != nil {
+		return err
 	}
 	refresh := true
 	resp, err := r.client.UpdateByQuery(ctx, osapi.UpdateByQueryReq{

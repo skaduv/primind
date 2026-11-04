@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,16 @@ func TestMoveIndicesRequiresCompleteResult(t *testing.T) {
 
 func TestMoveIndicesIncludesOrphansEvenWithoutDatabaseChunks(t *testing.T) {
 	var body map[string]any
+	var refreshed bool
 	repo, server := newTestRepo(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_refresh") {
+			if body != nil {
+				t.Error("refresh must precede the move")
+			}
+			refreshed = true
+			_, _ = w.Write([]byte(`{"_shards":{"total":1,"successful":1,"failed":0}}`))
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode move request: %v", err)
 		}
@@ -52,6 +62,7 @@ func TestMoveIndicesIncludesOrphansEvenWithoutDatabaseChunks(t *testing.T) {
 	})
 	defer server.Close()
 	require.NoError(t, repo.MoveKnowledgeIndices(context.Background(), "source", "target", "doc", nil, 1, "file"))
+	require.True(t, refreshed, "unrefreshed writes would be skipped by _update_by_query")
 	want := `{"bool":{"filter":[{"term":{"knowledge_base_id":"source"}},{"term":{"knowledge_id":"doc"}}]}}`
 	query, err := json.Marshal(body["query"])
 	require.NoError(t, err)

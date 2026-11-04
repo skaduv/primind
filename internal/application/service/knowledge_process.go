@@ -1674,34 +1674,6 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			}
 		}
 
-		// Embed only the LLM-generated summary in the indexed chunk.
-		// We deliberately omit knowledge.FileName here: filenames are an
-		// unreliable signal (e.g. "MX5280.pdf" for a scanned legal letter)
-		// and surfacing them in retrieved RAG context can re-introduce the
-		// hallucination vector this branch is meant to close.
-		summaryChunk := &types.Chunk{
-			ID:              uuid.New().String(),
-			TenantID:        knowledge.TenantID,
-			KnowledgeID:     knowledge.ID,
-			KnowledgeBaseID: knowledge.KnowledgeBaseID,
-			Content:         buildSummaryChunkContent(summary, summaryResult.Profile),
-			ChunkIndex:      maxChunkIndex + 1,
-			IsEnabled:       true,
-			CreatedAt:       time.Now(),
-			UpdatedAt:       time.Now(),
-			StartAt:         0,
-			EndAt:           0,
-			ChunkType:       types.ChunkTypeSummary,
-			ParentChunkID:   textChunks[0].ID,
-		}
-
-		// Save summary chunk
-		if err := s.chunkRepo.CreateChunks(ctx, []*types.Chunk{summaryChunk}); err != nil {
-			logger.Errorf(ctx, "Failed to create summary chunk: %v", err)
-			summaryErr = err
-			return fmt.Errorf("failed to create summary chunk: %w", err)
-		}
-
 		// Index summary chunk
 		tenantInfo, err := s.tenantRepo.GetTenantByID(ctx, payload.TenantID)
 		if err != nil {
@@ -1726,20 +1698,31 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 			return fmt.Errorf("failed to get embedding model: %w", err)
 		}
 
-		indexInfo := []*types.IndexInfo{{
-			Content:         summaryChunk.Content,
-			SourceID:        summaryChunk.ID,
-			SourceType:      types.ChunkSourceType,
-			ChunkID:         summaryChunk.ID,
-			KnowledgeID:     knowledge.ID,
-			KnowledgeBaseID: knowledge.KnowledgeBaseID,
-			IsEnabled:       true,
-		}}
-
-		if err := retrieveEngine.BatchIndex(ctx, embeddingModel, indexInfo); err != nil {
-			logger.Errorf(ctx, "Failed to index summary chunk: %v", err)
+		// Embed only the LLM-generated summary in the indexed chunk.
+		// We deliberately omit knowledge.FileName here: filenames are an
+		// unreliable signal (e.g. "MX5280.pdf" for a scanned legal letter)
+		// and surfacing them in retrieved RAG context can re-introduce the
+		// hallucination vector this branch is meant to close.
+		if err := s.storeSummaryChunk(ctx, knowledge,
+			buildSummaryChunkContent(summary, summaryResult.Profile), maxChunkIndex+1, textChunks[0].ID,
+			func(chunk *types.Chunk) error {
+				return retrieveEngine.BatchIndex(ctx, embeddingModel, []*types.IndexInfo{{
+					Content:         chunk.Content,
+					SourceID:        chunk.ID,
+					SourceType:      types.ChunkSourceType,
+					ChunkID:         chunk.ID,
+					KnowledgeID:     knowledge.ID,
+					KnowledgeBaseID: knowledge.KnowledgeBaseID,
+					IsEnabled:       true,
+				}})
+			},
+			func(ids []string) error {
+				return retrieveEngine.DeleteByChunkIDList(ctx, ids, embeddingModel.GetDimensions(), kb.Type)
+			},
+		); err != nil {
+			logger.Errorf(ctx, "Failed to store summary chunk: %v", err)
 			summaryErr = err
-			return fmt.Errorf("failed to index summary chunk: %w", err)
+			return err
 		}
 
 		logger.Infof(ctx, "Successfully created and indexed summary chunk for knowledge: %s", payload.KnowledgeID)
@@ -1748,6 +1731,85 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 
 	logger.Infof(ctx, "Successfully generated summary for knowledge: %s", payload.KnowledgeID)
 	summaryOut["status"] = "completed"
+	return nil
+}
+
+// storeSummaryChunk persists and indexes the document's single summary chunk.
+// A retry reuses the summary chunk an earlier attempt left (updating its
+// content) and removes any extra ones, so the document never ends up with two.
+// A chunk this call created is removed again when indexing fails: otherwise
+// each failed attempt would leave a summary row that was never indexed. The
+// index delete is best effort (a failed bulk may still have written it), and
+// cleanup failures are only logged so the indexing error is what surfaces.
+func (s *knowledgeService) storeSummaryChunk(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	content string,
+	chunkIndex int,
+	parentChunkID string,
+	index func(*types.Chunk) error,
+	deleteIndex func([]string) error,
+) error {
+	existing, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(
+		ctx, knowledge.TenantID, knowledge.ID, []types.ChunkType{types.ChunkTypeSummary},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to list summary chunks: %w", err)
+	}
+	var chunk *types.Chunk
+	created := false
+	if len(existing) > 0 {
+		chunk = existing[0]
+		chunk.Content = content
+		chunk.SourceContent = content
+		chunk.IsEnabled = true
+		chunk.UpdatedAt = time.Now()
+		if err := s.chunkRepo.UpdateChunk(ctx, chunk); err != nil {
+			return fmt.Errorf("failed to update summary chunk: %w", err)
+		}
+		if extra := existing[1:]; len(extra) > 0 {
+			ids := make([]string, 0, len(extra))
+			for _, c := range extra {
+				ids = append(ids, c.ID)
+			}
+			if err := s.chunkRepo.DeleteChunks(ctx, knowledge.TenantID, ids); err != nil {
+				logger.Warnf(ctx, "Failed to delete extra summary chunks %v: %v", ids, err)
+			} else if err := deleteIndex(ids); err != nil {
+				logger.Warnf(ctx, "Failed to delete index of extra summary chunks %v: %v", ids, err)
+			}
+		}
+	} else {
+		now := time.Now()
+		chunk = &types.Chunk{
+			ID:              uuid.New().String(),
+			TenantID:        knowledge.TenantID,
+			KnowledgeID:     knowledge.ID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			Content:         content,
+			ChunkIndex:      chunkIndex,
+			IsEnabled:       true,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			ChunkType:       types.ChunkTypeSummary,
+			ParentChunkID:   parentChunkID,
+		}
+		if err := s.chunkRepo.CreateChunks(ctx, []*types.Chunk{chunk}); err != nil {
+			return fmt.Errorf("failed to create summary chunk: %w", err)
+		}
+		created = true
+	}
+
+	if err := index(chunk); err != nil {
+		if created {
+			if delErr := s.chunkRepo.DeleteChunk(ctx, knowledge.TenantID, chunk.ID); delErr != nil {
+				logger.Warnf(ctx, "Failed to remove unindexed summary chunk %s: %v", chunk.ID, delErr)
+			}
+			if delErr := deleteIndex([]string{chunk.ID}); delErr != nil {
+				logger.Warnf(ctx, "Failed to remove index of summary chunk %s: %v", chunk.ID, delErr)
+			}
+		}
+		return fmt.Errorf("failed to index summary chunk: %w", err)
+	}
 	return nil
 }
 

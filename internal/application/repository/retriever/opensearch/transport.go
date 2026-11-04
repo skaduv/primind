@@ -32,22 +32,43 @@ import (
 //   - IdleConnTimeout:     90s  (typical LB keep-alive)
 //   - ResponseHeaderTimeout: 30s (per-request safety net)
 //   - ExpectContinueTimeout: 1s
-func NewOpenSearchClient(cfg *types.ConnectionConfig) (*osapi.Client, error) {
+func NewOpenSearchClient(cfg *types.ConnectionConfig, opts ...ClientOption) (*osapi.Client, error) {
 	if cfg == nil || cfg.Addr == "" {
 		return nil, fmt.Errorf("opensearch: ConnectionConfig.Addr required: %w", ErrConfigInvalid)
 	}
 	if err := secutils.ValidateURLForSSRF(cfg.Addr); err != nil {
 		return nil, fmt.Errorf("opensearch: address failed SSRF validation: %w", err)
 	}
+	options := clientOptions{runtime: DefaultRuntimeOptions(), budget: processRequestBudget}
+	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrConfigInvalid
+		}
+		if err := opt(&options); err != nil {
+			return nil, runtimeConfigError(err)
+		}
+	}
 	transport := buildHTTPTransport(cfg.InsecureSkipVerify)
-	return osapi.NewClient(osapi.Config{
+	transport.MaxConnsPerHost = options.runtime.MaxConnsPerHost
+	transport.MaxIdleConns = options.runtime.MaxIdleConns
+	transport.MaxIdleConnsPerHost = options.runtime.MaxIdleConnsPerHost
+	transport.IdleConnTimeout = options.runtime.IdleConnTimeout
+	client, err := osapi.NewClient(osapi.Config{
 		Client: opensearch.Config{
-			Addresses: []string{cfg.Addr},
-			Username:  cfg.Username,
-			Password:  cfg.Password,
-			Transport: &secutils.SSRFValidatingRoundTripper{Base: transport},
+			Addresses:    []string{cfg.Addr},
+			Username:     cfg.Username,
+			Password:     cfg.Password,
+			Transport:    &boundedRoundTripper{base: &secutils.SSRFValidatingRoundTripper{Base: transport}, budget: options.budget, maxBytes: options.runtime.MaxResponseBytes},
+			MaxRetries:   3,
+			RetryBackoff: func(attempt int) time.Duration { return time.Duration(1<<min(attempt-1, 2)) * 100 * time.Millisecond },
 		},
 	})
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
+	client.Client.Transport = &runtimeTransport{base: client.Client.Transport, pool: transport, options: options.runtime, budget: options.budget}
+	return client, nil
 }
 
 // buildHTTPTransport constructs the TLS-hardened, pool-tuned
@@ -73,6 +94,9 @@ func buildHTTPTransport(insecureSkipVerify bool) *http.Transport {
 			},
 		},
 		MaxIdleConnsPerHost:   32,
+		MaxIdleConns:          32,
+		MaxConnsPerHost:       32,
+		TLSHandshakeTimeout:   10 * time.Second,
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,

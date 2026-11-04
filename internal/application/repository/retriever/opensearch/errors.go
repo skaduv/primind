@@ -9,6 +9,8 @@ import "errors"
 // never imports internal/errors. The boundary is intentional (directional
 // dependency).
 var (
+	ErrRequestBudgetFull = errors.New("opensearch: request waiting capacity exhausted")
+	ErrResponseTooLarge  = errors.New("opensearch: response exceeds byte cap")
 	// ErrIndexNotFound — alias / underlying index missing. Search and
 	// delete-by-query operations return this when the per-dim alias has
 	// not been created yet (no Save has been issued for that dim).

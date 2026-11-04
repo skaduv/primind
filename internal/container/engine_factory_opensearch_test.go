@@ -2,9 +2,12 @@ package container
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -12,6 +15,32 @@ import (
 	"github.com/primind/primind/internal/config"
 	"github.com/primind/primind/internal/types"
 )
+
+func TestCreateOpenSearchEngine_FailureClosesOwnedPool(t *testing.T) {
+	var live atomic.Int32
+	ts := httptest.NewUnstartedServer(osClusterHandler("elasticsearch", "8.10.4", true))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			live.Add(1)
+		}
+		if state == http.StateClosed {
+			live.Add(-1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+	_, err := createOpenSearchEngine(context.Background(), types.VectorStore{ConnectionConfig: types.ConnectionConfig{Addr: ts.URL}}, nil)
+	if err == nil {
+		t.Fatal("expected construction failure")
+	}
+	until := time.Now().Add(time.Second)
+	for live.Load() != 0 && time.Now().Before(until) {
+		time.Sleep(time.Millisecond)
+	}
+	if live.Load() != 0 {
+		t.Fatalf("failed construction retained %d connections", live.Load())
+	}
+}
 
 // osClusterHandler simulates an OpenSearch cluster for the driver's
 // construction probe: GET / (version) + /_cat/plugins (k-NN on every node).
@@ -102,5 +131,46 @@ func TestInitRetrieveEngineRegistry_OpenSearchEnvPath(t *testing.T) {
 	}
 	if _, err := registry.GetRetrieveEngineService(types.OpenSearchRetrieverEngineType); err != nil {
 		t.Errorf("opensearch engine not registered via env path: %v", err)
+	}
+}
+
+// Shutdown releases the connection pool of every OpenSearch engine the
+// factory built: the "RetrieveEngines" cleanup registered by NewEngineFactory
+// closes engines still published in the registry, not only retired ones.
+func TestEngineFactoryShutdownClosesOwnedOpenSearchPools(t *testing.T) {
+	var live atomic.Int32
+	ts := httptest.NewUnstartedServer(osClusterHandler("opensearch", "2.19.3", true))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			live.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			live.Add(-1)
+		}
+	}
+	ts.Start()
+	defer ts.Close()
+
+	cleaner := NewResourceCleaner()
+	factory := NewEngineFactory(nil, &config.Config{}, &fakeAuditSvc{}, cleaner)
+	svc, err := factory(context.Background(), types.VectorStore{
+		ID: "0123456789abcdef0123", EngineType: types.OpenSearchRetrieverEngineType,
+		ConnectionConfig: types.ConnectionConfig{Addr: ts.URL},
+	})
+	if err != nil || svc == nil {
+		t.Fatalf("factory: %v", err)
+	}
+	if live.Load() == 0 {
+		t.Fatal("expected an idle pooled connection after construction")
+	}
+	if errs := cleaner.Cleanup(context.Background()); len(errs) != 0 {
+		t.Fatalf("cleanup errors: %v", errs)
+	}
+	until := time.Now().Add(time.Second)
+	for live.Load() != 0 && time.Now().Before(until) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := live.Load(); n != 0 {
+		t.Fatalf("shutdown left %d OpenSearch connections open", n)
 	}
 }

@@ -16,6 +16,9 @@ func TestConnection(ctx context.Context, cfg *types.ConnectionConfig) error {
 	if err != nil {
 		return err
 	}
+	defer CloseIdleConnections(client)
+	ctx, cancel := operationContext(ctx, client)
+	defer cancel()
 	if err := probeVersion(ctx, client); err != nil {
 		return err
 	}

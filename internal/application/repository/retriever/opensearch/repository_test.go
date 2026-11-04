@@ -91,8 +91,7 @@ func newTestRepo(t *testing.T, handler http.HandlerFunc) (*Repository, *httptest
 			hnswEFConstruction: 100,
 			efSearch:           100,
 		},
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	return repo, ts
 }
@@ -901,8 +900,7 @@ func TestProbeKNNPlugin_EmptyResponse(t *testing.T) {
 func TestEnsureReady_ZeroDim_Rejected(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	err := r.ensureReady(context.Background(), 0)
 	if !errors.Is(err, ErrDimensionMismatch) {
@@ -913,8 +911,7 @@ func TestEnsureReady_ZeroDim_Rejected(t *testing.T) {
 func TestEnsureReady_DimAboveLimit_Rejected(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	err := r.ensureReady(context.Background(), 16001)
 	if !errors.Is(err, ErrDimensionMismatch) {
@@ -925,8 +922,7 @@ func TestEnsureReady_DimAboveLimit_Rejected(t *testing.T) {
 func TestEnsureReady_NilCtx_Rejected(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	err := r.ensureReady(nil, 768) //nolint:staticcheck — explicit nil ctx test
 	if err == nil || !strings.Contains(err.Error(), "non-nil ctx") {
@@ -976,11 +972,10 @@ func TestEnsureReady_ConcurrentCallers_SingleCreate(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:    newTestClient(t, ts.URL),
-		baseIndex: "primind_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		client:          newTestClient(t, ts.URL),
+		baseIndex:       "primind_test",
+		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		initializations: make(map[int]*indexInitialization),
 	}
 
 	var wg sync.WaitGroup
@@ -1005,11 +1000,10 @@ func TestEnsureReady_PerDimensionIsolation(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:    newTestClient(t, ts.URL),
-		baseIndex: "primind_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		client:          newTestClient(t, ts.URL),
+		baseIndex:       "primind_test",
+		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		initializations: make(map[int]*indexInitialization),
 	}
 
 	for _, dim := range []int{768, 1024, 1536} {
@@ -1057,11 +1051,10 @@ func TestEnsureReady_TransientError_NotCached(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:    newTestClient(t, ts.URL),
-		baseIndex: "primind_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		client:          newTestClient(t, ts.URL),
+		baseIndex:       "primind_test",
+		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		initializations: make(map[int]*indexInitialization),
 	}
 
 	// First call fails with transient 5xx.
@@ -1191,8 +1184,7 @@ func TestStub_SwapToVersion_ReturnsFeatureNotEnabled(t *testing.T) {
 func TestDeleteByChunkIDList_OverCap_ReturnsErrBatchTooLarge(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	ids := make([]string, 1001)
 	for i := range ids {
@@ -1207,8 +1199,7 @@ func TestDeleteByChunkIDList_OverCap_ReturnsErrBatchTooLarge(t *testing.T) {
 func TestDeleteByChunkIDList_Empty_NoOp(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	if err := r.DeleteByChunkIDList(context.Background(), nil, 768, ""); err != nil {
 		t.Errorf("empty list: want nil, got %v", err)
@@ -1222,8 +1213,7 @@ func TestDeleteByChunkIDList_Empty_NoOp(t *testing.T) {
 func TestBatchSave_OverDocCountCap_ReturnsErrBatchTooLarge(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	infos := make([]*types.IndexInfo, 1001)
 	embMap := make(map[string][]float32, 1001)
@@ -1246,8 +1236,7 @@ func TestBatchSave_OverDocCountCap_ReturnsErrBatchTooLarge(t *testing.T) {
 func TestBatchSave_EmptyList_NoOp(t *testing.T) {
 	t.Parallel()
 	r := &Repository{
-		once:    make(map[int]*sync.Once),
-		initErr: make(map[int]error),
+		initializations: make(map[int]*indexInitialization),
 	}
 	if err := r.BatchSave(context.Background(), nil, nil); err != nil {
 		t.Errorf("empty infos: want nil, got %v", err)
@@ -1372,4 +1361,151 @@ func TestDrainAndClose_DrainsAndClosesBody(t *testing.T) {
 	drainAndClose(body)
 	// Second close should not panic (io.NopCloser is idempotent).
 	drainAndClose(body)
+}
+
+// Exact wire assertions are essential here: SDK v4.6.0 AliasExistsReq with
+// empty Indices produces // _alias (without the space), parsed as an authority.
+// A handler accepting every HEAD would hide both that bug and an alias/index mixup.
+func TestOS02_ExistenceProtocol(t *testing.T) {
+	for _, prefix := range []string{"", "/gateway/opensearch"} {
+		for _, keyword := range []bool{false, true} {
+			for _, status := range []int{200, 404, 204, 401, 403, 500} {
+				t.Run(fmt.Sprintf("prefix=%q/keyword=%t/status=%d", prefix, keyword, status), func(t *testing.T) {
+					name, headPath := "protocol_3", "/_alias/protocol_3"
+					createPath := "/protocol_3_v1"
+					if keyword {
+						name, headPath, createPath = "protocol_keywords", "/protocol_keywords", "/protocol_keywords"
+					}
+					var host string
+					var heads, creates, aliases atomic.Int32
+					ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						if req.Host != host {
+							t.Errorf("Host=%q, want %q; URI=%q", req.Host, host, req.RequestURI)
+							w.WriteHeader(http.StatusBadRequest)
+							return
+						}
+						switch {
+						case req.Method == http.MethodHead && req.RequestURI == prefix+headPath:
+							heads.Add(1)
+							w.WriteHeader(status)
+						case status == 404 && req.Method == http.MethodPut && req.RequestURI == prefix+createPath && heads.Load() == 1 && creates.Add(1) == 1:
+							io.WriteString(w, `{"acknowledged":true}`)
+						case !keyword && status == 404 && req.Method == http.MethodPut && req.RequestURI == prefix+createPath+"/_alias/"+name && creates.Load() == 1 && aliases.Add(1) == 1:
+							io.WriteString(w, `{"acknowledged":true}`)
+						default:
+							t.Errorf("unexpected request: %s Host=%q URI=%q", req.Method, req.Host, req.RequestURI)
+							w.WriteHeader(http.StatusBadRequest)
+						}
+					}))
+					defer ts.Close()
+					host = strings.TrimPrefix(ts.URL, "http://")
+					repo := managedTestRepo(t, ts.URL+prefix, "protocol")
+					repo.keywordsReady = false
+					var err error
+					if keyword {
+						err = repo.ensureKeywordsIndex(context.Background())
+					} else {
+						err = repo.ensureReady(context.Background(), 3)
+					}
+					if status == 200 || status == 404 {
+						if err != nil {
+							t.Fatalf("initialization: %v", err)
+						}
+					} else {
+						want := ErrTransport
+						if status == 401 || status == 403 {
+							want = ErrAuth
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("status %d: error=%v, want %v", status, err, want)
+						}
+					}
+					wantCreates, wantAliases := int32(0), int32(0)
+					if status == 404 {
+						wantCreates = 1
+						if !keyword {
+							wantAliases = 1
+						}
+					}
+					if heads.Load() == 0 || creates.Load() != wantCreates || aliases.Load() != wantAliases {
+						t.Fatalf("HEAD/create/alias=%d/%d/%d, want HEAD>0 and %d/%d", heads.Load(), creates.Load(), aliases.Load(), wantCreates, wantAliases)
+					}
+				})
+			}
+		}
+	}
+}
+
+type existenceTestTransport func(*http.Request) (*http.Response, error)
+
+func (f existenceTestTransport) Perform(req *http.Request) (*http.Response, error) { return f(req) }
+
+type existenceTestBody struct {
+	*strings.Reader
+	closed bool
+}
+
+func (b *existenceTestBody) Close() error { b.closed = true; return nil }
+
+func TestOS02_ExistenceResponseAndTransport(t *testing.T) {
+	for _, status := range []int{200, 404, 204, 401, 503} {
+		t.Run(fmt.Sprintf("status=%d", status), func(t *testing.T) {
+			client := newTestClient(t, "http://127.0.0.1:1")
+			body := &existenceTestBody{Reader: strings.NewReader("synthetic response")}
+			client.Client.Transport = existenceTestTransport(func(req *http.Request) (*http.Response, error) {
+				if req.Method != http.MethodHead || req.Host != "" || req.URL.Host != "" || req.URL.RequestURI() != "/_alias/protocol_3" {
+					t.Errorf("invalid request before transport: method=%s host=%q URL=%s", req.Method, req.Host, req.URL)
+				}
+				return &http.Response{StatusCode: status, Body: body, Header: make(http.Header)}, nil
+			})
+			repo := &Repository{client: client}
+			exists, err := repo.aliasExists(context.Background(), "protocol_3")
+			if status == 200 || status == 404 {
+				if err != nil || exists != (status == 200) {
+					t.Errorf("exists=%t err=%v for status=%d", exists, err, status)
+				}
+			} else if exists || err == nil {
+				t.Errorf("unexpected status accepted: exists=%t err=%v", exists, err)
+			}
+			if !body.closed || body.Len() != 0 {
+				t.Errorf("response not drained/closed: remaining=%d closed=%t", body.Len(), body.closed)
+			}
+		})
+	}
+	for _, keyword := range []bool{false, true} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("keyword=%t/canceled=%t", keyword, canceled), func(t *testing.T) {
+				client := newTestClient(t, "http://127.0.0.1:1")
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if canceled {
+					cancel()
+				}
+				client.Client.Transport = existenceTestTransport(func(req *http.Request) (*http.Response, error) {
+					wantPath := "/_alias/protocol_3"
+					if keyword {
+						wantPath = "/protocol_keywords"
+					}
+					if req.Host != "" || req.URL.Host != "" || req.URL.RequestURI() != wantPath {
+						t.Errorf("wrong existence request: Host=%q URL=%s, want %s", req.Host, req.URL, wantPath)
+					}
+					if canceled {
+						return nil, req.Context().Err()
+					}
+					return nil, errors.New("synthetic transport failure")
+				})
+				repo := &Repository{client: client, baseIndex: "protocol"}
+				var err error
+				if keyword {
+					err = repo.createKeywordsIndex(ctx)
+				} else {
+					_, err = repo.aliasExists(ctx, "protocol_3")
+				}
+				if !errors.Is(err, ErrTransport) || (canceled && !errors.Is(err, context.Canceled)) {
+					t.Errorf("error classification lost: canceled=%t err=%v", canceled, err)
+				}
+			})
+		}
+	}
 }
