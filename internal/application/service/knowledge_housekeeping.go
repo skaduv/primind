@@ -125,9 +125,17 @@ func (h *HousekeepingService) Start(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	// Deleted knowledge bases whose cleanup task gave up: once at start, then
+	// every 10 minutes (a separate job, so it never waits on Sweep A–D).
+	if _, err := h.cron.AddFunc("0 */10 * * * *", func() {
+		h.sweepDeletedKBResidue(context.Background())
+	}); err != nil {
+		return err
+	}
 	h.cron.Start()
+	go h.sweepDeletedKBResidue(context.Background())
 	h.started = true
-	logger.Infof(ctx, "[Housekeeping] started with 5-minute sweep")
+	logger.Infof(ctx, "[Housekeeping] started with 5-minute sweep and 10-minute deleted-KB residue sweep")
 	return nil
 }
 

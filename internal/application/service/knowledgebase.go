@@ -937,6 +937,11 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 		} else if err == nil {
 			logger.Infof(ctx, "KB delete task completed successfully, knowledge base ID: %s", kbID)
 		}
+		if err != nil && !errors.Is(err, asynq.SkipRetry) && isFinalAsynqAttempt(ctx) {
+			logger.Errorf(ctx, "KB delete task for knowledge base %s exhausted its retries: %v; "+
+				"leftover data stays until the housekeeping deleted-KB residue sweep re-enqueues the cleanup",
+				kbID, err)
+		}
 
 		// Workers may enqueue downstream work while the delete task performs
 		// heavy storage cleanup. A detached, bounded final scrub runs on every
