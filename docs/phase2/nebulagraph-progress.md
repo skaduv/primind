@@ -27,7 +27,7 @@
 | NG-03-AC02 删除/重解析/移动不留残留 | PASS（删文档、删 KB、重解析） | ecfe7cd | 移动/复制未测 |
 | NG-03-AC03 权限边界 | PASS（修复后） | 8266191, 6b69618 | 跨租户越权由 OS 会话修复后 cherry-pick；组织共享场景只有单测 |
 | NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
-| NG-03-AC05 失败可定位/重试有界 | PARTIAL | 84d5f05, 62c4a00 | 应用运行中 docker pause graphd 实测待用户放行 |
+| NG-03-AC05 失败可定位/重试有界 | PASS | 84d5f05, 62c4a00, 本次提交 | graphd 运行中暂停约 25s 实测：删除时写图失败明确报错，asynq 约 50s 后重试成功清理；恢复后首次图检索即成功，无需重启应用；应用清理关闭 Nebula 连接池（graphd 会话 10→14→10） |
 | NG-03-AC06 Agent/共享/移动路径 | PARTIAL | — | 只覆盖普通问答与共享单测；Agent、移动/复制真实路径未测 |
 | NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
 | NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
@@ -154,7 +154,8 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC03 | 跨租户权限 | PASS（修复后） | 租户 B 普通问答传入租户 A 的 `knowledge_base_ids`；对照组为 A 本人同题 | 修复前：文本检索 0 条，但 `search_entity.go` 信任请求 KB 列表，图检索命中 A 的 chunk 并进入 references（FAIL）。修复：cherry-pick OS 分支 `9ba3f7b`“安全修复：跨租户 KB 越权”（问答入口 `session_qa_helpers.go` 过滤无读权限的 KB，`search_entity.go` 只在授权范围内图检索）。修复后真实 Nebula 复测：B 无检索调用、无 references、回答“资料中未提及”，A 的内容出现 0 次；A 对照组仍有图召回（7 nodes/6 relations，`entity_results=2`）和 references。修复在共享代码上，Neo4j 后端走同一路径，一并生效 |
 | AC04 | 过期 attempt 不写旧图 | PASS（修复） | `TestChunkExtractSupersededAttemptWritesNothing`（单测，红→绿） | 发现缺口：图任务只在开始时检查 attempt，LLM 调用期间若开始重解析（新 attempt 已先 DelGraph，且旧 chunk 在 finalizing 期间仍存在），旧任务返回后仍会 AddGraph 留下旧数据。修复：`extract.go` 在 AddGraph 前再查一次 attempt，被取代则丢弃结果，并以 superseded 标记收尾，不消耗新 attempt 的 pending 槽位。去掉该检查时“抽取期间被取代”用例失败（adds=1），恢复后通过 |
 | AC05 | 写图失败重试 | PASS | `TestChunkExtractGraphWriteFailureIsRetriedNotSwallowed`（单测）；适配器级重放见 NG-B 会话恢复测试 | 写图失败作为任务错误返回（由 asynq 重试，MaxRetry 3），不吞错；重试成功后只写一次。适配器本身不重放写入，结果未知的写由上层重试，AddGraph 幂等 |
-| AC05 | 运行期连接失败 | PARTIAL（待用户放行） | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中 docker pause graphd 的实测待用户放行（自动权限拦截，未尝试绕过） |
+| AC05 | 运行期连接失败 | PASS | 用户放行后单独执行 `wsl.exe -e docker pause primind-dev-nebula-graphd`，约 25s 后单独执行 unpause（graphd 随即 running healthy、9669 可连）。暂停期间：问答一次、删除 xuanwu 文档（KB1）一次 | 删除任务的图清理在约 5s 后失败并明确记录 `DeleteKnowledge delete knowledge graph failed … nebula execution failed (result may be unknown)`；asynq 约 50s 后重试，`successfully deleted 1 knowledge items`，该文档 Nebula 行 7→0、chunk 0、无残留。问答的实体检索恰在恢复后执行，直接返回 5 nodes/4 relations，未重启应用即重连。无旧数据写入、无丢写 |
+| AC05 | 退出时关闭连接池 | PASS | `TestRealNebulaPoolClosedByResourceCleaner`（容器包真实测试，经应用的 `initGraphRepository` 与 `ResourceCleaner` 建池与关闭；需 `NEBULA_IT_*`），测试期间用 nebula-console 统计 `SHOW SESSIONS` | graphd 会话数：测试前 10、池打开时 14、`Cleanup` 后 10；之后调用返回 `ErrClosed`。说明：Windows 上用 `taskkill /F` 强杀应用不会走清理，正常退出（信号）才会 |
 
 ## NG-E NG-04 双后端回归（本机无 Neo4j，只验 disabled / nebulagraph）
 
