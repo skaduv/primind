@@ -153,13 +153,14 @@ go test ./internal/application/service/retriever ./internal/application/reposito
 | AC-OS03-07 registry 资源回收 | 已修复并通过单测 | 缺陷：注销、同 store 替换、并发构建落败时，被丢弃的 OpenSearch 引擎从不释放连接池（registry 原注释已承认）。最小修复：`opensearch.WithOwnedClient()` + `Repository.Close()` 只在拥有 client 时释放空闲连接（engine_factory 创建的 client 标记为拥有；env 路径是借用者，不关闭）；`KeywordsVectorHybridRetrieveEngineService.Close()` 转发给实现了 `io.Closer` 的仓库；`registry.go` 在注销/替换/落败构建时调用。在途请求保留各自连接，受 operation deadline 约束，归还后的连接随 idle 超时关闭。测试：`close_test.go`（拥有者关闭、借用者不关）、`registry_close_test.go`（注销、替换只关旧、同引擎重复注册不关、落败构建被关闭、非 Closer 不受影响）。其他检索后端仓库都没有 `Close()`，行为不变。冷却/重建沿用已有 `TestGetOrLoadByStoreID_*`，全部通过。 |
 | AC-OS03-08 应用重启恢复 | 注册恢复已验证；优雅退出未覆盖 | 真实应用：用户 A 建 OpenSearch store（`8896d60e…`，`POST /vector-stores/:id/test` 成功），重启后日志 `Loading 1 vector store(s)` → `Registered DB vector store … engine=opensearch`。Windows 下只能强杀进程，没有走到优雅退出的 cleanup；进程级资源由进程退出回收。 |
 
-AC-OS03-06 后半（索引任务进行中断连，真实应用）：反馈明确；恢复后正文 chunk 对账一致，但摘要 chunk 留下 5 条只在数据库中的残留（新缺陷，未修，待决定）。
+AC-OS03-06 后半（索引任务进行中断连，真实应用）：通过。反馈明确，恢复后数据库与 OpenSearch 数量一致；过程中发现的摘要 chunk 残留缺陷已修复（见下）。
 
 - 环境：在 9200 前放一个独立的 TCP 代理（127.0.0.1:19201，临时程序，不入库），新建 store `1be72f24…` 指向代理（index_name `primind_os_proxy`），绑定知识库 `1e0f1b0f…`（4096 维）。共享的 OpenSearch 容器没有动。
 - 操作：连续上传 8 篇文档（每篇 3 个正文 chunk），上传后立即杀掉代理，断开约 67 秒后重启代理。
 - 断连期间：5 篇已写完正文、在生成摘要（finalizing），3 篇处于 processing。失败都有明确记录：摘要 span 失败并带 `bulk outcome (0 confirmed, 0 failed, 1 unknown)`；3 篇的 embedding span 为 `batch index failed`（错误码 VectorStoreWriteFailed）。失败清理时的删除也报错 `refresh before by-query: transport error`。没有任何一篇被标成 completed。
 - 恢复后：约 72 秒内 8 篇全部 completed（asynq 重试）。索引中没有重复 chunk_id；正文 24 个 chunk 与数据库逐条一致；断连时处于 processing 的 3 篇完全对账一致。
 - **新缺陷：** 断连时正在生成摘要的 5 篇，数据库各多出 1 条 summary chunk（数据库 37 条，OpenSearch 32 条）。原因是 `knowledge_process.go` 摘要任务（约 1697–1740 行）先 `CreateChunks` 写入摘要 chunk，再 `BatchIndex`；索引失败时直接返回错误，没有删除刚写入的数据库行；重试又用新的 UUID 生成一条摘要 chunk。所以每次在摘要阶段索引失败，都会留下 1 条没有进索引的摘要 chunk。检索走 OpenSearch，不会命中它，但 chunk 列表和按数据库读取片段的地方能看到，计数也对不上。这段是通用服务层代码，所有检索后端都会遇到。最小修复建议：`BatchIndex` 失败时删除这条摘要 chunk 的数据库行，并尽力删除其索引（outcome 为 unknown 时可能已写入）；或者重试前先清理该 knowledge 上没有进索引的旧摘要 chunk。待决定是否在本分支修。
+- **已修复：** 新增 `storeSummaryChunk`。同一文档如果已有摘要 chunk，就复用它并更新内容，多出来的删掉（数据库行和索引都删），保证最后只有一条；本次新建的摘要 chunk 如果索引失败，就删除它的数据库行，并尽力删除索引（bulk 结果为 unknown 时可能已写入）。清理失败只记日志，返回的仍是原来的索引错误。单测 `knowledge_summary_store_test.go` 覆盖：索引失败后数据库没有摘要行；重试后只有一条；复用已有摘要并清掉多余的；复用的行在索引失败时保留。真实复现（同一代理、同样上传 8 篇后断连约 40 秒）：断连期间 5 个摘要 span 失败，数据库摘要行为 0；恢复后约 78 秒全部完成，8 篇逐条对账一致，数据库 32 条 = OpenSearch 32 条（24 text + 8 summary），修复前是 37 对 32。
 
 AC-OS03-02/03 补充（OpenSearch 不可用时删除任务的失败处理）：待用户放行 `docker pause` 后补测。本会话的自动权限判定拒绝了暂停容器，命令没有执行。
 
