@@ -93,6 +93,26 @@ AC-OS02-06 原后端与 Wiki 冒烟：通过（入口和检索）；Wiki 自动�
 - **问题：知识库复制在 4096 维下会失败。** `CopyIndices` 每扫一页 500 条，就用一次 BatchSave 写入；4096 维估算单条约 21.6 KB（真实 JSON 约 45 KB），超过 10 MB 上限，返回 `ErrBatchTooLarge`。真实集群临时复现：复制 320 条全部未发送（`320 not sent`），目标为 0 条，错误会明确返回，不会静默。按当前上限，大约超过 220 条的知识库就无法复制。**已修复**，见 OS-C“4096 维知识库复制”。
 - SSRF：系统设置白名单这条路径没有验证，原因是测试用户不是系统管理员（不通过 SQL 提权）；本机改用 `SSRF_WHITELIST_EXTRA`。
 
+### 新旧后端问答对比、SSE 复测与切回 MinIO（2026-11-04，时钟已修正）
+
+文件存储切回 MinIO：`.env.local` 改为 `STORAGE_TYPE=minio`（bucket `primind-os`）。说明：存储按 storage backend 绑定，租户默认值仍指向之前的 `System LOCAL`，所以只改环境变量时，已有知识库上传的文件仍会写到本地；通过 `PUT /storage-backends/14c112d3…/default` 把测试租户的默认值改为 `System MINIO` 后，新建的知识库就绑定 MinIO。验证：
+- `POST /storage-backends/:id/test` 成功；新知识库上传后 `knowledges.file_path` 为 `resource://…`，presigned-preview 返回 `provider=minio`，URL 指向 `127.0.0.1:9000/primind-os/…`，`X-Amz-Expires=86400`。
+- `GET /knowledge/:id/download` 返回 200，内容与原文件逐字节一致；直接 GET 预签名 URL 返回 200，内容一致；篡改签名后返回 403。
+
+问答对比：新建两个知识库，内容相同，都上传 `OS_SAMPLE_A.txt`、`OS_SAMPLE_B.txt`，Embedding 用 `builtin-company-embedding`（4096 维），问答模型 `builtin-company-chat`，不用重排。`cmp-pg` 为 Postgres 后端，`cmp-os` 绑定 OpenSearch store `8896d60e…`。每题各在新会话中问一次。“检索耗时”是同一问题调用 `hybrid-search`（TopK 5）的应用端总耗时；“问答耗时”是 SSE 从请求到结束的时间，主要花在 LLM 上。
+
+| 题目 | 预期 | PG 回答 / 引用 | OS 回答 / 引用 | PG 检索 / 问答 | OS 检索 / 问答 |
+| --- | --- | --- | --- | --- | --- |
+| Q1 唯一检索标记 OSFIXA20261022 对应哪台设备？ | 泵 PUMP_A | 正确 / A text | 正确 / A text | 0.23 s / 15 s | 0.19 s / 19 s |
+| Q2 泵 PUMP_A 轴封渗漏时工单要求更换什么？ | SEAL_A_101 | 正确 / A text + A summary | 正确 / A text + A summary | 0.16 s / 31 s | 0.23 s / 30 s |
+| Q3 OSFIXA20261022，WO_A_001 要更换的部件号？ | SEAL_A_101 | 正确 / 引用原文（无 chunk 标签） | 正确 / 引用 A 原文（无 chunk 标签） | 0.22 s / 23 s | 0.16 s / 29 s |
+| Q4 风机 FAN_B 轴承异响换哪个部件、工单号？ | BEARING_B_202、WO_B_002 | 正确 / B text + B summary | 正确 / B text | 0.23 s / 26 s | 0.45 s / 30 s |
+| Q5 资料是否给出压缩机 COMP_C 的齿轮部件号？ | 未给出 | 正确拒答 / 无 | 正确拒答 / 无 | 0.26 s / 18 s | 0.23 s / 27 s |
+
+结论：两种后端 5 题全部答对，引用都落在正确的样本上；hybrid-search 的首个命中 PG 与 OS 一致（Q4 为 B，其余为 A）。检索耗时同一量级（PG 0.16–0.26 s，OS 0.16–0.45 s，含 4096 维查询向量化的网络调用）。问答总耗时主要取决于 LLM，没有系统性差异。样本只有两篇，两篇都会出现在 references 中，所以引用正确性以回答中 `<kb chunk_id=…>` 实际引用的 chunk 为准。
+
+SSE 复测：时钟修正后 10 次问答全部收到 `complete`，连接正常关闭。此前的“不发 complete”确认是时钟跳变引起，现已不再出现。
+
 ## OS-C 生命周期（AC-OS03-01~03）
 
 状态：适配器层和应用级均已在真实环境验证，修复了两个缺陷（按查询操作看不到刚写入的数据、4096 维复制）；仅“删除任务失败不被当作完成”未覆盖。
