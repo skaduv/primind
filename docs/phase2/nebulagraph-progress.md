@@ -4,6 +4,39 @@
 
 状态取值：PASS / PARTIAL / BLOCKED / NOT_RUN / FAIL。证据只保留在本机临时目录，不入库；本文件记录命令和结论。
 
+## 最终 AC 状态总表（2026-11-04）
+
+基线：本地 `main`（`fc23efc`，领先 `origin/main`）；本分支无需 rebase。收尾验证：`go build ./...` 通过；`nebula`、`chat_pipeline`、`container`、`types` 包测试全部通过；`internal/application/service` 失败 58 个，与 main 同一集合（均与图无关）。未推送、未开 PR。
+
+| AC | 状态 | 提交 | 未覆盖 / 备注 |
+| --- | --- | --- | --- |
+| NG-01-AC01 契约/夹具可重复 | PASS | c6550be | — |
+| NG-01-AC02 版本/SDK/Schema/身份 | PASS | c6550be | v3.8.0 + nebula-go v3.8.0 |
+| NG-01-AC03 真实写查删闭环 | PASS | 84d5f05 | 首次刚建 Schema 后 C1 出现一次 `-1002`，后续 4 次连过 |
+| NG-01-AC04 同名/多来源/方向/删除风险 | PASS | 84d5f05 | — |
+| NG-01-AC05 运行证据 | PASS | 84d5f05 | 证据在本机临时目录，不入库 |
+| NG-01-AC06 批量/池/并发/取消 + P6/P7 | PASS（仅测量） | 84d5f05 | 业务性能目标未冻结 |
+| NG-02-AC01 选择矩阵 | PASS | c6550be, 7b69387 | 显式空值按未设置处理（本分支决定） |
+| NG-02-AC02 五处耦合/禁用不积压 | PASS | c6550be, 7b69387 | — |
+| NG-02-AC03 真实抽图→Nebula→问答 | PASS | 7b69387 | 模型输出有波动（一次抽取 0 关系） |
+| NG-02-AC04 图/文本召回可区分 | PASS（严格证明） | 7b69387, 05afbc9, 5c85053, 本次提交 | 首轮单文档题被对照组推翻（相邻 chunk 合并、文档摘要泄露答案）；重设计后 disabled 答不出、nebulagraph 答对，见下“AC04 严格证明” |
+| NG-02-AC05 模型可用性/字段兼容/Wiki | PASS | 7b69387 | — |
+| NG-02-AC06 Agent 注入 | PASS（单测） | 7b69387 | Agent 真实链路未跑 |
+| NG-02-AC07 业务端到端性能 | BLOCKED | 7b69387 | 业务目标未冻结；4096 维向量无 HNSW 索引（走顺序扫描） |
+| NG-03-AC01 重复/并发/部分失败 | PASS | 84d5f05 | 适配器级（C1、重放幂等） |
+| NG-03-AC02 删除/重解析/移动不留残留 | PASS（删文档、删 KB、重解析） | ecfe7cd | 移动/复制未测 |
+| NG-03-AC03 权限边界 | PASS（修复后） | 8266191, 6b69618 | 跨租户越权由 OS 会话修复后 cherry-pick；组织共享场景只有单测 |
+| NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
+| NG-03-AC05 失败可定位/重试有界 | PARTIAL | 84d5f05, 62c4a00 | 应用运行中 docker pause graphd 实测待用户放行 |
+| NG-03-AC06 Agent/共享/移动路径 | PARTIAL | — | 只覆盖普通问答与共享单测；Agent、移动/复制真实路径未测 |
+| NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
+| NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
+| NG-04-AC03 切回覆盖说明 | PASS | 5c85053 | — |
+| NG-04-AC04 交付演练前置 | NOT_RUN | — | 归交付阶段 |
+| NG-04-AC05 Wiki/Agent/无 mock 冒充 | PASS | 5c85053 | — |
+
+已知问题（不在图后端，留给后续）：references 列表不含图独有 chunk；已取消文档的 chunk 仍可被文本检索命中。
+
 ## 本机环境与隔离
 
 | 项 | 值 |
@@ -85,6 +118,8 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC05 Wiki / AC06 Agent 回归 | PASS（单测） | `./internal/agent/tools -run 'KnowledgeGraph\|Graph'`、`./internal/application/service/chat_pipeline -run 'Entity\|Graph'`、`./internal/application/service -run Wiki` | 全部通过；Agent 仍经容器注入同一 `RetrieveGraphRepository` |
 | AC03 真实抽图→Nebula→问答 | PASS | 见下“真实链路” | 实际模型抽出实体/关系写入 `primind_ng_app`，普通问答经 Nebula 召回并给出正确答案与原文引用 |
 | AC04 图/文本召回可区分 | PASS（有限） | 服务日志 `search_entity.go` 与 `[PIPELINE] stage=SearchParallel` | 图召回 `7 nodes, 5 relations` → `entity_results=1`，文本 `chunk_results=9`，分开记录。测试文档只有 1 个 chunk，图命中的 chunk 与文本命中重合，合并去重后最终引用保留文本得分版本（`match_type=0`）；“图独有证据”题未覆盖 |
+| AC04 图独有证据 | PARTIAL（对照组推翻“图独有”结论） | 多 chunk 文档 `xuanwu.md`（3 chunk）：“玄武项目”只在 chunk0，“所长葛清远”只在 chunk2（不含“玄武”）。以单文档抽图覆盖（承担/领导 标签与示例）重解析后，图中有 北辰研究所-承担-玄武项目、葛清远-领导-北辰研究所，北辰研究所来源含 chunk0/chunk2。问题“玄武项目的承担单位的所长是谁？” | 文本检索 14 条，chunk2（`abf4e536-…`）不在文本结果中；图检索 2 nodes/1 relation，`filterSeenChunk new chunkIDs count: 2`（文本未见过的 chunk）。回答“北辰研究所，所长葛清远”，并以内联引用 `chunk_id=abf4e536-…` 标出该图独有 chunk。观察：消息的 references 列表只存了 5 条文本命中，未列出这个图独有 chunk（模型上下文里有）；另一篇已取消文档的 chunk 仍出现在文本检索结果中。两项都在文本/引用链路，不属图后端 ；**对照**：同题在 `GRAPH_BACKEND=disabled` 下（实体抽取跳过、`entity_results=0`）回答仍引用 chunk2——问答管线的 Merge 阶段会拼接同文档相邻 chunk（该文档仅约 1100 字），chunk2 内容经文本命中的 chunk0 带入上下文。结论：图召回确实独立产出文本初检未命中的 chunk，但本题答案并非只能靠图得到。要严格证明需让答案 chunk 与问题实体相距足够远（超出合并窗口）的长文档，未做 |
+| AC04 严格证明（重做） | PASS | 新 KB `c7fa62f1…`（Postgres 向量）：关键文档 `key.md`（2 个 chunk，单文档关闭摘要）：chunk0 含“玄武项目由北辰研究所承担”，chunk1 含“北辰研究所的掌门人是葛清远”（与问题无“玄武/项目/单位/所长”任何字面重合，且长度 ≥350 字不触发相邻扩展）；另上传 5 篇台账类填充文档（35 个 chunk，按文件关闭抽图），内容为其他项目/承担单位/所长，把答案 chunk 挤出文本前 30（hybrid-search 中排第 39/43）。图中有 北辰研究所-承担-玄武项目、葛清远-领导-北辰研究所，北辰研究所来源含两个 chunk。问题“玄武项目的承担单位的所长是谁？” | **nebulagraph**：图检索 2 nodes/1 relation，`filterSeenChunk new chunkIDs count: 2`，`chunk_results=30 entity_results=2`；回答“北辰研究所，所长葛清远”，并引用“三、人物介绍…掌门人是葛清远”（只在答案 chunk `454dd633`）。**disabled 对照**：`skipping extract entity`，`entity_results=0`；回答找不到所长，未出现“葛清远”，还误把填充资料里的“刘思远”当作答案。过程中发现两处会让文本侧拿到答案、已在设计中规避：① 文档摘要 chunk 会复述答案；② 小于 350 字的命中 chunk 会被相邻 chunk 扩展。另：问答时的实体抽取偶尔返回空（一次），此时图检索被跳过 |
 | AC05 模型可用性 | PASS | 直连 47501 chat、47503 embedding 最小调用（Key 不输出） | 均 HTTP 200，Embedding 4096 维；图客户端就绪另由启动日志/系统信息验证 |
 | AC07 业务端到端性能 | BLOCKED | — | 业务目标未冻结；单文档实测见下 |
 
@@ -116,7 +151,17 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC02 | 删知识库 | PASS | 新建 KB 上传一篇后 `DELETE /knowledge-bases/<kb>` | 该 KB 图数据 14→0；另一 KB 24 行不变 |
 | AC02/AC04 | 重解析 | PASS | `POST /knowledge/<id>/reparse` | 新 attempt 写入 19 实体/18 关系，全部指向新 chunk；旧 chunk 数据 0 条 |
 | AC04 | 抽图进行中取消 | PASS | 图 span `running` 时 `POST /knowledge/<id>/cancel-parse` | 任务 ctx 取消，进行中的 LLM 请求 `context canceled`，未调用 AddGraph；Nebula 中该文档 0 行；`parse_status=cancelled`、`pending_subtasks_count=0` |
-| AC03 | 跨租户权限 | **FAIL（既有缺陷，待决定修复归属）** | 租户 B 普通问答传入租户 A 的 `knowledge_base_ids` | 文本检索按租户过滤为 0 条，但 `chat_pipeline/search_entity.go` 以请求 KB 列表作为 `allowedKBs`，图检索仍查询 A 的 KB，命中 chunk 进入模型上下文与 references。与图后端无关（Neo4j 同路径）。修复需改共享文件（`search_entity.go` 或问答入口），已报主控 |
-| AC05 | 运行期连接失败 | PARTIAL | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中暂停 graphd 的实测被自动模式拦截（共享环境），待用户放行 |
+| AC03 | 跨租户权限 | PASS（修复后） | 租户 B 普通问答传入租户 A 的 `knowledge_base_ids`；对照组为 A 本人同题 | 修复前：文本检索 0 条，但 `search_entity.go` 信任请求 KB 列表，图检索命中 A 的 chunk 并进入 references（FAIL）。修复：cherry-pick OS 分支 `9ba3f7b`“安全修复：跨租户 KB 越权”（问答入口 `session_qa_helpers.go` 过滤无读权限的 KB，`search_entity.go` 只在授权范围内图检索）。修复后真实 Nebula 复测：B 无检索调用、无 references、回答“资料中未提及”，A 的内容出现 0 次；A 对照组仍有图召回（7 nodes/6 relations，`entity_results=2`）和 references。修复在共享代码上，Neo4j 后端走同一路径，一并生效 |
+| AC04 | 过期 attempt 不写旧图 | PASS（修复） | `TestChunkExtractSupersededAttemptWritesNothing`（单测，红→绿） | 发现缺口：图任务只在开始时检查 attempt，LLM 调用期间若开始重解析（新 attempt 已先 DelGraph，且旧 chunk 在 finalizing 期间仍存在），旧任务返回后仍会 AddGraph 留下旧数据。修复：`extract.go` 在 AddGraph 前再查一次 attempt，被取代则丢弃结果，并以 superseded 标记收尾，不消耗新 attempt 的 pending 槽位。去掉该检查时“抽取期间被取代”用例失败（adds=1），恢复后通过 |
+| AC05 | 写图失败重试 | PASS | `TestChunkExtractGraphWriteFailureIsRetriedNotSwallowed`（单测）；适配器级重放见 NG-B 会话恢复测试 | 写图失败作为任务错误返回（由 asynq 重试，MaxRetry 3），不吞错；重试成功后只写一次。适配器本身不重放写入，结果未知的写由上层重试，AddGraph 幂等 |
+| AC05 | 运行期连接失败 | PARTIAL（待用户放行） | 适配器真实测试：会话被 KILL、截止时间（见 NG-B） | 应用运行中 docker pause graphd 的实测待用户放行（自动权限拦截，未尝试绕过） |
 
-## NG-E — NOT_RUN
+## NG-E NG-04 双后端回归（本机无 Neo4j，只验 disabled / nebulagraph）
+
+| AC | 状态 | 验证方式 | 结果 |
+| --- | --- | --- | --- |
+| AC01 共同业务契约 | nebulagraph PASS；Neo4j **BLOCKED（未覆盖）** | NG-B 真实契约测试（Q1–Q10/S1/R1/C1/D1/D2） | 本机未部署 Neo4j，按约定不补；Neo4j 端契约回归未覆盖 |
+| AC02 旧配置与显式切换 | PASS（disabled/nebulagraph） | 同一库 `primind_ng` 先以 `GRAPH_BACKEND=disabled` 启动，再切回 `nebulagraph`；单测矩阵含旧 `NEO4J_ENABLE` 全部组合 | disabled：不建 Neo4j 驱动、不连 Nebula，`graph_database_engine=Not Enabled`，问答日志 `skipping extract entity, knowledge graph is disabled`、`entity_results=0`，文本链路照常回答。切回 nebulagraph：连接已有 Space（不重建 Schema），`graph_database_engine=NebulaGraph`，同题图检索 `2 nodes, 1 relations`、`entity_results=2`。状态字段不冒充另一后端 |
+| AC03 切回覆盖说明 | PASS（说明） | — | 无双写、无迁移：选 disabled 期间新增/修改/删除/重解析/移动的文档不会写入或清理 Nebula，旧图数据原样保留；切回 nebulagraph 后，期间删除的文档可能留下已失效来源（问答侧由 chunk/文档存在性过滤，不进入上下文），期间新增的文档没有图数据，需重解析补图。从 Neo4j 切到 Nebula（或反向）同理不迁移，需对受影响 KB 重解析重建 |
+| AC04 交付演练前置 | NOT_RUN | — | 切换时点、暂停写入范围、补图/对账步骤归交付阶段 |
+| AC05 Wiki/Agent | PASS（单测） | NG-C 已跑的 Agent 图工具、Wiki 相关单测 | 实体图改造未影响 Wiki；Agent 仍注入同一图仓库 |
