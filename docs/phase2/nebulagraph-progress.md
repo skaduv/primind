@@ -28,7 +28,7 @@
 | NG-03-AC03 权限边界 | PASS（修复后） | 8266191, 6b69618 | 跨租户越权由 OS 会话修复后 cherry-pick；组织共享场景只有单测 |
 | NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
 | NG-03-AC05 失败可定位/重试有界 | PASS | 84d5f05, 62c4a00, 本次提交 | graphd 运行中暂停约 25s 实测：删除时写图失败明确报错，asynq 约 50s 后重试成功清理；恢复后首次图检索即成功，无需重启应用；应用清理关闭 Nebula 连接池（graphd 会话 10→14→10） |
-| NG-03-AC06 Agent/共享/移动路径 | PARTIAL | — | 只覆盖普通问答与共享单测；Agent、移动/复制真实路径未测 |
+| NG-03-AC06 Agent/共享/移动路径 | 未覆盖（额度原因，后续补） | — | Agent 真实图检索、移动、复制的真实路径未跑完：内置 `builtin-smart-reasoning` 在本租户未配置 model_id，另建测试 Agent `91cfcaca…` 后提问被中断；复制任务已发起（目标 KB `bba1e3e5…`）未核对结果。同 store 移动（reuse_vectors）有一次实测，发现缺口见下 |
 | NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
 | NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
 | NG-04-AC03 切回覆盖说明 | PASS | 5c85053 | — |
@@ -165,3 +165,18 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 | AC03 切回覆盖说明 | PASS（说明） | — | 无双写、无迁移：选 disabled 期间新增/修改/删除/重解析/移动的文档不会写入或清理 Nebula，旧图数据原样保留；切回 nebulagraph 后，期间删除的文档可能留下已失效来源（问答侧由 chunk/文档存在性过滤，不进入上下文），期间新增的文档没有图数据，需重解析补图。从 Neo4j 切到 Nebula（或反向）同理不迁移，需对受影响 KB 重解析重建 |
 | AC04 交付演练前置 | NOT_RUN | — | 切换时点、暂停写入范围、补图/对账步骤归交付阶段 |
 | AC05 Wiki/Agent | PASS（单测） | NG-C 已跑的 Agent 图工具、Wiki 相关单测 | 实体图改造未影响 Wiki；Agent 仍注入同一图仓库 |
+
+## 补充记录（2026-11-04）
+
+### 同 store 移动后图数据缺失（发现，未修）
+
+- 实测：把 qingluan 文档从 KB1 `fcd13be2…` 以 `reuse_vectors` 移到同 store 的新 KB `e78a60ca…`（开启抽图）。移动完成后，源 KB 中该文档的图数据 9→0（源范围无残留，符合预期）；但目标 KB 中该文档图数据为 0，文档和 2 个 chunk 已在目标 KB。
+- 定位：`knowledge_clone_move.go` 的 `moveKnowledgeReuseVectors` 删除源图命名空间后，没有在目标 KB 投递抽图任务，也没有迁移图数据。结果是移动后的文档在目标 KB 无法被图检索命中，需重解析才能恢复。
+- 建议修法（待决定）：移动完成后，若目标 KB 开启抽图，按 chunk 投递 `NewChunkExtractTask`（会再调 LLM）；或在适配器层按命名空间改写 kb 字段迁移（不需要 LLM，但适配器要新增能力）。
+- 知识库复制：代码上 `CloneChunk` 不复制图数据，复制出的 KB 预计没有图，需重解析；本次未实测核对。
+
+### Wiki 输出上限（已修，`36bc5e7`）
+
+- 原问题：`wiki_ingest.go` 写死 `wikiLLMMaxTokens=32768`，本机问答模型上下文只有 32768，每次 Wiki 抽取都返回 400（输入+输出超出上下文），Wiki 自动生成全部失败（main 上即存在）。
+- 修复：按模型 `context_window` 的 1/4 计算，夹在 [4096, 32768]；模型配置了 `max_output_tokens` 时不超过它；上下文未知时用 16384。
+- 验证：单测 `TestWikiMaxTokensForContextWindow`、`TestGenerateWithTemplateSizesMaxTokensToModel`（32k 模型实际请求 8192）及原有 Wiki 相关单测通过。真实 Wiki 生成未跑（额度原因）。
