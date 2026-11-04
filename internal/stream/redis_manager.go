@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/primind/primind/internal/common"
+	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/types/interfaces"
 	"github.com/redis/go-redis/v9"
 )
@@ -134,7 +135,9 @@ func (r *RedisStreamManager) GetEvents(
 	for _, result := range results {
 		var event interfaces.StreamEvent
 		if err := json.Unmarshal([]byte(result), &event); err != nil {
-			// Log error but continue with other events
+			// The offset still advances past it, so a reader never sees this
+			// event again: make the drop visible.
+			logger.Warnf(ctx, "stream: dropping undecodable event in %s: %v", key, err)
 			continue
 		}
 		events = append(events, event)

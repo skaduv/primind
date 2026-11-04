@@ -295,7 +295,7 @@ func (h *VectorStoreHandler) UpdateStore(c *gin.Context) {
 
 // DeleteStore godoc
 // @Summary      Delete vector store
-// @Description  Soft-delete a vector store. Env stores cannot be deleted.
+// @Description  Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend (e.g. OpenSearch indices `<index_name>_<store ID first 12 chars>_*`) is not removed and must be cleaned up manually; the server logs the exact prefix.
 // @Tags         VectorStore
 // @Produce      json
 // @Param        id   path      string  true  "Vector store ID"
