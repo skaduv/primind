@@ -63,7 +63,8 @@ func (k kbQueueInspector) HasQueuedKBDeleteTasks(_ context.Context, kbID string)
 func insertDeletedKB(t *testing.T, db *gorm.DB, id string, deletedAt *time.Time, knowledge, chunks int) {
 	t.Helper()
 	storeID := "store-" + id
-	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id, vector_store_id, deleted_at) VALUES (?, 1, ?, ?)`,
+	require.NoError(t, db.Exec(
+		`INSERT INTO knowledge_bases (id, tenant_id, vector_store_id, deleted_at) VALUES (?, 1, ?, ?)`,
 		id, storeID, deletedAt).Error)
 	for i := 0; i < knowledge; i++ {
 		require.NoError(t, db.Exec(`INSERT INTO knowledges (id, knowledge_base_id) VALUES (?, ?)`,

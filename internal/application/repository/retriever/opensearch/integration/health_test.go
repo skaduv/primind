@@ -31,13 +31,26 @@ func writeHealthFields(t *testing.T, c Config, fields map[string]any) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = os.WriteFile(c.Performance.HealthFile, b, 0600); e != nil {
+	if e = os.WriteFile(c.Performance.HealthFile, b, 0o600); e != nil {
 		t.Fatal(e)
 	}
 }
 
 func TestHealthRequiredObservationsFailClosedBeforeNetwork(t *testing.T) {
-	keys := []string{"run_id", "budget_ref", "at", "stop", "host_cpu_percent", "host_available_bytes", "disk_free_bytes", "os_rss_bytes", "os_heap_bytes", "os_write_queue", "os_rejected_delta", "existing_service_p95_milliseconds"}
+	keys := []string{
+		"run_id",
+		"budget_ref",
+		"at",
+		"stop",
+		"host_cpu_percent",
+		"host_available_bytes",
+		"disk_free_bytes",
+		"os_rss_bytes",
+		"os_heap_bytes",
+		"os_write_queue",
+		"os_rejected_delta",
+		"existing_service_p95_milliseconds",
+	}
 	for _, key := range keys {
 		for _, mode := range []string{"omitted", "null", "wrong-type"} {
 			t.Run(key+"/"+mode, func(t *testing.T) {
@@ -61,7 +74,13 @@ func TestHealthRequiredObservationsFailClosedBeforeNetwork(t *testing.T) {
 				m.mu.Lock()
 				defer m.mu.Unlock()
 				if e == nil || result.Status != "FAIL" || len(result.Rounds) != 0 || m.Requests != 0 || m.Writes != 0 {
-					t.Fatalf("network before valid health: result=%+v err=%v requests=%d writes=%d", result, e, m.Requests, m.Writes)
+					t.Fatalf(
+						"network before valid health: result=%+v err=%v requests=%d writes=%d",
+						result,
+						e,
+						m.Requests,
+						m.Writes,
+					)
 				}
 			})
 		}
@@ -76,12 +95,22 @@ func TestHealthValidZerosAndRejectedRanges(t *testing.T) {
 		{"measured-zero-and-false", "", nil},
 		{"stale", "at", time.Now().Add(-time.Hour).Format(time.RFC3339Nano)},
 		{"future", "at", time.Now().Add(time.Hour).Format(time.RFC3339Nano)},
-		{"other-run", "run_id", "other-run"}, {"other-budget", "budget_ref", "other-budget"},
-		{"observer-stop", "stop", true}, {"cpu-negative", "host_cpu_percent", -1}, {"cpu-over100", "host_cpu_percent", 101},
-		{"memory-zero", "host_available_bytes", 0}, {"disk-zero", "disk_free_bytes", 0}, {"rss-zero", "os_rss_bytes", 0}, {"heap-zero", "os_heap_bytes", 0},
-		{"queue-negative", "os_write_queue", -1}, {"rejections-negative", "os_rejected_delta", -1}, {"rejections-positive", "os_rejected_delta", 1},
-		{"p95-negative", "existing_service_p95_milliseconds", -1}, {"bytes-negative", "host_available_bytes", -1},
-		{"integer-fraction", "os_write_queue", 0.5}, {"extra-field", "unrecognized", 0},
+		{"other-run", "run_id", "other-run"},
+		{"other-budget", "budget_ref", "other-budget"},
+		{"observer-stop", "stop", true},
+		{"cpu-negative", "host_cpu_percent", -1},
+		{"cpu-over100", "host_cpu_percent", 101},
+		{"memory-zero", "host_available_bytes", 0},
+		{"disk-zero", "disk_free_bytes", 0},
+		{"rss-zero", "os_rss_bytes", 0},
+		{"heap-zero", "os_heap_bytes", 0},
+		{"queue-negative", "os_write_queue", -1},
+		{"rejections-negative", "os_rejected_delta", -1},
+		{"rejections-positive", "os_rejected_delta", 1},
+		{"p95-negative", "existing_service_p95_milliseconds", -1},
+		{"bytes-negative", "host_available_bytes", -1},
+		{"integer-fraction", "os_write_queue", 0.5},
+		{"extra-field", "unrecognized", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,7 +124,9 @@ func TestHealthValidZerosAndRejectedRanges(t *testing.T) {
 			if (tc.key == "") != (e == nil) {
 				t.Fatalf("sample=%+v error=%v", h, e)
 			}
-			if tc.key == "" && (h.Stop || h.HostCPUPercent != 0 || h.OSWriteQueue != 0 || h.OSRejectedDelta != 0 || h.ExistingServiceP95Milliseconds != 0) {
+			if tc.key == "" &&
+				(h.Stop || h.HostCPUPercent != 0 || h.OSWriteQueue != 0 || h.OSRejectedDelta != 0 ||
+					h.ExistingServiceP95Milliseconds != 0) {
 				t.Fatal("real zero/false not retained")
 			}
 		})
@@ -177,8 +208,17 @@ func TestHealthInvalidDuringLoadStopsDispatchAndDrains(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("did not stop and drain before test deadline")
 			}
-			if out.err == nil || !strings.Contains(out.err.Error(), "health") || out.result.HealthFailure == "" || out.result.Status != "FAIL" || bulkCalls.Load() != 2 || time.Since(stoppedAt) > time.Second {
-				t.Fatalf("invalid health did not stop dispatch: status=%s health_failure=%s error=%v bulks=%d", out.result.Status, out.result.HealthFailure, out.err, bulkCalls.Load())
+			if out.err == nil || !strings.Contains(out.err.Error(), "health") || out.result.HealthFailure == "" ||
+				out.result.Status != "FAIL" ||
+				bulkCalls.Load() != 2 ||
+				time.Since(stoppedAt) > time.Second {
+				t.Fatalf(
+					"invalid health did not stop dispatch: status=%s health_failure=%s error=%v bulks=%d",
+					out.result.Status,
+					out.result.HealthFailure,
+					out.err,
+					bulkCalls.Load(),
+				)
 			}
 			if b := out.result.Budget; b.InFlight != 0 || b.Writing != 0 || b.Queued != 0 {
 				t.Fatalf("budget not drained: %+v", b)

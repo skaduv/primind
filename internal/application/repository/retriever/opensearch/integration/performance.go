@@ -23,8 +23,12 @@ import (
 // separate application lane uses the real model and Q-KW/Q-VEC/Q-HYB oracle.
 func synthetic(s Scope, seed string, n int) Document {
 	id := fmt.Sprintf("%s_c%06d", s.Namespace, n)
-	d := Document{ChunkID: id, SourceID: fmt.Sprintf("%s_source%06d", s.Namespace, n), KnowledgeBaseID: s.KnowledgeBaseID,
-		KnowledgeID: s.KnowledgeID, TagID: s.Namespace + "_tag", Content: fmt.Sprintf("OS02PERF %s item %06d 合成索引负载 \"quoted\"\n", s.Namespace, n), Enabled: true, Recommended: n%2 == 0}
+	d := Document{
+		ChunkID: id, SourceID: fmt.Sprintf("%s_source%06d", s.Namespace, n), KnowledgeBaseID: s.KnowledgeBaseID,
+		KnowledgeID: s.KnowledgeID, TagID: s.Namespace + "_tag",
+		Content: fmt.Sprintf("OS02PERF %s item %06d 合成索引负载 \"quoted\"\n", s.Namespace, n),
+		Enabled: true, Recommended: n%2 == 0,
+	}
 	for j := 0; j < n%5; j++ {
 		d.Content += "固定长度分布样本 "
 	}
@@ -39,6 +43,7 @@ func synthetic(s Scope, seed string, n int) Document {
 	return d
 }
 
+// HealthSample is one cluster health reading taken during a performance round.
 type HealthSample struct {
 	RunID                          string    `json:"run_id"`
 	BudgetRef                      string    `json:"budget_ref"`
@@ -68,7 +73,11 @@ func health(c Config) (HealthSample, error) {
 	if err = json.Unmarshal(b, &fields); err != nil {
 		return h, errors.New("invalid health feed")
 	}
-	for _, key := range []string{"run_id", "budget_ref", "at", "stop", "host_cpu_percent", "host_available_bytes", "disk_free_bytes", "os_rss_bytes", "os_heap_bytes", "os_write_queue", "os_rejected_delta", "existing_service_p95_milliseconds"} {
+	for _, key := range []string{
+		"run_id", "budget_ref", "at", "stop", "host_cpu_percent", "host_available_bytes",
+		"disk_free_bytes", "os_rss_bytes", "os_heap_bytes", "os_write_queue", "os_rejected_delta",
+		"existing_service_p95_milliseconds",
+	} {
 		value, ok := fields[key]
 		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return h, fmt.Errorf("required health observation %s absent or null", key)
@@ -78,8 +87,13 @@ func health(c Config) (HealthSample, error) {
 		return h, errors.New("invalid health feed")
 	}
 	age := time.Since(h.At)
-	if h.RunID != c.RunID || h.BudgetRef != p.BudgetRef || age < 0 || age > time.Duration(p.HealthMaxAgeSeconds)*time.Second || h.Stop || h.OSRejectedDelta != 0 ||
-		h.HostCPUPercent < 0 || h.HostCPUPercent > 100 || h.HostAvailableBytes == 0 || h.DiskFreeBytes == 0 || h.OSRSSBytes == 0 || h.OSHeapBytes == 0 || h.OSWriteQueue < 0 || h.ExistingServiceP95Milliseconds < 0 {
+	if h.RunID != c.RunID || h.BudgetRef != p.BudgetRef || age < 0 ||
+		age > time.Duration(p.HealthMaxAgeSeconds)*time.Second || h.Stop || h.OSRejectedDelta != 0 ||
+		h.HostCPUPercent < 0 || h.HostCPUPercent > 100 || h.HostAvailableBytes == 0 || h.DiskFreeBytes == 0 ||
+		h.OSRSSBytes == 0 ||
+		h.OSHeapBytes == 0 ||
+		h.OSWriteQueue < 0 ||
+		h.ExistingServiceP95Milliseconds < 0 {
 		return h, errors.New("health feed stale, incomplete, out of scope or stop line reached")
 	}
 	var mem runtime.MemStats
@@ -90,6 +104,7 @@ func health(c Config) (HealthSample, error) {
 	return h, nil
 }
 
+// Sample is the latency and outcome of one write or query operation.
 type Sample struct {
 	Kind    string  `json:"kind"`
 	StoreID string  `json:"store_id,omitempty"`
@@ -98,6 +113,7 @@ type Sample struct {
 	Items   int     `json:"items,omitempty"`
 }
 
+// RoundResult holds the measurements and manifests of one performance round.
 type RoundResult struct {
 	ID                     string                        `json:"id"`
 	Status                 string                        `json:"status"`
@@ -122,6 +138,7 @@ type RoundResult struct {
 	GCBefore, GCAfter      uint32
 }
 
+// PerformanceResult is the full result of a performance run.
 type PerformanceResult struct {
 	RunID                     string        `json:"run_id"`
 	Status                    string        `json:"status"`
@@ -172,7 +189,13 @@ type job struct {
 // dispatch has a fixed worker count and an unbuffered queue, not a goroutine per
 // batch. The first error cancels admission and all peers, then joins them. SDK
 // and parent contexts bound transport/body/retry/drain; no write is replayed here.
-func dispatch(ctx context.Context, cancel context.CancelFunc, concurrency int, jobs []job, write func(context.Context, job) error) error {
+func dispatch(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	concurrency int,
+	jobs []job,
+	write func(context.Context, job) error,
+) error {
 	queue := make(chan job)
 	first := make(chan error, 1)
 	var wg sync.WaitGroup
@@ -232,7 +255,11 @@ func verifyRetrieval(results []*types.RetrieveResult, scope Scope, expected map[
 				return errors.New("nil retrieval hit")
 			}
 			d, ok := expected[hit.ChunkID]
-			if !ok || seen[hit.ChunkID] || hit.KnowledgeBaseID != scope.KnowledgeBaseID || hit.KnowledgeID != scope.KnowledgeID || hit.SourceID != d.SourceID || hit.Content != d.Content || !hit.IsEnabled {
+			if !ok || seen[hit.ChunkID] || hit.KnowledgeBaseID != scope.KnowledgeBaseID ||
+				hit.KnowledgeID != scope.KnowledgeID ||
+				hit.SourceID != d.SourceID ||
+				hit.Content != d.Content ||
+				!hit.IsEnabled {
 				return errors.New("retrieval escaped independent manifest or duplicated chunk")
 			}
 			seen[hit.ChunkID] = true
@@ -246,7 +273,12 @@ func verifyRetrieval(results []*types.RetrieveResult, scope Scope, expected map[
 }
 
 func runPerformance(parent context.Context, c Config) (result PerformanceResult, err error) {
-	result = PerformanceResult{RunID: c.RunID, Status: "FAIL", ApplicationPipelineTiming: "NOT_RUN: collect authorized application spans separately", BusinessSLA: "NOT_EVALUATED"}
+	result = PerformanceResult{
+		RunID:                     c.RunID,
+		Status:                    "FAIL",
+		ApplicationPipelineTiming: "NOT_RUN: collect authorized application spans separately",
+		BusinessSLA:               "NOT_EVALUATED",
+	}
 	if err = c.validate(time.Now()); err != nil {
 		return result, err
 	}
@@ -270,7 +302,14 @@ func runPerformance(parent context.Context, c Config) (result PerformanceResult,
 }
 
 func runRound(parent context.Context, c Config, round Round) (result RoundResult, err error) {
-	result = RoundResult{ID: round.ID, Status: "FAIL", Warmup: round.Warmup, PacedMixed: round.Mixed, Manifests: map[string][]RecordDigest{}, ActualManifests: map[string][]RecordDigest{}}
+	result = RoundResult{
+		ID:              round.ID,
+		Status:          "FAIL",
+		Warmup:          round.Warmup,
+		PacedMixed:      round.Mixed,
+		Manifests:       map[string][]RecordDigest{},
+		ActualManifests: map[string][]RecordDigest{},
+	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	stats := &connectionStats{}
@@ -390,16 +429,21 @@ func runRound(parent context.Context, c Config, round Round) (result RoundResult
 		if err = sessions[i].settings(ctx, s); err != nil {
 			return result, err
 		}
-		err = adapter.WaitForVisibility(ctx, time.Duration(c.VisibilitySeconds)*time.Second, time.Duration(c.PollMilliseconds)*time.Millisecond, func(x context.Context) (bool, error) {
-			docs, e := sessions[i].scan(x, s, s.Alias, s.Dimension, false, false)
-			if e != nil {
-				return false, e
-			}
-			if len(docs) == 0 {
-				return false, nil
-			}
-			return true, reconcile(map[string]Document{ordered[i][0].ChunkID: ordered[i][0]}, docs)
-		})
+		err = adapter.WaitForVisibility(
+			ctx,
+			time.Duration(c.VisibilitySeconds)*time.Second,
+			time.Duration(c.PollMilliseconds)*time.Millisecond,
+			func(x context.Context) (bool, error) {
+				docs, e := sessions[i].scan(x, s, s.Alias, s.Dimension, false, false)
+				if e != nil {
+					return false, e
+				}
+				if len(docs) == 0 {
+					return false, nil
+				}
+				return true, reconcile(map[string]Document{ordered[i][0].ChunkID: ordered[i][0]}, docs)
+			},
+		)
 		if err != nil {
 			return result, err
 		}
@@ -420,7 +464,9 @@ func runRound(parent context.Context, c Config, round Round) (result RoundResult
 	for i := range jobs {
 		jobs[i].at = started
 		if round.Mixed {
-			jobs[i].at = started.Add(time.Duration(round.MinimumSeconds) * time.Second * time.Duration(i+1) / time.Duration(len(jobs)))
+			jobs[i].at = started.Add(
+				time.Duration(round.MinimumSeconds) * time.Second * time.Duration(i+1) / time.Duration(len(jobs)),
+			)
 		}
 	}
 	queryCtx, stopQueries := context.WithCancel(ctx)
@@ -441,7 +487,15 @@ func runRound(parent context.Context, c Config, round Round) (result RoundResult
 							cancel()
 							return
 						}
-						p := types.RetrieveParams{Query: "OS02PERF", Embedding: ordered[i][0].Embedding, KnowledgeBaseIDs: []string{s.KnowledgeBaseID}, KnowledgeIDs: []string{s.KnowledgeID}, TopK: 5, RetrieverType: mode, AdditionalParams: map[string]any{"dim": s.Dimension}}
+						p := types.RetrieveParams{
+							Query:            "OS02PERF",
+							Embedding:        ordered[i][0].Embedding,
+							KnowledgeBaseIDs: []string{s.KnowledgeBaseID},
+							KnowledgeIDs:     []string{s.KnowledgeID},
+							TopK:             5,
+							RetrieverType:    mode,
+							AdditionalParams: map[string]any{"dim": s.Dimension},
+						}
 						t0 := time.Now()
 						hits, e := sessions[i].repo.Retrieve(queryCtx, p)
 						if e == nil {
@@ -512,7 +566,10 @@ func runRound(parent context.Context, c Config, round Round) (result RoundResult
 	}
 	if err != nil {
 		if result.HealthFailure != "" {
-			return result, fmt.Errorf("load stopped on health gate: %s; in-flight writes are not rolled back", result.HealthFailure)
+			return result, fmt.Errorf(
+				"load stopped on health gate: %s; in-flight writes are not rolled back",
+				result.HealthFailure,
+			)
 		}
 		return result, errors.New("load stopped on first failure; in-flight writes are not rolled back")
 	}
@@ -525,19 +582,24 @@ func runRound(parent context.Context, c Config, round Round) (result RoundResult
 			return result, err
 		}
 		var actual map[string]Document
-		err = adapter.WaitForVisibility(ctx, time.Duration(c.VisibilitySeconds)*time.Second, time.Duration(c.PollMilliseconds)*time.Millisecond, func(x context.Context) (bool, error) {
-			actual, err = sessions[i].scan(x, s, s.Alias, s.Dimension, false, false)
-			if err != nil {
-				return false, err
-			}
-			for id, d := range actual {
-				e, ok := expected[i][id]
-				if !ok || d.hash() != e.hash() {
-					return false, errors.New("unexpected record or data corruption")
+		err = adapter.WaitForVisibility(
+			ctx,
+			time.Duration(c.VisibilitySeconds)*time.Second,
+			time.Duration(c.PollMilliseconds)*time.Millisecond,
+			func(x context.Context) (bool, error) {
+				actual, err = sessions[i].scan(x, s, s.Alias, s.Dimension, false, false)
+				if err != nil {
+					return false, err
 				}
-			}
-			return len(actual) == len(expected[i]), nil
-		})
+				for id, d := range actual {
+					e, ok := expected[i][id]
+					if !ok || d.hash() != e.hash() {
+						return false, errors.New("unexpected record or data corruption")
+					}
+				}
+				return len(actual) == len(expected[i]), nil
+			},
+		)
 		if err != nil {
 			return result, err
 		}

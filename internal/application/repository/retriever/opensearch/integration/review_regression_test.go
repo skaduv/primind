@@ -30,9 +30,27 @@ func TestCoordinatorReplayRejectsStalePreWriteSearchEvidence(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			hits := []any{}
 			if _, after := body["search_after"]; !after {
-				hits = append(hits, map[string]any{"_id": old.ChunkID, "_index": s.Physical, "_source": old, "sort": []string{old.ChunkID}, "_version": 1, "_seq_no": 0, "_primary_term": 1})
+				hits = append(
+					hits,
+					map[string]any{
+						"_id":           old.ChunkID,
+						"_index":        s.Physical,
+						"_source":       old,
+						"sort":          []string{old.ChunkID},
+						"_version":      1,
+						"_seq_no":       0,
+						"_primary_term": 1,
+					},
+				)
 			}
-			respond(w, map[string]any{"timed_out": false, "_shards": map[string]int{"total": 1, "successful": 1, "failed": 0}, "hits": map[string]any{"total": map[string]any{"value": 1, "relation": "eq"}, "hits": hits}})
+			respond(
+				w,
+				map[string]any{
+					"timed_out": false,
+					"_shards":   map[string]int{"total": 1, "successful": 1, "failed": 0},
+					"hits":      map[string]any{"total": map[string]any{"value": 1, "relation": "eq"}, "hits": hits},
+				},
+			)
 			return
 		}
 		m.serve(w, r)
@@ -52,11 +70,19 @@ func TestCoordinatorReplayRejectsStalePreWriteSearchEvidence(t *testing.T) {
 	actual := m.indexes[s.Alias].docs[old.ChunkID]
 	writes := m.Writes
 	m.mu.Unlock()
-	if actual.TagID == old.TagID || writes != 1 || realtimeReads.Load() < 3 || len(got.Steps) != 2 || got.Steps[1].AfterRevision == nil || got.Steps[1].AfterRevision.Version != 2 {
+	if actual.TagID == old.TagID || writes != 1 || realtimeReads.Load() < 3 || len(got.Steps) != 2 ||
+		got.Steps[1].AfterRevision == nil ||
+		got.Steps[1].AfterRevision.Version != 2 {
 		t.Fatalf("fixture failed to retain acknowledged corruption: writes=%d tag=%s", writes, actual.TagID)
 	}
 	if err == nil || got.Status == "PASS" {
-		t.Fatalf("false PASS from stale pre-write search view: status=%s steps=%d writes=%d actual_tag=%s", got.Status, len(got.Steps), writes, actual.TagID)
+		t.Fatalf(
+			"false PASS from stale pre-write search view: status=%s steps=%d writes=%d actual_tag=%s",
+			got.Status,
+			len(got.Steps),
+			writes,
+			actual.TagID,
+		)
 	}
 	if !strings.Contains(err.Error(), "post-write realtime fields/vector mismatch") {
 		t.Fatalf("must reject corruption, not an unsupported new route: %v", err)
@@ -66,10 +92,25 @@ func TestCoordinatorReplayRejectsStalePreWriteSearchEvidence(t *testing.T) {
 func TestCoordinatorHealthRejectsAbsentStopObservations(t *testing.T) {
 	c := config()
 	path := filepath.Join(t.TempDir(), "missing-health-fields.json")
-	c.Performance = &Performance{HealthFile: path, HealthMaxAgeSeconds: 10, BudgetRef: "local-only", MaxHeapBytes: 1 << 40}
+	c.Performance = &Performance{
+		HealthFile:          path,
+		HealthMaxAgeSeconds: 10,
+		BudgetRef:           "local-only",
+		MaxHeapBytes:        1 << 40,
+	}
 	// Counter/latency/stop fields are absent rather than observed zero/false.
-	b, _ := json.Marshal(map[string]any{"run_id": c.RunID, "budget_ref": "local-only", "at": time.Now(), "host_available_bytes": 1 << 30, "disk_free_bytes": 1 << 30, "os_rss_bytes": 1024, "os_heap_bytes": 1024})
-	if err := os.WriteFile(path, b, 0600); err != nil {
+	b, _ := json.Marshal(
+		map[string]any{
+			"run_id":               c.RunID,
+			"budget_ref":           "local-only",
+			"at":                   time.Now(),
+			"host_available_bytes": 1 << 30,
+			"disk_free_bytes":      1 << 30,
+			"os_rss_bytes":         1024,
+			"os_heap_bytes":        1024,
+		},
+	)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := health(c); err == nil {

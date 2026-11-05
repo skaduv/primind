@@ -66,8 +66,10 @@ func newLocalClusterVia(t *testing.T, repoAddr string) *localCluster {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	storeID := hex.EncodeToString(b) // 16 chars; base suffix = first 12
-	c := &localCluster{t: t, endpoint: strings.TrimRight(endpoint, "/"), storeID: storeID,
-		base: "primind_os_it_" + storeID[:12]}
+	c := &localCluster{
+		t: t, endpoint: strings.TrimRight(endpoint, "/"), storeID: storeID,
+		base: "primind_os_it_" + storeID[:12],
+	}
 
 	client, err := adapter.NewOpenSearchClient(&types.ConnectionConfig{Addr: repoAddr})
 	if err != nil {
@@ -147,9 +149,11 @@ func sampleChunks(kb, doc string, n, seedBase int) []localChunk {
 	for i := range out {
 		id := fmt.Sprintf("%s-c%d", doc, i)
 		out[i] = localChunk{
-			info: &types.IndexInfo{ID: id, ChunkID: id, SourceID: id, SourceType: types.ChunkSourceType,
+			info: &types.IndexInfo{
+				ID: id, ChunkID: id, SourceID: id, SourceType: types.ChunkSourceType,
 				KnowledgeID: doc, KnowledgeBaseID: kb, KnowledgeType: "manual", IsEnabled: true,
-				Content: fmt.Sprintf("primind opensearch sample %s chunk %d token%d", doc, i, seedBase+i)},
+				Content: fmt.Sprintf("primind opensearch sample %s chunk %d token%d", doc, i, seedBase+i),
+			},
 			emb: vec(seedBase + i),
 		}
 	}
@@ -205,8 +209,10 @@ func TestLocalRealWriteRetrieveDelete(t *testing.T) {
 	}
 
 	// Vector retrieve, scoped to KB A.
-	vr, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
-		Embedding: docA[2].emb, KnowledgeBaseIDs: []string{kbA}, TopK: 3})
+	vr, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+		RetrieverType: types.VectorRetrieverType,
+		Embedding:     docA[2].emb, KnowledgeBaseIDs: []string{kbA}, TopK: 3,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,8 +227,10 @@ func TestLocalRealWriteRetrieveDelete(t *testing.T) {
 	}
 	// Keyword retrieve (dim-scoped and dim-less wildcard).
 	for _, ap := range []map[string]any{{"dim": localDim}, nil} {
-		kr, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType,
-			Query: "token4", KnowledgeBaseIDs: []string{kbB}, TopK: 5, AdditionalParams: ap})
+		kr, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+			RetrieverType: types.KeywordsRetrieverType,
+			Query:         "token4", KnowledgeBaseIDs: []string{kbB}, TopK: 5, AdditionalParams: ap,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -239,8 +247,10 @@ func TestLocalRealWriteRetrieveDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.raw(http.MethodPost, "/"+vecIndex+"/_refresh", "")
-	vr, err = c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
-		Embedding: docA[2].emb, KnowledgeBaseIDs: []string{kbA}, TopK: 5})
+	vr, err = c.repo.Retrieve(ctx, types.RetrieveParams{
+		RetrieverType: types.VectorRetrieverType,
+		Embedding:     docA[2].emb, KnowledgeBaseIDs: []string{kbA}, TopK: 5,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,14 +359,21 @@ func TestLocalRealMoveWithinStore(t *testing.T) {
 	byKB := func(index, kb string) int {
 		return c.count(index, fmt.Sprintf(`{"query":{"term":{"knowledge_base_id":%q}}}`, kb))
 	}
-	if got := [4]int{byKB(vecIndex, kbSrc), byKB(vecIndex, kbDst), byKB(kw, kbSrc), byKB(kw, kbDst)}; got != [4]int{2, 3, 0, 1} {
+	if got := [4]int{byKB(vecIndex, kbSrc), byKB(vecIndex, kbDst), byKB(kw, kbSrc), byKB(kw, kbDst)}; got != [4]int{
+		2,
+		3,
+		0,
+		1,
+	} {
 		t.Fatalf("vec src/dst, kw src/dst = %v, want [2 3 0 1]", got)
 	}
 	if tag := c.source(vecIndex, "docM-c0")["tag_id"]; tag != "" {
 		t.Fatalf("tag not cleared after move: %v", tag)
 	}
-	vr, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
-		Embedding: moved[1].emb, KnowledgeBaseIDs: []string{kbSrc}, TopK: 5})
+	vr, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+		RetrieverType: types.VectorRetrieverType,
+		Embedding:     moved[1].emb, KnowledgeBaseIDs: []string{kbSrc}, TopK: 5,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,8 +450,10 @@ func TestLocalRealCopyLargeDim(t *testing.T) {
 		emb := map[string][]float32{}
 		for i := off; i < min(off+40, n); i++ {
 			id := fmt.Sprintf("big-%04d", i)
-			infos = append(infos, &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: "docBig",
-				KnowledgeBaseID: kbSrc, IsEnabled: i%7 != 0, Content: "large dim chunk " + id})
+			infos = append(infos, &types.IndexInfo{
+				ChunkID: id, SourceID: id, KnowledgeID: "docBig",
+				KnowledgeBaseID: kbSrc, IsEnabled: i%7 != 0, Content: "large dim chunk " + id,
+			})
 			v := make([]float32, dim)
 			for j := range v {
 				v[j] = float32((i*31+j)%997)/997 - 0.5
@@ -458,7 +477,8 @@ func TestLocalRealCopyLargeDim(t *testing.T) {
 	for _, i := range []int{0, 7, 499, 500, n - 1} {
 		id := fmt.Sprintf("big-%04d", i)
 		src, dst := c.source(index, id), c.source(index, "cp-"+id)
-		if dst["content"] != src["content"] || dst["is_enabled"] != src["is_enabled"] || dst["knowledge_id"] != "docBig-copy" {
+		if dst["content"] != src["content"] || dst["is_enabled"] != src["is_enabled"] ||
+			dst["knowledge_id"] != "docBig-copy" {
 			t.Fatalf("chunk %s copied wrong: %v / %v / %v", id, dst["content"], dst["is_enabled"], dst["knowledge_id"])
 		}
 		sv, dv := src["embedding"].([]any), dst["embedding"].([]any)

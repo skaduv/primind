@@ -29,7 +29,8 @@ func TestCreateOpenSearchEngine_FailureClosesOwnedPool(t *testing.T) {
 	}
 	ts.Start()
 	defer ts.Close()
-	_, err := createOpenSearchEngine(context.Background(), types.VectorStore{ConnectionConfig: types.ConnectionConfig{Addr: ts.URL}}, nil)
+	store := types.VectorStore{ConnectionConfig: types.ConnectionConfig{Addr: ts.URL}}
+	_, err := createOpenSearchEngine(context.Background(), store, nil)
 	if err == nil {
 		t.Fatal("expected construction failure")
 	}

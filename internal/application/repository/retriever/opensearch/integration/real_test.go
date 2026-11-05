@@ -24,7 +24,8 @@ func realConfig(t *testing.T, mode string) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deadline, ok := t.Deadline(); ok && time.Until(deadline) < time.Duration(c.MaxSeconds)*time.Second+35*time.Second {
+	if deadline, ok := t.Deadline(); ok &&
+		time.Until(deadline) < time.Duration(c.MaxSeconds)*time.Second+35*time.Second {
 		t.Fatal("test timeout must exceed the frozen run budget by at least 35s for bounded drain")
 	}
 	frozen, _ := json.Marshal(c)
@@ -56,11 +57,13 @@ func logResult(t *testing.T, result any, err error) {
 		t.Fatal(err)
 	}
 }
+
 func TestRealSameChunkIdempotency(t *testing.T) {
 	c := realConfig(t, "replay")
 	r, e := runReplay(context.Background(), c)
 	logResult(t, r, e)
 }
+
 func TestRealPerformance(t *testing.T) {
 	c := realConfig(t, "performance")
 	r, e := runPerformance(context.Background(), c)

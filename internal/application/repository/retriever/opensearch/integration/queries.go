@@ -15,6 +15,7 @@ import (
 	secutils "github.com/primind/primind/internal/utils"
 )
 
+// Query is a fixed retrieval query with the match paths it disables.
 type Query struct {
 	ID              string `json:"id"`
 	Text            string `json:"text"`
@@ -30,6 +31,7 @@ var fixedQueries = []Query{
 	{"Q-NEG", "资料是否给出了压缩机 COMP_C 的齿轮部件号？", false, false},
 }
 
+// ApplicationEvidence records hashes and citations of one application API query.
 type ApplicationEvidence struct {
 	QueryID        string   `json:"query_id"`
 	RequestSHA256  string   `json:"request_sha256"`
@@ -57,7 +59,11 @@ func newAppProbe(a Application) (*appProbe, error) {
 	pool.MaxIdleConnsPerHost = 2
 	pool.IdleConnTimeout = 90 * time.Second
 	client := secutils.NewSSRFSafeHTTPClientWithTransport(cfg, pool)
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("redirect forbidden in scoped probe") }
+	client.CheckRedirect = func(*http.Request,
+		[]*http.Request,
+	) error {
+		return errors.New("redirect forbidden in scoped probe")
+	}
 	return &appProbe{client: client, config: a, token: token, pool: pool}, nil
 }
 
@@ -105,10 +111,18 @@ func oracleRetrieval(a Application, results []*types.SearchResult) ([]string, []
 func (p *appProbe) run(ctx context.Context, q Query) (ApplicationEvidence, error) {
 	evidence := ApplicationEvidence{QueryID: q.ID}
 	a := p.config
-	body, _ := json.Marshal(types.SearchParams{QueryText: q.Text, KnowledgeBaseIDs: []string{a.KnowledgeBaseID}, MatchCount: a.MatchCount,
-		VectorThreshold: a.VectorThreshold, KeywordThreshold: a.KeywordThreshold, DisableVectorMatch: q.DisableVector, DisableKeywordsMatch: q.DisableKeywords})
+	body, _ := json.Marshal(types.SearchParams{
+		QueryText: q.Text, KnowledgeBaseIDs: []string{a.KnowledgeBaseID}, MatchCount: a.MatchCount,
+		VectorThreshold: a.VectorThreshold, KeywordThreshold: a.KeywordThreshold,
+		DisableVectorMatch: q.DisableVector, DisableKeywordsMatch: q.DisableKeywords,
+	})
 	evidence.RequestSHA256 = digest(body)
-	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimSuffix(a.Endpoint, "/")+"/api/v1/knowledge-bases/"+a.KnowledgeBaseID+"/hybrid-search", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		strings.TrimSuffix(a.Endpoint, "/")+"/api/v1/knowledge-bases/"+a.KnowledgeBaseID+"/hybrid-search",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return evidence, errors.New("invalid application request")
 	}
@@ -118,7 +132,7 @@ func (p *appProbe) run(ctx context.Context, q Query) (ApplicationEvidence, error
 	if err != nil {
 		return evidence, errors.New("application transport failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return evidence, errors.New("application HTTP failure; stop load")
 	}

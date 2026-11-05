@@ -51,7 +51,7 @@ func TestRegistry_ReplaceClosesOnlyThePreviousEngine(t *testing.T) {
 	assert.Same(t, newEngine, live)
 }
 
-func TestRegistry_NonClosableEnginesAreUntouched(t *testing.T) {
+func TestRegistry_NonClosableEnginesAreUntouched(_ *testing.T) {
 	r := newRehydratingRegistry(nil)
 	r.RegisterWithStoreID("store-1", newMock(types.PostgresRetrieverEngineType))
 	r.RegisterWithStoreID("store-1", newMock(types.PostgresRetrieverEngineType))
@@ -61,12 +61,13 @@ func TestRegistry_NonClosableEnginesAreUntouched(t *testing.T) {
 func TestGetOrLoadByStoreID_LosingBuildClosesItsEngine(t *testing.T) {
 	built := newClosable()
 	factory := newBlockingFactory()
-	registry := newRehydratingRegistry(func(ctx context.Context, s types.VectorStore) (interfaces.RetrieveEngineService, error) {
+	build := func(ctx context.Context, s types.VectorStore) (interfaces.RetrieveEngineService, error) {
 		if _, err := factory.build(ctx, s); err != nil {
 			return nil, err
 		}
 		return built, nil
-	})
+	}
+	registry := newRehydratingRegistry(build)
 
 	done := make(chan struct{})
 	go func() {

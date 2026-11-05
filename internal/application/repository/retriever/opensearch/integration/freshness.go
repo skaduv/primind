@@ -31,11 +31,11 @@ func (after Revision) advanced(before Revision) bool {
 	return after.Version > before.Version && after.SeqNo > before.SeqNo && after.PrimaryTerm >= before.PrimaryTerm
 }
 
-func (got Revision) reached(target Revision) (bool, error) {
-	if got == target {
+func (after Revision) reached(target Revision) (bool, error) {
+	if after == target {
 		return true, nil
 	}
-	if got.Version < target.Version && got.SeqNo < target.SeqNo && got.PrimaryTerm <= target.PrimaryTerm {
+	if after.Version < target.Version && after.SeqNo < target.SeqNo && after.PrimaryTerm <= target.PrimaryTerm {
 		return false, nil
 	}
 	return false, errors.New("search revision changed beyond or conflicts with quiescent replay target")
@@ -51,7 +51,9 @@ func (r reader) realtime(ctx context.Context, s Scope) (Document, Revision, erro
 		PrimaryTerm *int64          `json:"_primary_term"`
 		Source      json.RawMessage `json:"_source"`
 	}
-	path := "/" + s.Alias + "/_doc/" + s.ChunkID + "?realtime=true&refresh=false&preference=" + url.QueryEscape(r.config.RunID)
+	path := "/" + s.Alias + "/_doc/" + s.ChunkID + "?realtime=true&refresh=false&preference=" + url.QueryEscape(
+		r.config.RunID,
+	)
 	if _, err := r.json(ctx, "GET", path, nil, &response); err != nil {
 		return Document{}, Revision{}, err
 	}
@@ -93,44 +95,54 @@ func (r reader) noKeywordCopy(ctx context.Context, s Scope) error {
 	return nil
 }
 
-func (sess *session) visibleRevision(ctx context.Context, s Scope, expected Document, target Revision) (docs map[string]Document, observed Revision, err error) {
-	err = adapter.WaitForVisibility(ctx, time.Duration(sess.config.VisibilitySeconds)*time.Second, time.Duration(sess.config.PollMilliseconds)*time.Millisecond, func(check context.Context) (bool, error) {
-		if e := sess.alias(check, s); e != nil {
-			return false, e
-		}
-		revisions := map[string]Revision{}
-		var e error
-		docs, e = sess.scanObserved(check, s, s.Alias, s.Dimension, true, false, revisions)
-		if e != nil {
-			return false, e
-		}
-		if len(docs) == 0 {
-			return false, nil
-		}
-		if len(docs) != 1 {
-			return false, errors.New("exact Chunk must occur once")
-		}
-		observed = revisions[s.ChunkID]
-		fresh, e := observed.reached(target)
-		if e != nil || !fresh {
-			return false, e
-		}
-		if e = reconcile(map[string]Document{s.ChunkID: expected}, docs); e != nil {
-			return false, e
-		}
-		if e = sess.noKeywordCopy(check, s); e != nil {
-			return false, e
-		}
-		// Detect an intervening operation (including an equal-payload one) before
-		// accepting the search receipt. Scope is explicitly required to be quiet.
-		d, v, e := sess.realtime(check, s)
-		if e != nil {
-			return false, e
-		}
-		if v != target || d.hash() != expected.hash() {
-			return false, errors.New("realtime state changed during visibility check")
-		}
-		return true, nil
-	})
+func (sess *session) visibleRevision(
+	ctx context.Context,
+	s Scope,
+	expected Document,
+	target Revision,
+) (docs map[string]Document, observed Revision, err error) {
+	err = adapter.WaitForVisibility(
+		ctx,
+		time.Duration(sess.config.VisibilitySeconds)*time.Second,
+		time.Duration(sess.config.PollMilliseconds)*time.Millisecond,
+		func(check context.Context) (bool, error) {
+			if e := sess.alias(check, s); e != nil {
+				return false, e
+			}
+			revisions := map[string]Revision{}
+			var e error
+			docs, e = sess.scanObserved(check, s, s.Alias, s.Dimension, true, false, revisions)
+			if e != nil {
+				return false, e
+			}
+			if len(docs) == 0 {
+				return false, nil
+			}
+			if len(docs) != 1 {
+				return false, errors.New("exact Chunk must occur once")
+			}
+			observed = revisions[s.ChunkID]
+			fresh, e := observed.reached(target)
+			if e != nil || !fresh {
+				return false, e
+			}
+			if e = reconcile(map[string]Document{s.ChunkID: expected}, docs); e != nil {
+				return false, e
+			}
+			if e = sess.noKeywordCopy(check, s); e != nil {
+				return false, e
+			}
+			// Detect an intervening operation (including an equal-payload one) before
+			// accepting the search receipt. Scope is explicitly required to be quiet.
+			d, v, e := sess.realtime(check, s)
+			if e != nil {
+				return false, e
+			}
+			if v != target || d.hash() != expected.hash() {
+				return false, errors.New("realtime state changed during visibility check")
+			}
+			return true, nil
+		},
+	)
 	return
 }

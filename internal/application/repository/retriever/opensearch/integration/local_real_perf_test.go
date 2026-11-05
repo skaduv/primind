@@ -64,9 +64,17 @@ func TestLocalRealBaseline(t *testing.T) {
 		emb := make(map[string][]float32, n)
 		for i := range infos {
 			id := fmt.Sprintf("perf-%07d", off+i)
-			infos[i] = &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: fmt.Sprintf("doc-%d", (off+i)/50),
+			infos[i] = &types.IndexInfo{
+				ChunkID: id, SourceID: id, KnowledgeID: fmt.Sprintf("doc-%d", (off+i)/50),
 				KnowledgeBaseID: kb, IsEnabled: true, SourceType: types.ChunkSourceType,
-				Content: fmt.Sprintf("%s %s chunk %d token%d", words[(off+i)%len(words)], words[(off+i*3)%len(words)], off+i, off+i)}
+				Content: fmt.Sprintf(
+					"%s %s chunk %d token%d",
+					words[(off+i)%len(words)],
+					words[(off+i*3)%len(words)],
+					off+i,
+					off+i,
+				),
+			}
 			emb[id] = randVec()
 			if len(sample) < nQueries && (off+i)%max(1, nChunks/nQueries) == 0 {
 				sample = append(sample, emb[id])
@@ -97,14 +105,20 @@ func TestLocalRealBaseline(t *testing.T) {
 			pct(lat, 50), pct(lat, 95), pct(lat, 99), pct(lat, 100))
 	}
 	measure("vector", func(i int) error {
-		_, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
-			Embedding: sample[i%len(sample)], KnowledgeBaseIDs: []string{kb}, TopK: 10})
+		_, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+			RetrieverType: types.VectorRetrieverType,
+			Embedding:     sample[i%len(sample)], KnowledgeBaseIDs: []string{kb}, TopK: 10,
+		})
 		return err
 	})
 	measure("keyword", func(i int) error {
-		_, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType,
-			Query: words[i%len(words)] + " token" + strconv.Itoa(i*37%nChunks), KnowledgeBaseIDs: []string{kb}, TopK: 10,
-			AdditionalParams: map[string]any{"dim": dim}})
+		_, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+			RetrieverType: types.KeywordsRetrieverType,
+			Query: words[i%len(words)] + " token" + strconv.Itoa(
+				i*37%nChunks,
+			), KnowledgeBaseIDs: []string{kb}, TopK: 10,
+			AdditionalParams: map[string]any{"dim": dim},
+		})
 		return err
 	})
 
@@ -119,8 +133,10 @@ func TestLocalRealBaseline(t *testing.T) {
 			emb := make(map[string][]float32, batch)
 			for j := range infos {
 				id := fmt.Sprintf("perf-%s-%03d-%03d", tag, i, j)
-				infos[j] = &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: "doc-r", KnowledgeBaseID: kb,
-					IsEnabled: true, SourceType: types.ChunkSourceType, Content: "refresh cost " + id}
+				infos[j] = &types.IndexInfo{
+					ChunkID: id, SourceID: id, KnowledgeID: "doc-r", KnowledgeBaseID: kb,
+					IsEnabled: true, SourceType: types.ChunkSourceType, Content: "refresh cost " + id,
+				}
 				emb[id] = randVec()
 			}
 			if err := c.repo.BatchSave(ctx, infos, map[string]any{"embedding": emb}); err != nil {

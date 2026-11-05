@@ -25,18 +25,39 @@ import (
 )
 
 func scope() Scope {
-	return Scope{StoreID: "abcdef0123456789", Index: types.IndexConfig{IndexName: "os02local", NumberOfShards: 1, NumberOfReplicas: 1, HNSWM: 16, HNSWEFConstruction: 100, HNSWEFSearch: 100, KNNEngine: "lucene"},
-		Alias: "os02local_abcdef012345_3", Physical: "os02local_abcdef012345_3_v1", Dimension: 3, KnowledgeBaseID: "kb-test", KnowledgeID: "doc-test", ChunkID: "chunk-test", RefreshInterval: "1s"}
+	return Scope{
+		StoreID: "abcdef0123456789", Index: types.IndexConfig{
+			IndexName: "os02local", NumberOfShards: 1,
+			NumberOfReplicas: 1, HNSWM: 16, HNSWEFConstruction: 100, HNSWEFSearch: 100, KNNEngine: "lucene",
+		},
+		Alias: "os02local_abcdef012345_3", Physical: "os02local_abcdef012345_3_v1", Dimension: 3,
+		KnowledgeBaseID: "kb-test", KnowledgeID: "doc-test", ChunkID: "chunk-test", RefreshInterval: "1s",
+	}
 }
 
 func config() Config {
 	s := scope()
-	return Config{Mode: "replay", RunID: "local", AuthorizationRef: "LOCAL_MOCK_ONLY", Expires: time.Now().Add(time.Hour), Endpoint: "http://127.0.0.1:1", ClusterUUID: "mock-cluster", Version: "2.19.7", AnonymousAuthorized: true,
-		QuiescentScope: true, MaxSeconds: 20, VisibilitySeconds: 1, PollMilliseconds: 10, PageSize: 2, MaxRecords: 1000, TotalRequests: 4, WriteRequests: 2, Waiters: 8, Replay: &s}
+	return Config{
+		Mode: "replay", RunID: "local", AuthorizationRef: "LOCAL_MOCK_ONLY", Expires: time.Now().Add(time.Hour),
+		Endpoint: "http://127.0.0.1:1", ClusterUUID: "mock-cluster", Version: "2.19.7", AnonymousAuthorized: true,
+		QuiescentScope: true, MaxSeconds: 20, VisibilitySeconds: 1, PollMilliseconds: 10, PageSize: 2,
+		MaxRecords: 1000, TotalRequests: 4, WriteRequests: 2, Waiters: 8, Replay: &s,
+	}
 }
 
 func original(s Scope) Document {
-	return Document{ChunkID: s.ChunkID, SourceID: "different-source-id", SourceType: 2, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "tag-original", Content: "合成重放记录 original", Enabled: false, Recommended: true, Embedding: []float32{.25, -.5, .75}}
+	return Document{
+		ChunkID:         s.ChunkID,
+		SourceID:        "different-source-id",
+		SourceType:      2,
+		KnowledgeID:     s.KnowledgeID,
+		KnowledgeBaseID: s.KnowledgeBaseID,
+		TagID:           "tag-original",
+		Content:         "合成重放记录 original",
+		Enabled:         false,
+		Recommended:     true,
+		Embedding:       []float32{.25, -.5, .75},
+	}
 }
 
 type mockIndex struct {
@@ -98,10 +119,14 @@ func respond(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
 func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 	active := m.active.Add(1)
 	defer m.active.Add(-1)
-	for p := m.peak.Load(); active > p && !m.peak.CompareAndSwap(p, active); p = m.peak.Load() {
+	for {
+		if p := m.peak.Load(); active <= p || m.peak.CompareAndSwap(p, active) {
+			break
+		}
 	}
 	if r.URL.Path == "/_bulk" && m.BulkDelay > 0 {
 		if sleepContext(r.Context(), m.BulkDelay) != nil {
@@ -113,7 +138,13 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 	m.Requests++
 	path := r.URL.Path
 	if path == "/" {
-		respond(w, map[string]any{"cluster_uuid": "mock-cluster", "version": map[string]any{"number": "2.19.7", "distribution": "opensearch"}})
+		respond(
+			w,
+			map[string]any{
+				"cluster_uuid": "mock-cluster",
+				"version":      map[string]any{"number": "2.19.7", "distribution": "opensearch"},
+			},
+		)
 		return
 	}
 	if path == "/_cat/plugins" {
@@ -138,17 +169,27 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			idx, ok := m.indexes[meta.Index.Index]
 			if !ok || !idx.exists {
-				http.Error(w, "wrong scope", 403)
+				http.Error(w, "wrong scope", http.StatusForbidden)
 				return
 			}
 			d, e := decodeDocument(scan.Bytes(), idx.scope.Dimension)
-			if e != nil || d.ChunkID != meta.Index.ID || d.KnowledgeBaseID != idx.scope.KnowledgeBaseID || d.KnowledgeID != idx.scope.KnowledgeID {
+			if e != nil || d.ChunkID != meta.Index.ID || d.KnowledgeBaseID != idx.scope.KnowledgeBaseID ||
+				d.KnowledgeID != idx.scope.KnowledgeID {
 				http.Error(w, "invalid document", 400)
 				return
 			}
 			m.Writes++
 			if m.Fault == "bulk429" {
-				items = append(items, map[string]any{"index": map[string]any{"_id": d.ChunkID, "status": 429, "error": map[string]any{"type": "es_rejected_execution_exception"}}})
+				items = append(
+					items,
+					map[string]any{
+						"index": map[string]any{
+							"_id":    d.ChunkID,
+							"status": 429,
+							"error":  map[string]any{"type": "es_rejected_execution_exception"},
+						},
+					},
+				)
 				continue
 			}
 			idx.persist(d)
@@ -196,11 +237,47 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if path == "/"+s.Physical+"/_settings" {
-			respond(w, map[string]any{s.Physical: map[string]any{"settings": map[string]string{"index.number_of_shards": fmt.Sprint(s.Index.NumberOfShards), "index.number_of_replicas": fmt.Sprint(s.Index.NumberOfReplicas), "index.refresh_interval": s.RefreshInterval, "index.knn": "true", "index.knn.algo_param.ef_search": fmt.Sprint(s.Index.HNSWEFSearch)}}})
+			respond(
+				w,
+				map[string]any{
+					s.Physical: map[string]any{
+						"settings": map[string]string{
+							"index.number_of_shards":         fmt.Sprint(s.Index.NumberOfShards),
+							"index.number_of_replicas":       fmt.Sprint(s.Index.NumberOfReplicas),
+							"index.refresh_interval":         s.RefreshInterval,
+							"index.knn":                      "true",
+							"index.knn.algo_param.ef_search": fmt.Sprint(s.Index.HNSWEFSearch),
+						},
+					},
+				},
+			)
 			return
 		}
 		if path == "/"+s.Physical+"/_mapping" {
-			respond(w, map[string]any{s.Physical: map[string]any{"mappings": map[string]any{"properties": map[string]any{"embedding": map[string]any{"type": "knn_vector", "dimension": s.Dimension, "method": map[string]any{"name": "hnsw", "engine": s.Index.KNNEngine, "space_type": "cosinesimil", "parameters": map[string]any{"m": s.Index.HNSWM, "ef_construction": s.Index.HNSWEFConstruction}}}}}}})
+			respond(
+				w,
+				map[string]any{
+					s.Physical: map[string]any{
+						"mappings": map[string]any{
+							"properties": map[string]any{
+								"embedding": map[string]any{
+									"type":      "knn_vector",
+									"dimension": s.Dimension,
+									"method": map[string]any{
+										"name":       "hnsw",
+										"engine":     s.Index.KNNEngine,
+										"space_type": "cosinesimil",
+										"parameters": map[string]any{
+											"m":               s.Index.HNSWM,
+											"ef_construction": s.Index.HNSWEFConstruction,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			)
 			return
 		}
 		if strings.HasPrefix(path, "/"+alias+"/_doc/") && r.Method == "GET" {
@@ -211,7 +288,18 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			v := idx.currentRevision(id)
-			respond(w, map[string]any{"_id": id, "_index": s.Physical, "found": true, "_version": v.Version, "_seq_no": v.SeqNo, "_primary_term": v.PrimaryTerm, "_source": d})
+			respond(
+				w,
+				map[string]any{
+					"_id":           id,
+					"_index":        s.Physical,
+					"found":         true,
+					"_version":      v.Version,
+					"_seq_no":       v.SeqNo,
+					"_primary_term": v.PrimaryTerm,
+					"_source":       d,
+				},
+			)
 			return
 		}
 		if strings.HasPrefix(path, "/"+alias+"/_doc/") && r.Method == "PUT" {
@@ -220,13 +308,14 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "bad", 400)
 				return
 			}
-			if d.ChunkID != strings.TrimPrefix(path, "/"+alias+"/_doc/") || d.KnowledgeBaseID != s.KnowledgeBaseID || d.KnowledgeID != s.KnowledgeID {
-				http.Error(w, "scope", 403)
+			if d.ChunkID != strings.TrimPrefix(path, "/"+alias+"/_doc/") || d.KnowledgeBaseID != s.KnowledgeBaseID ||
+				d.KnowledgeID != s.KnowledgeID {
+				http.Error(w, "scope", http.StatusForbidden)
 				return
 			}
 			m.Writes++
 			if m.Fault == "save403" {
-				http.Error(w, "forbidden", 403)
+				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
 			if m.Fault == "corruption" && m.Writes >= m.BadAt {
@@ -266,7 +355,19 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 					d.SourceID = "wrong"
 				}
 				v := idx.currentRevision(id)
-				hits = append(hits, map[string]any{"_id": id, "_index": s.Physical, "_score": 1, "_source": d, "sort": []string{id}, "_version": v.Version, "_seq_no": v.SeqNo, "_primary_term": v.PrimaryTerm})
+				hits = append(
+					hits,
+					map[string]any{
+						"_id":           id,
+						"_index":        s.Physical,
+						"_score":        1,
+						"_source":       d,
+						"sort":          []string{id},
+						"_version":      v.Version,
+						"_seq_no":       v.SeqNo,
+						"_primary_term": v.PrimaryTerm,
+					},
+				)
 				if len(hits) == size {
 					break
 				}
@@ -289,10 +390,22 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 			case "repeated-page":
 				if after != "" {
 					id := ids[0]
-					hits = []any{map[string]any{"_id": id, "_index": s.Physical, "_source": idx.docs[id], "sort": []string{id}}}
+					hits = []any{
+						map[string]any{"_id": id, "_index": s.Physical, "_source": idx.docs[id], "sort": []string{id}},
+					}
 				}
 			}
-			respond(w, map[string]any{"timed_out": timedout, "_shards": map[string]int{"total": 1, "successful": 1 - failed, "failed": failed}, "hits": map[string]any{"total": map[string]any{"value": total, "relation": relation}, "hits": hits}})
+			respond(
+				w,
+				map[string]any{
+					"timed_out": timedout,
+					"_shards":   map[string]int{"total": 1, "successful": 1 - failed, "failed": failed},
+					"hits": map[string]any{
+						"total": map[string]any{"value": total, "relation": relation},
+						"hits":  hits,
+					},
+				},
+			)
 			return
 		}
 	}
@@ -300,7 +413,11 @@ func (m *mockCluster) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestOptInDisabledBeforeConfigOrSecretRead(t *testing.T) {
-	for _, env := range []map[string]string{{}, {"PRIMIND_OS02_OPT_IN": "OS-02:replay"}, {"PRIMIND_OS02_OPT_IN": "true", "PRIMIND_OS02_CONFIG": "unreadable"}} {
+	for _, env := range []map[string]string{
+		{},
+		{"PRIMIND_OS02_OPT_IN": "OS-02:replay"},
+		{"PRIMIND_OS02_OPT_IN": "true", "PRIMIND_OS02_CONFIG": "unreadable"},
+	} {
 		var names []string
 		_, e := loadConfig("replay", func(k string) string { names = append(names, k); return env[k] })
 		if !errors.Is(e, errNotRun) {
@@ -315,7 +432,20 @@ func TestOptInDisabledBeforeConfigOrSecretRead(t *testing.T) {
 }
 
 func TestConfigRejectsUnsafeScopeBeforeNetwork(t *testing.T) {
-	for name, mutate := range map[string]func(*Config){"expired": func(c *Config) { c.Expires = time.Now().Add(-time.Second) }, "wildcard": func(c *Config) { c.Replay.Alias = "*" }, "empty-config": func(c *Config) { c.Replay.Index = types.IndexConfig{} }, "wrong-physical": func(c *Config) { c.Replay.Physical += "_other" }, "zero-dimension": func(c *Config) { c.Replay.Dimension = 0 }, "no-authorization": func(c *Config) { c.AuthorizationRef = "" }, "no-quiescence": func(c *Config) { c.QuiescentScope = false }, "embedded-secret": func(c *Config) { c.Endpoint = "http://u:p@127.0.0.1" }, "endpoint-query": func(c *Config) { c.Endpoint += "/?other=1" }, "unbounded": func(c *Config) { c.MaxSeconds = 0 }, "zero-replicas": func(c *Config) { c.Replay.Index.NumberOfReplicas = 0 }, "new-mode": func(c *Config) { c.Mode = "load-production" }} {
+	for name, mutate := range map[string]func(*Config){
+		"expired":          func(c *Config) { c.Expires = time.Now().Add(-time.Second) },
+		"wildcard":         func(c *Config) { c.Replay.Alias = "*" },
+		"empty-config":     func(c *Config) { c.Replay.Index = types.IndexConfig{} },
+		"wrong-physical":   func(c *Config) { c.Replay.Physical += "_other" },
+		"zero-dimension":   func(c *Config) { c.Replay.Dimension = 0 },
+		"no-authorization": func(c *Config) { c.AuthorizationRef = "" },
+		"no-quiescence":    func(c *Config) { c.QuiescentScope = false },
+		"embedded-secret":  func(c *Config) { c.Endpoint = "http://u:p@127.0.0.1" },
+		"endpoint-query":   func(c *Config) { c.Endpoint += "/?other=1" },
+		"unbounded":        func(c *Config) { c.MaxSeconds = 0 },
+		"zero-replicas":    func(c *Config) { c.Replay.Index.NumberOfReplicas = 0 },
+		"new-mode":         func(c *Config) { c.Mode = "load-production" },
+	} {
 		t.Run(name, func(t *testing.T) {
 			c := config()
 			m := newMock(t, []Scope{*c.Replay}, true)
@@ -333,7 +463,7 @@ func TestConfigDedicatedStrictJSON(t *testing.T) {
 	c := config()
 	b, _ := json.Marshal(c)
 	path := filepath.Join(t.TempDir(), "config.json")
-	if e := os.WriteFile(path, b, 0600); e != nil {
+	if e := os.WriteFile(path, b, 0o600); e != nil {
 		t.Fatal(e)
 	}
 	get := func(k string) string {
@@ -349,7 +479,7 @@ func TestConfigDedicatedStrictJSON(t *testing.T) {
 	if _, e := loadConfig("replay", get); e != nil {
 		t.Fatal(e)
 	}
-	if e := os.WriteFile(path, append(b, []byte(" {}")...), 0600); e != nil {
+	if e := os.WriteFile(path, append(b, []byte(" {}")...), 0o600); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := loadConfig("replay", get); e == nil {
@@ -449,7 +579,14 @@ func TestFullPaginationNotTopKOrCountOnly(t *testing.T) {
 func TestReconcileIndependentFieldsAndDuplicateIdentity(t *testing.T) {
 	s := scope()
 	d := original(s)
-	for name, mutate := range map[string]func(*Document){"tag": func(x *Document) { x.TagID = "x" }, "enabled": func(x *Document) { x.Enabled = true }, "recommended": func(x *Document) { x.Recommended = false }, "source": func(x *Document) { x.SourceID = x.ChunkID }, "vector": func(x *Document) { x.Embedding = []float32{.2, -.5, .75} }, "content": func(x *Document) { x.Content += "x" }} {
+	for name, mutate := range map[string]func(*Document){
+		"tag":         func(x *Document) { x.TagID = "x" },
+		"enabled":     func(x *Document) { x.Enabled = true },
+		"recommended": func(x *Document) { x.Recommended = false },
+		"source":      func(x *Document) { x.SourceID = x.ChunkID },
+		"vector":      func(x *Document) { x.Embedding = []float32{.2, -.5, .75} },
+		"content":     func(x *Document) { x.Content += "x" },
+	} {
 		t.Run(name, func(t *testing.T) {
 			x := d
 			mutate(&x)
@@ -479,11 +616,14 @@ func TestDispatchCancellationStopsNewWritesAndJoins(t *testing.T) {
 		jobs[i].at = time.Now()
 	}
 	var calls, active, peak atomic.Int32
-	e := dispatch(ctx, cancel, 2, jobs, func(c context.Context, j job) error {
+	e := dispatch(ctx, cancel, 2, jobs, func(c context.Context, _ job) error {
 		call := calls.Add(1)
 		a := active.Add(1)
 		defer active.Add(-1)
-		for p := peak.Load(); a > p && !peak.CompareAndSwap(p, a); p = peak.Load() {
+		for {
+			if p := peak.Load(); a <= p || peak.CompareAndSwap(p, a) {
+				break
+			}
 		}
 		if call == 1 {
 			return errors.New("simulated 429")
@@ -502,7 +642,10 @@ func TestApplicationOracleAcceptsContextExpansionRejectsLeaks(t *testing.T) {
 	if _, _, e := oracleRetrieval(a, []*types.SearchResult{good}); e != nil {
 		t.Fatal(e)
 	}
-	for _, results := range [][]*types.SearchResult{{good, good}, {{ID: "other", KnowledgeBaseID: "other-kb", KnowledgeID: "a"}}, {{ID: "child", KnowledgeBaseID: "kb", KnowledgeID: "b"}}, nil} {
+	for _, results := range [][]*types.SearchResult{{good, good}, {{
+		ID: "other", KnowledgeBaseID: "other-kb",
+		KnowledgeID: "a",
+	}}, {{ID: "child", KnowledgeBaseID: "kb", KnowledgeID: "b"}}, nil} {
 		if _, _, e := oracleRetrieval(a, results); e == nil {
 			t.Fatal("invalid oracle accepted")
 		}
@@ -511,16 +654,30 @@ func TestApplicationOracleAcceptsContextExpansionRejectsLeaks(t *testing.T) {
 
 func TestApplicationRequestsFreezeThreeModes(t *testing.T) {
 	seen := []types.SearchParams{}
-	a := Application{KnowledgeBaseID: "kb", KnowledgeAID: "a", EvidenceAChunkIDs: []string{"child"}, MatchCount: 5, VectorThreshold: .4, KeywordThreshold: 0}
+	a := Application{
+		KnowledgeBaseID:   "kb",
+		KnowledgeAID:      "a",
+		EvidenceAChunkIDs: []string{"child"},
+		MatchCount:        5,
+		VectorThreshold:   .4,
+		KeywordThreshold:  0,
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/api/v1/knowledge-bases/kb/hybrid-search" || r.Header.Get("Authorization") != "Bearer local-test" {
-			http.Error(w, "scope", 403)
+		if r.Method != "POST" || r.URL.Path != "/api/v1/knowledge-bases/kb/hybrid-search" ||
+			r.Header.Get("Authorization") != "Bearer local-test" {
+			http.Error(w, "scope", http.StatusForbidden)
 			return
 		}
 		var p types.SearchParams
 		_ = json.NewDecoder(r.Body).Decode(&p)
 		seen = append(seen, p)
-		respond(w, map[string]any{"success": true, "data": []any{map[string]any{"id": "child", "knowledge_id": "a", "knowledge_base_id": "kb"}}})
+		respond(
+			w,
+			map[string]any{
+				"success": true,
+				"data":    []any{map[string]any{"id": "child", "knowledge_id": "a", "knowledge_base_id": "kb"}},
+			},
+		)
 	}))
 	defer srv.Close()
 	a.Endpoint = srv.URL
@@ -532,7 +689,11 @@ func TestApplicationRequestsFreezeThreeModes(t *testing.T) {
 	}
 	for i, x := range seen {
 		q := fixedQueries[i]
-		if x.QueryText != q.Text || x.DisableVectorMatch != q.DisableVector || x.DisableKeywordsMatch != q.DisableKeywords || len(x.QueryEmbedding) != 0 || !reflect.DeepEqual(x.KnowledgeBaseIDs, []string{"kb"}) || x.Rerank != nil {
+		if x.QueryText != q.Text || x.DisableVectorMatch != q.DisableVector ||
+			x.DisableKeywordsMatch != q.DisableKeywords ||
+			len(x.QueryEmbedding) != 0 ||
+			!reflect.DeepEqual(x.KnowledgeBaseIDs, []string{"kb"}) ||
+			x.Rerank != nil {
 			t.Fatal("frozen request drift")
 		}
 	}
@@ -543,8 +704,14 @@ func TestApplicationProbeOwnsAndClosesPool(t *testing.T) {
 	defer secutils.SetSSRFWhitelistFromRaw("")
 	t.Setenv("OS02_SECRET_APP", "local-token")
 	var live, opened atomic.Int32
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		respond(w, map[string]any{"success": true, "data": []any{map[string]any{"id": "a-chunk", "knowledge_id": "a", "knowledge_base_id": "kb"}}})
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respond(
+			w,
+			map[string]any{
+				"success": true,
+				"data":    []any{map[string]any{"id": "a-chunk", "knowledge_id": "a", "knowledge_base_id": "kb"}},
+			},
+		)
 	}))
 	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
 		if s == http.StateNew {
@@ -557,7 +724,16 @@ func TestApplicationProbeOwnsAndClosesPool(t *testing.T) {
 	}
 	srv.Start()
 	defer srv.Close()
-	p, e := newAppProbe(Application{Endpoint: srv.URL, TokenEnv: "OS02_SECRET_APP", KnowledgeBaseID: "kb", KnowledgeAID: "a", EvidenceAChunkIDs: []string{"a-chunk"}, MatchCount: 5})
+	p, e := newAppProbe(
+		Application{
+			Endpoint:          srv.URL,
+			TokenEnv:          "OS02_SECRET_APP",
+			KnowledgeBaseID:   "kb",
+			KnowledgeAID:      "a",
+			EvidenceAChunkIDs: []string{"a-chunk"},
+			MatchCount:        5,
+		},
+	)
 	if e != nil {
 		t.Fatal(e)
 	}

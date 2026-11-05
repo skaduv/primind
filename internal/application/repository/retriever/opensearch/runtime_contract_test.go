@@ -29,7 +29,12 @@ func managedTestRepo(t *testing.T, url, store string, opts ...ClientOption) *Rep
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { CloseIdleConnections(c) })
-	return &Repository{client: c, baseIndex: store, cfg: internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100}, keywordsReady: true}
+	return &Repository{
+		client:        c,
+		baseIndex:     store,
+		cfg:           internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100},
+		keywordsReady: true,
+	}
 }
 
 func echoBulk(w http.ResponseWriter, r *http.Request) {
@@ -78,11 +83,11 @@ func TestOS01_InitializationReturnsAttemptErrorAndRecovers(t *testing.T) {
 			puts.Add(1)
 			if !healthy.Load() {
 				w.WriteHeader(503)
-				io.WriteString(w, `{"error":{"type":"server_error"},"status":503}`)
+				_, _ = io.WriteString(w, `{"error":{"type":"server_error"},"status":503}`)
 				return
 			}
 		}
-		io.WriteString(w, `{"acknowledged":true}`)
+		_, _ = io.WriteString(w, `{"acknowledged":true}`)
 	})
 	defer ts.Close()
 	if err := r.ensureReady(context.Background(), 3); err == nil {
@@ -105,13 +110,17 @@ func TestOS01_BulkActualBytesRejectedBeforeSend(t *testing.T) {
 	var sent atomic.Int32
 	r, ts := newTestRepo(t, func(w http.ResponseWriter, req *http.Request) {
 		sent.Add(1)
-		io.Copy(io.Discard, req.Body)
-		io.WriteString(w, `{"errors":false,"items":[{"index":{"_id":"c1","status":201}}]}`)
+		_, _ = io.Copy(io.Discard, req.Body)
+		_, _ = io.WriteString(w, `{"errors":false,"items":[{"index":{"_id":"c1","status":201}}]}`)
 	})
 	defer ts.Close()
 	r.keywordsReady = true
 	// Estimate is 1124 bytes; JSON escaping expands this to over 12 MiB.
-	err := r.BatchSave(context.Background(), []*types.IndexInfo{{ChunkID: "c1", Content: strings.Repeat("\x00", 2<<20)}}, nil)
+	err := r.BatchSave(
+		context.Background(),
+		[]*types.IndexInfo{{ChunkID: "c1", Content: strings.Repeat("\x00", 2<<20)}},
+		nil,
+	)
 	if !errors.Is(err, ErrBatchTooLarge) {
 		t.Errorf("want ErrBatchTooLarge, got %v", err)
 	}
@@ -123,15 +132,15 @@ func TestOS01_BulkActualBytesRejectedBeforeSend(t *testing.T) {
 func TestOS01_BulkRejectsUnconfirmedResponses(t *testing.T) {
 	for name, body := range map[string]string{
 		"missing":              `{"errors":false,"items":[]}`,
-		"extra":                `{"errors":false,"items":[{"index":{"_id":"c1","status":201}},{"index":{"_id":"c2","status":201}}]}`,
+		"extra":                `{"errors":false,"items":[{"index":{"_id":"c1","status":201}},{"index":{"_id":"c2","status":201}}]}`, //nolint:lll // bulk response fixture
 		"wrong_id":             `{"errors":false,"items":[{"index":{"_id":"other","status":201}}]}`,
-		"false_with_failure":   `{"errors":false,"items":[{"index":{"_id":"c1","status":400,"error":{"type":"mapper_parsing_exception"}}}]}`,
+		"false_with_failure":   `{"errors":false,"items":[{"index":{"_id":"c1","status":400,"error":{"type":"mapper_parsing_exception"}}}]}`, //nolint:lll // bulk response fixture
 		"true_without_failure": `{"errors":true,"items":[{"index":{"_id":"c1","status":201}}]}`,
 		"invalid_status":       `{"errors":false,"items":[{"index":{"_id":"c1","status":0}}]}`,
 		"truncated":            `{"errors":false,"items":[`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			r, ts := newTestRepo(t, func(w http.ResponseWriter, req *http.Request) { io.WriteString(w, body) })
+			r, ts := newTestRepo(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
 			defer ts.Close()
 			r.keywordsReady = true
 			if err := r.BatchSave(context.Background(), []*types.IndexInfo{{ChunkID: "c1"}}, nil); err == nil {
@@ -149,7 +158,7 @@ func TestOS01_DeleteRequiresCompletion(t *testing.T) {
 		"conflict":      `{"total":1,"deleted":0,"version_conflicts":1,"failures":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			r, ts := newTestRepo(t, func(w http.ResponseWriter, req *http.Request) { io.WriteString(w, body) })
+			r, ts := newTestRepo(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
 			defer ts.Close()
 			if err := r.deleteByTerms(context.Background(), "test", "chunk_id", []string{"c1"}); err == nil {
 				t.Fatal("incomplete delete returned success")
@@ -197,7 +206,7 @@ func TestOS01_DefaultBudgetSharedAcrossClients(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "_search") {
 			queries.Add(1)
-			io.WriteString(w, `{"hits":{"hits":[]}}`)
+			_, _ = io.WriteString(w, `{"hits":{"hits":[]}}`)
 			return
 		}
 		n := active.Add(1)
@@ -212,7 +221,7 @@ func TestOS01_DefaultBudgetSharedAcrossClients(t *testing.T) {
 		case <-r.Context().Done():
 			return
 		}
-		io.WriteString(w, `{"_id":"c1","result":"created"}`)
+		_, _ = io.WriteString(w, `{"_id":"c1","result":"created"}`)
 	}))
 	defer ts.Close()
 	clients := make([]*osapi.Client, 2)
@@ -230,7 +239,10 @@ func TestOS01_DefaultBudgetSharedAcrossClients(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_, err := clients[i%2].Index(ctx, osapi.IndexReq{Index: "test", DocumentID: "c1", Body: strings.NewReader(`{}`)})
+			_, err := clients[i%2].Index(
+				ctx,
+				osapi.IndexReq{Index: "test", DocumentID: "c1", Body: strings.NewReader(`{}`)},
+			)
 			if err != nil {
 				t.Errorf("index: %v", err)
 			}
@@ -263,10 +275,14 @@ func TestOS01_BulkWireBoundariesAndRouting(t *testing.T) {
 		content string
 		reject  bool
 	}{
-		{"empty", 0, 0, "", false}, {"1000", 1000, 0, "small", false}, {"1001", 1001, 0, "small", true},
-		{"unicode_escape", 2, 3, "中文\"\n<>&\u2028", false}, {"long_floats", 1, 16000, "vector", false},
+		{"empty", 0, 0, "", false},
+		{"1000", 1000, 0, "small", false},
+		{"1001", 1001, 0, "small", true},
+		{"unicode_escape", 2, 3, "中文\"\n<>&\u2028", false},
+		{"long_floats", 1, 16000, "vector", false},
 		{"single_oversize", 1, 0, strings.Repeat("\x00", 2<<20), true},
-		{"aggregate_oversize", 2, 0, strings.Repeat("\x00", 1<<20), true}, {"estimate_cap", 140, 16000, "", true},
+		{"aggregate_oversize", 2, 0, strings.Repeat("\x00", 1<<20), true},
+		{"estimate_cap", 140, 16000, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -296,7 +312,14 @@ func TestOS01_BulkWireBoundariesAndRouting(t *testing.T) {
 			for i := range infos {
 				src := fmt.Sprintf("src_%d", i)
 				id := fmt.Sprintf("chunk_%d", i)
-				infos[i] = &types.IndexInfo{ChunkID: id, SourceID: src, KnowledgeID: "doc_os_local_a", KnowledgeBaseID: "kb_os_local_a", Content: tc.content, IsEnabled: true}
+				infos[i] = &types.IndexInfo{
+					ChunkID:         id,
+					SourceID:        src,
+					KnowledgeID:     "doc_os_local_a",
+					KnowledgeBaseID: "kb_os_local_a",
+					Content:         tc.content,
+					IsEnabled:       true,
+				}
 				enabled[id] = false
 				if tc.dim > 0 {
 					v := make([]float32, tc.dim)
@@ -308,7 +331,11 @@ func TestOS01_BulkWireBoundariesAndRouting(t *testing.T) {
 			}
 			var observation WriteObservation
 			repo.writeObserver = func(o WriteObservation) { observation = o }
-			err := repo.BatchSave(context.Background(), infos, map[string]any{"embedding": embs, "chunk_enabled": enabled})
+			err := repo.BatchSave(
+				context.Background(),
+				infos,
+				map[string]any{"embedding": embs, "chunk_enabled": enabled},
+			)
 			if tc.reject {
 				if !errors.Is(err, ErrBatchTooLarge) {
 					t.Fatalf("want batch cap, got %v", err)
@@ -347,7 +374,10 @@ func TestOS01_BulkWireBoundariesAndRouting(t *testing.T) {
 				if tc.dim > 0 {
 					wantIndex = fmt.Sprintf("store_a_%d", tc.dim)
 				}
-				if action["index"]["_id"] != infos[i].ChunkID || action["index"]["_index"] != wantIndex || doc["source_id"] != infos[i].SourceID || doc["is_enabled"] != false || doc["content"] != tc.content {
+				if action["index"]["_id"] != infos[i].ChunkID || action["index"]["_index"] != wantIndex ||
+					doc["source_id"] != infos[i].SourceID ||
+					doc["is_enabled"] != false ||
+					doc["content"] != tc.content {
 					t.Fatal("mapping changed")
 				}
 				if tc.dim > 0 && len(doc["embedding"].([]any)) != tc.dim {
@@ -364,7 +394,12 @@ func TestOS01_BulkWireBoundariesAndRouting(t *testing.T) {
 
 func TestOS01_JSONSizeExactAndBounded(t *testing.T) {
 	for _, s := range []string{"", "中文\"\n\r\t\b\f\\<>&\u2028\u2029", string([]byte{0xff, 0xc0, 0, 1, 0x7f})} {
-		value := map[string]any{"text": s, "count": 3, "on": false, "v": []float32{math.SmallestNonzeroFloat32, math.MaxFloat32}}
+		value := map[string]any{
+			"text":  s,
+			"count": 3,
+			"on":    false,
+			"v":     []float32{math.SmallestNonzeroFloat32, math.MaxFloat32},
+		}
 		actual, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -385,17 +420,45 @@ func TestOS01_BulkOutcomeAccounting(t *testing.T) {
 		name, body               string
 		success, failed, unknown int
 	}{
-		{"all", `{"errors":false,"items":[{"index":{"_id":"a","status":201}},{"index":{"_id":"b","status":200}},{"index":{"_id":"c","status":201}}]}`, 3, 0, 0},
-		{"mixed", `{"errors":true,"items":[{"index":{"_id":"a","status":201}},{"index":{"_id":"b","status":400,"error":{"type":"mapper_parsing_exception","reason":"PRIVATE_BODY"}}},{"index":{"_id":"c","status":429,"error":{"type":"rejected"}}}]}`, 1, 2, 0},
+		{
+			"all",
+			`{"errors":false,"items":[{"index":{"_id":"a","status":201}},{"index":{"_id":"b","status":200}},{"index":{"_id":"c","status":201}}]}`, //nolint:lll // bulk response fixture
+			3,
+			0,
+			0,
+		},
+		{
+			"mixed",
+			`{"errors":true,"items":[{"index":{"_id":"a","status":201}},{"index":{"_id":"b","status":400,"error":{"type":"mapper_parsing_exception","reason":"PRIVATE_BODY"}}},{"index":{"_id":"c","status":429,"error":{"type":"rejected"}}}]}`, //nolint:lll // bulk response fixture
+			1,
+			2,
+			0,
+		},
 		{"missing", `{"errors":false,"items":[{"index":{"_id":"a","status":201}}]}`, 1, 0, 2},
-		{"wrong_order", `{"errors":false,"items":[{"index":{"_id":"b","status":201}},{"index":{"_id":"a","status":201}},{"index":{"_id":"c","status":201}}]}`, 1, 0, 2},
-		{"status_error_conflict", `{"errors":true,"items":[{"index":{"_id":"a","status":201,"error":{"type":"bad"}}},{"index":{"_id":"b","status":0}},{"index":{"_id":"c","status":201}}]}`, 1, 0, 2},
+		{
+			"wrong_order",
+			`{"errors":false,"items":[{"index":{"_id":"b","status":201}},{"index":{"_id":"a","status":201}},{"index":{"_id":"c","status":201}}]}`, //nolint:lll // bulk response fixture
+			1,
+			0,
+			2,
+		},
+		{
+			"status_error_conflict",
+			`{"errors":true,"items":[{"index":{"_id":"a","status":201,"error":{"type":"bad"}}},{"index":{"_id":"b","status":0}},{"index":{"_id":"c","status":201}}]}`, //nolint:lll // bulk response fixture
+			1,
+			0,
+			2,
+		},
 		{"truncated", `{"errors":false,"items":[`, 0, 0, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var sends atomic.Int32
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { sends.Add(1); io.WriteString(w, tc.body) }))
+			ts := httptest.NewServer(
+				http.HandlerFunc(
+					func(w http.ResponseWriter, _ *http.Request) { sends.Add(1); _, _ = io.WriteString(w, tc.body) },
+				),
+			)
 			defer ts.Close()
 			repo := managedTestRepo(t, ts.URL, "store_a")
 			infos := []*types.IndexInfo{{ChunkID: "a"}, {ChunkID: "b"}, {ChunkID: "c"}}
@@ -415,10 +478,18 @@ func TestOS01_BulkOutcomeAccounting(t *testing.T) {
 					t.Fatal("leaked document")
 				}
 			}
-			if obs.Confirmed != tc.success || obs.Failed != tc.failed || obs.Unknown != tc.unknown || obs.NotSent != 0 || sends.Load() != 1 {
+			if obs.Confirmed != tc.success || obs.Failed != tc.failed || obs.Unknown != tc.unknown ||
+				obs.NotSent != 0 ||
+				sends.Load() != 1 {
 				t.Fatalf("unexpected counts %+v requests=%d", obs, sends.Load())
 			}
-			t.Logf("confirmed=%d failed=%d unknown=%d attempts=%d", obs.Confirmed, obs.Failed, obs.Unknown, obs.Attempts)
+			t.Logf(
+				"confirmed=%d failed=%d unknown=%d attempts=%d",
+				obs.Confirmed,
+				obs.Failed,
+				obs.Unknown,
+				obs.Attempts,
+			)
 		})
 	}
 }
@@ -433,7 +504,7 @@ func TestOS01_BudgetWaitCancelSaturationAndQueryReserve(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "_search") {
 			queries.Add(1)
-			io.WriteString(w, `{"hits":{"hits":[]}}`)
+			_, _ = io.WriteString(w, `{"hits":{"hits":[]}}`)
 			return
 		}
 		writes.Add(1)
@@ -445,11 +516,14 @@ func TestOS01_BudgetWaitCancelSaturationAndQueryReserve(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "_bulk") {
 			echoBulk(w, r)
 		} else {
-			io.WriteString(w, `{"_id":"c1","result":"created"}`)
+			_, _ = io.WriteString(w, `{"_id":"c1","result":"created"}`)
 		}
 	}))
 	defer ts.Close()
-	repos := []*Repository{managedTestRepo(t, ts.URL, "store_a", WithRequestBudget(budget)), managedTestRepo(t, ts.URL, "store_b", WithRequestBudget(budget))}
+	repos := []*Repository{
+		managedTestRepo(t, ts.URL, "store_a", WithRequestBudget(budget)),
+		managedTestRepo(t, ts.URL, "store_b", WithRequestBudget(budget)),
+	}
 	done := make(chan error, 4)
 	for _, r := range repos {
 		go func(r *Repository) {
@@ -457,7 +531,10 @@ func TestOS01_BudgetWaitCancelSaturationAndQueryReserve(t *testing.T) {
 		}(r)
 	}
 	awaitCondition(t, func() bool { return writes.Load() == 2 })
-	_, err = repos[0].Retrieve(context.Background(), types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType, Query: "query"})
+	_, err = repos[0].Retrieve(
+		context.Background(),
+		types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType, Query: "query"},
+	)
 	if err != nil {
 		close(release)
 		t.Fatal(err)
@@ -485,7 +562,9 @@ func TestOS01_BudgetWaitCancelSaturationAndQueryReserve(t *testing.T) {
 		}
 	}
 	snap := budget.Snapshot()
-	if snap.InFlight != 0 || snap.Queued != 0 || snap.Peak > 3 || snap.WritePeak > 2 || snap.QueuePeak > 2 || snap.Rejected != 1 || queries.Load() != 1 {
+	if snap.InFlight != 0 || snap.Queued != 0 || snap.Peak > 3 || snap.WritePeak > 2 || snap.QueuePeak > 2 ||
+		snap.Rejected != 1 ||
+		queries.Load() != 1 {
 		t.Fatalf("budget invariant: %+v", snap)
 	}
 	t.Logf("two stores budget snapshot: %+v", snap)
@@ -503,7 +582,7 @@ func TestOS01_ManagedConnectionsReuseAndCap(t *testing.T) {
 				return
 			}
 		}
-		io.WriteString(w, `{"version":{"distribution":"opensearch","number":"2.19.7"}}`)
+		_, _ = io.WriteString(w, `{"version":{"distribution":"opensearch","number":"2.19.7"}}`)
 	}))
 	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
@@ -528,7 +607,10 @@ func TestOS01_ManagedConnectionsReuseAndCap(t *testing.T) {
 	repo := managedTestRepo(t, ts.URL, "store_a", WithRuntimeOptions(options))
 	for i := 0; i < 3; i++ {
 		reused := false
-		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }})
+		ctx := httptrace.WithClientTrace(
+			context.Background(),
+			&httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }},
+		)
 		if err := probeVersion(ctx, repo.client); err != nil {
 			t.Fatal(err)
 		}
@@ -570,7 +652,7 @@ func TestOS01_DeadlineCoversHeadersBodyAndUpload(t *testing.T) {
 				requests.Add(1)
 				if phase == "body" {
 					w.Header().Set("Content-Length", "100000")
-					io.WriteString(w, `{"`)
+					_, _ = io.WriteString(w, `{"`)
 					w.(http.Flusher).Flush()
 				}
 				select {
@@ -587,7 +669,14 @@ func TestOS01_DeadlineCoversHeadersBodyAndUpload(t *testing.T) {
 			started := time.Now()
 			var err error
 			if phase == "upload" {
-				_, err = repo.client.Index(context.Background(), osapi.IndexReq{Index: "test", DocumentID: "c1", Body: strings.NewReader(strings.Repeat("x", 9<<20))})
+				_, err = repo.client.Index(
+					context.Background(),
+					osapi.IndexReq{
+						Index:      "test",
+						DocumentID: "c1",
+						Body:       strings.NewReader(strings.Repeat("x", 9<<20)),
+					},
+				)
 			} else {
 				_, err = repo.client.Info(context.Background(), nil)
 			}
@@ -623,12 +712,12 @@ func TestOS01_SDKRetryBoundsAndUnknown(t *testing.T) {
 				if status == 0 {
 					conn, _, err := w.(http.Hijacker).Hijack()
 					if err == nil {
-						conn.Close()
+						_ = conn.Close()
 					}
 					return
 				}
 				w.WriteHeader(status)
-				fmt.Fprintf(w, `{"error":{"type":"test_error","reason":"PRIVATE_BODY"},"status":%d}`, status)
+				_, _ = fmt.Fprintf(w, `{"error":{"type":"test_error","reason":"PRIVATE_BODY"},"status":%d}`, status)
 			}))
 			defer ts.Close()
 			budget, _ := NewRequestBudget(2, 1, 2)
@@ -667,10 +756,10 @@ func TestOS01_CancelBackoffAndBoundResponse(t *testing.T) {
 	t.Run("backoff", func(t *testing.T) {
 		got := make(chan struct{}, 1)
 		var requests atomic.Int32
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			requests.Add(1)
 			w.WriteHeader(503)
-			io.WriteString(w, `{"status":503,"error":{"type":"server_error"}}`)
+			_, _ = io.WriteString(w, `{"status":503,"error":{"type":"server_error"}}`)
 			select {
 			case got <- struct{}{}:
 			default:
@@ -693,7 +782,11 @@ func TestOS01_CancelBackoffAndBoundResponse(t *testing.T) {
 		}
 	})
 	t.Run("oversize", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, strings.Repeat("x", 128<<10)) }))
+		ts := httptest.NewServer(
+			http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, strings.Repeat("x", 128<<10)) },
+			),
+		)
 		defer ts.Close()
 		opts := DefaultRuntimeOptions()
 		opts.MaxResponseBytes = 1024
@@ -710,14 +803,14 @@ func TestOS01_CancelBackoffAndBoundResponse(t *testing.T) {
 	})
 	t.Run("partial_response", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			io.Copy(io.Discard, r.Body)
+			_, _ = io.Copy(io.Discard, r.Body)
 			conn, rw, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				return
 			}
-			defer conn.Close()
-			rw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{}")
-			rw.Flush()
+			defer func() { _ = conn.Close() }()
+			_, _ = rw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{}")
+			_ = rw.Flush()
 		}))
 		defer ts.Close()
 		repo := managedTestRepo(t, ts.URL, "store_a")
@@ -732,7 +825,10 @@ func TestOS01_CancelBackoffAndBoundResponse(t *testing.T) {
 func TestOS01_ReviewSafeErrorsAndZeroBudget(t *testing.T) {
 	t.Run("bounded by-query errors", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"failures": []any{map[string]any{
-			"id": "PRIVATE document identifier", "cause": map[string]any{"type": strings.Repeat("PRIVATE", 1000), "reason": "PRIVATE content"},
+			"id": "PRIVATE document identifier", "cause": map[string]any{
+				"type":   strings.Repeat("PRIVATE", 1000),
+				"reason": "PRIVATE content",
+			},
 		}}})
 		err := inspectByQueryResponse(bytes.NewReader(body))
 		if err == nil || len(err.Error()) > 256 || strings.Contains(err.Error(), "PRIVATE") {
@@ -740,7 +836,10 @@ func TestOS01_ReviewSafeErrorsAndZeroBudget(t *testing.T) {
 		}
 	})
 	t.Run("zero budget rejected", func(t *testing.T) {
-		client, err := NewOpenSearchClient(&types.ConnectionConfig{Addr: "http://localhost:1"}, WithRequestBudget(&RequestBudget{}))
+		client, err := NewOpenSearchClient(
+			&types.ConnectionConfig{Addr: "http://localhost:1"},
+			WithRequestBudget(&RequestBudget{}),
+		)
 		if client != nil {
 			CloseIdleConnections(client)
 		}
@@ -752,10 +851,18 @@ func TestOS01_ReviewSafeErrorsAndZeroBudget(t *testing.T) {
 
 func TestOS01_ParametersVisibilityAndReplicaProjection(t *testing.T) {
 	defaults := DefaultRuntimeOptions()
-	for _, change := range []func(*RuntimeOptions){func(o *RuntimeOptions) { o.RequestTimeout = 0 }, func(o *RuntimeOptions) { o.MaxConnsPerHost = -1 }, func(o *RuntimeOptions) { o.MaxResponseBytes = 0 }, func(o *RuntimeOptions) { o.MaxIdleConns = 0 }, func(o *RuntimeOptions) { o.IdleConnTimeout = 0 }} {
+	for _, change := range []func(*RuntimeOptions){
+		func(o *RuntimeOptions) { o.RequestTimeout = 0 },
+		func(o *RuntimeOptions) { o.MaxConnsPerHost = -1 }, func(o *RuntimeOptions) { o.MaxResponseBytes = 0 },
+		func(o *RuntimeOptions) { o.MaxIdleConns = 0 }, func(o *RuntimeOptions) { o.IdleConnTimeout = 0 },
+	} {
 		o := defaults
 		change(&o)
-		if _, err := NewOpenSearchClient(&types.ConnectionConfig{Addr: "http://localhost:1"}, WithRuntimeOptions(o)); !errors.Is(err, ErrConfigInvalid) {
+		if _, err := NewOpenSearchClient(&types.ConnectionConfig{Addr: "http://localhost:1"},
+			WithRuntimeOptions(o)); !errors.Is(
+			err,
+			ErrConfigInvalid,
+		) {
 			t.Fatal("invalid runtime accepted")
 		}
 	}
@@ -779,14 +886,30 @@ func TestOS01_ParametersVisibilityAndReplicaProjection(t *testing.T) {
 		t.Fatal("existing omitted/zero semantics changed")
 	}
 	checks := 0
-	err := WaitForVisibility(context.Background(), 30*time.Millisecond, 5*time.Millisecond, func(context.Context) (bool, error) { checks++; return false, nil })
+	err := WaitForVisibility(
+		context.Background(),
+		30*time.Millisecond,
+		5*time.Millisecond,
+		func(context.Context) (bool, error) { checks++; return false, nil },
+	)
 	if !errors.Is(err, context.DeadlineExceeded) || checks < 2 {
 		t.Fatalf("polling timeout: %d %v", checks, err)
 	}
-	if err := WaitForVisibility(context.Background(), time.Second, time.Millisecond, func(context.Context) (bool, error) { return true, nil }); err != nil {
+	if err := WaitForVisibility(context.Background(), time.Second, time.Millisecond, func(context.Context) (bool,
+		error,
+	) {
+		return true, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := WaitForVisibility(context.Background(), 0, time.Millisecond, func(context.Context) (bool, error) { return true, nil }); !errors.Is(err, ErrConfigInvalid) {
+	if err := WaitForVisibility(context.Background(), 0, time.Millisecond, func(context.Context) (bool,
+		error,
+	) {
+		return true, nil
+	}); !errors.Is(
+		err,
+		ErrConfigInvalid,
+	) {
 		t.Fatal("unlimited wait accepted")
 	}
 }
@@ -802,10 +925,13 @@ func TestOS01_AllRepositoryRoutesShareWriteBudget(t *testing.T) {
 		case r.Method == http.MethodHead:
 			return
 		case strings.HasSuffix(r.URL.Path, "_search"):
-			io.WriteString(w, `{"hits":{"hits":[{"_source":{"chunk_id":"src","source_id":"src","knowledge_id":"doc","knowledge_base_id":"kb","content":"copy","embedding":[1,2,3]}}]}}`)
+			_, _ = io.WriteString(
+				w,
+				`{"hits":{"hits":[{"_source":{"chunk_id":"src","source_id":"src","knowledge_id":"doc","knowledge_base_id":"kb","content":"copy","embedding":[1,2,3]}}]}}`, //nolint:lll // bulk response fixture
+			)
 		case strings.HasSuffix(r.URL.Path, "/_refresh"):
 			// Pre-by-query visibility refresh; not a data mutation.
-			io.WriteString(w, `{"_shards":{"total":1,"successful":1,"failed":0}}`)
+			_, _ = io.WriteString(w, `{"_shards":{"total":1,"successful":1,"failed":0}}`)
 		default:
 			mutations.Add(1)
 			if block.Load() {
@@ -819,14 +945,14 @@ func TestOS01_AllRepositoryRoutesShareWriteBudget(t *testing.T) {
 			case strings.HasSuffix(r.URL.Path, "_bulk"):
 				echoBulk(w, r)
 			case strings.HasSuffix(r.URL.Path, "_delete_by_query"):
-				io.WriteString(w, `{"total":1,"deleted":1,"failures":[]}`)
+				_, _ = io.WriteString(w, `{"total":1,"deleted":1,"failures":[]}`)
 			case strings.HasSuffix(r.URL.Path, "_update_by_query"):
-				io.WriteString(w, `{"total":1,"updated":1,"failures":[]}`)
+				_, _ = io.WriteString(w, `{"total":1,"updated":1,"failures":[]}`)
 			default:
 				if r.URL.Query().Get("refresh") != "" {
 					t.Error("Save forced refresh")
 				}
-				io.WriteString(w, `{"_id":"target","result":"created"}`)
+				_, _ = io.WriteString(w, `{"_id":"target","result":"created"}`)
 			}
 		}
 	}))
@@ -849,9 +975,20 @@ func TestOS01_AllRepositoryRoutesShareWriteBudget(t *testing.T) {
 			return repo.BatchUpdateChunkTagID(ctx, map[string]string{"target": "tag"})
 		}},
 		{"delete", func(ctx context.Context) error { return repo.DeleteByChunkIDList(ctx, []string{"target"}, 0, "") }},
-		{"move", func(ctx context.Context) error { return repo.MoveKnowledgeIndices(ctx, "kb", "kb2", "doc", nil, 3, "") }},
+		{
+			"move",
+			func(ctx context.Context) error { return repo.MoveKnowledgeIndices(ctx, "kb", "kb2", "doc", nil, 3, "") },
+		},
 		{"copy", func(ctx context.Context) error {
-			return repo.CopyIndices(ctx, "kb", map[string]string{"doc": "doc2"}, map[string]string{"src": "target"}, "kb2", 3, "")
+			return repo.CopyIndices(
+				ctx,
+				"kb",
+				map[string]string{"doc": "doc2"},
+				map[string]string{"src": "target"},
+				"kb2",
+				3,
+				"",
+			)
 		}},
 	}
 	// Run every real route once, including Copy's nested scan -> BatchSave.
@@ -898,7 +1035,7 @@ func TestOS01_PermitHeldUntilBodyReadFinishes(t *testing.T) {
 		close(headers)
 		select {
 		case <-release:
-			io.WriteString(w, `{}`)
+			_, _ = io.WriteString(w, `{}`)
 		case <-r.Context().Done():
 		}
 	}))
@@ -931,7 +1068,7 @@ func TestOS01_InitializationWaiterCanCancel(t *testing.T) {
 					<-release
 					return
 				}
-				io.WriteString(w, `{"acknowledged":true}`)
+				_, _ = io.WriteString(w, `{"acknowledged":true}`)
 			}))
 			defer ts.Close()
 			repo := managedTestRepo(t, ts.URL, "store_a")

@@ -18,10 +18,16 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 		at   int
 		pass bool
 	}{
-		{"stale-before-write", 0, true}, {"eventual-correct", 0, true},
-		{"refreshed-corrupt", 1, false}, {"refreshed-corrupt", 4, false}, {"never-refresh", 1, false},
-		{"search-missing-version", 1, false}, {"search-null-seq", 1, false}, {"get-wrong-id", 1, false},
-		{"get-missing-term", 1, false}, {"keyword-stale-copy", 1, false},
+		{"stale-before-write", 0, true},
+		{"eventual-correct", 0, true},
+		{"refreshed-corrupt", 1, false},
+		{"refreshed-corrupt", 4, false},
+		{"never-refresh", 1, false},
+		{"search-missing-version", 1, false},
+		{"search-null-seq", 1, false},
+		{"get-wrong-id", 1, false},
+		{"get-missing-term", 1, false},
+		{"keyword-stale-copy", 1, false},
 	}
 	for at := 1; at <= 4; at++ {
 		cases = append(cases, struct {
@@ -68,7 +74,15 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 					if r.URL.Query().Get("realtime") != "true" || r.URL.Query().Get("refresh") != "false" {
 						newGETSupported = false
 					}
-					body := map[string]any{"_id": s.ChunkID, "_index": s.Physical, "found": true, "_version": v.Version, "_seq_no": v.SeqNo, "_primary_term": v.PrimaryTerm, "_source": d}
+					body := map[string]any{
+						"_id":           s.ChunkID,
+						"_index":        s.Physical,
+						"found":         true,
+						"_version":      v.Version,
+						"_seq_no":       v.SeqNo,
+						"_primary_term": v.PrimaryTerm,
+						"_source":       d,
+					}
 					if writes == tc.at && tc.at > 0 {
 						switch tc.mode {
 						case "get-wrong-id":
@@ -80,7 +94,9 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 					respond(w, body)
 					return
 				}
-				if r.URL.Path == "/"+s.keywordIndex()+"/_doc/"+s.ChunkID && r.Method == "GET" && tc.mode == "keyword-stale-copy" && writes == tc.at {
+				if r.URL.Path == "/"+s.keywordIndex()+"/_doc/"+s.ChunkID && r.Method == "GET" &&
+					tc.mode == "keyword-stale-copy" &&
+					writes == tc.at {
 					// Its search view remains empty. Realtime existence must still fail.
 					respond(w, map[string]any{"found": true, "_id": s.ChunkID})
 					return
@@ -101,7 +117,9 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 					}
 					stale := tc.mode == "stale-before-write" && writes == 0 && polls[0] < 3
 					stale = stale || (tc.mode == "eventual-correct" && writes > 0 && polls[writes] < 3)
-					stale = stale || ((tc.mode == "refreshed-corrupt" || tc.mode == "never-refresh") && writes == tc.at && (polls[writes] < 3 || tc.mode == "never-refresh"))
+					stale = stale ||
+						((tc.mode == "refreshed-corrupt" || tc.mode == "never-refresh") && writes == tc.at &&
+							(polls[writes] < 3 || tc.mode == "never-refresh"))
 					if stale {
 						v.Version--
 						v.SeqNo--
@@ -117,7 +135,15 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 					}
 					hits := []any{}
 					if !after {
-						hit := map[string]any{"_id": s.ChunkID, "_index": s.Physical, "_source": d, "sort": []string{s.ChunkID}, "_version": v.Version, "_seq_no": v.SeqNo, "_primary_term": v.PrimaryTerm}
+						hit := map[string]any{
+							"_id":           s.ChunkID,
+							"_index":        s.Physical,
+							"_source":       d,
+							"sort":          []string{s.ChunkID},
+							"_version":      v.Version,
+							"_seq_no":       v.SeqNo,
+							"_primary_term": v.PrimaryTerm,
+						}
 						if writes == tc.at && tc.at > 0 {
 							switch tc.mode {
 							case "search-missing-version":
@@ -128,7 +154,17 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 						}
 						hits = append(hits, hit)
 					}
-					respond(w, map[string]any{"timed_out": false, "_shards": map[string]int{"total": 1, "successful": 1, "failed": 0}, "hits": map[string]any{"total": map[string]any{"value": 1, "relation": "eq"}, "hits": hits}})
+					respond(
+						w,
+						map[string]any{
+							"timed_out": false,
+							"_shards":   map[string]int{"total": 1, "successful": 1, "failed": 0},
+							"hits": map[string]any{
+								"total": map[string]any{"value": 1, "relation": "eq"},
+								"hits":  hits,
+							},
+						},
+					)
 					return
 				}
 				isWrite := r.URL.Path == "/_bulk" || (r.Method == "PUT" && r.URL.Path == "/"+s.Alias+"/_doc/"+s.ChunkID)
@@ -163,7 +199,8 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 					t.Fatalf("result=%+v err=%v writes=%d", result, err, m.Writes)
 				}
 				for i, step := range result.Steps {
-					if step.AfterRevision == nil || step.SearchRevision == nil || *step.AfterRevision != *step.SearchRevision {
+					if step.AfterRevision == nil || step.SearchRevision == nil ||
+						*step.AfterRevision != *step.SearchRevision {
 						t.Fatalf("missing fresh search receipt at %d", i)
 					}
 					if i > 0 && (step.BeforeRevision == nil || !step.AfterRevision.advanced(*step.BeforeRevision)) {
@@ -187,7 +224,8 @@ func TestReplayFreshnessBarrier(t *testing.T) {
 				if strings.Contains(err.Error(), "HTTP status") {
 					t.Fatalf("unsupported fixture route masquerades as rejection: %v", err)
 				}
-				if tc.mode == "never-refresh" && (polls[tc.at] < 2 || time.Since(started) < time.Second || time.Since(started) > 3*time.Second) {
+				if tc.mode == "never-refresh" && (polls[tc.at] < 2 || time.Since(started) < time.Second ||
+					time.Since(started) > 3*time.Second) {
 					t.Fatal("not a bounded stale-version timeout")
 				}
 				if tc.mode == "refreshed-corrupt" && polls[tc.at] < 3 {
@@ -206,7 +244,10 @@ func TestRevisionValidationAndOrdering(t *testing.T) {
 	if _, e := revision(&one, &zero, &one); e != nil {
 		t.Fatal("valid seq zero rejected")
 	}
-	for _, args := range [][3]*int64{{nil, &zero, &one}, {&one, nil, &one}, {&one, &zero, nil}, {&zero, &zero, &one}, {&one, &minus, &one}, {&one, &zero, &zero}} {
+	for _, args := range [][3]*int64{{nil, &zero, &one}, {&one, nil, &one}, {&one, &zero, nil}, {
+		&zero, &zero,
+		&one,
+	}, {&one, &minus, &one}, {&one, &zero, &zero}} {
 		if _, e := revision(args[0], args[1], args[2]); e == nil {
 			t.Fatal("missing/invalid revision accepted")
 		}

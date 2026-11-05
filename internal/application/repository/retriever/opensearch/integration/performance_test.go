@@ -18,12 +18,30 @@ func performanceConfig(t *testing.T) Config {
 	c.Replay = nil
 	c.MaxRecords = 3000
 	c.PageSize = 100
-	c.Performance = &Performance{AllowIndexCreationAndOrphanCleanup: true, ProfileRef: "local-mock-profile", BudgetRef: "local-mock-budget", Seed: "fixed-seed", MaxDocuments: 2000, MaxConcurrency: 2, MaxHeapBytes: 1 << 30, HealthFile: filepath.Join(t.TempDir(), "health.json"), HealthMaxAgeSeconds: 30,
-		Application: &Application{Endpoint: "http://127.0.0.1:1", TokenEnv: "OS02_SECRET_APP", KnowledgeBaseID: "real-app-kb", KnowledgeAID: "real-app-doc", EvidenceAChunkIDs: []string{"real-app-chunk"}, MatchCount: 5}}
+	c.Performance = &Performance{
+		AllowIndexCreationAndOrphanCleanup: true, ProfileRef: "local-mock-profile", BudgetRef: "local-mock-budget",
+		Seed: "fixed-seed", MaxDocuments: 2000, MaxConcurrency: 2, MaxHeapBytes: 1 << 30,
+		HealthFile: filepath.Join(t.TempDir(), "health.json"), HealthMaxAgeSeconds: 30,
+		Application: &Application{
+			Endpoint:          "http://127.0.0.1:1",
+			TokenEnv:          "OS02_SECRET_APP",
+			KnowledgeBaseID:   "real-app-kb",
+			KnowledgeAID:      "real-app-doc",
+			EvidenceAChunkIDs: []string{"real-app-chunk"},
+			MatchCount:        5,
+		},
+	}
 	for variant := 0; variant < 3; variant++ {
 		for repetition := 0; repetition < 3; repetition++ {
 			id := string(rune('a'+variant)) + string(rune('a'+repetition))
-			r := Round{ID: id, Variant: string(rune('a' + variant)), BatchSize: 40, Concurrency: 1, DocumentsPerStore: 82, QueryIntervalMilliseconds: 10}
+			r := Round{
+				ID:                        id,
+				Variant:                   string(rune('a' + variant)),
+				BatchSize:                 40,
+				Concurrency:               1,
+				DocumentsPerStore:         82,
+				QueryIntervalMilliseconds: 10,
+			}
 			if variant > 0 {
 				r.Concurrency = 2
 			}
@@ -57,9 +75,19 @@ func performanceConfig(t *testing.T) Config {
 
 func writeHealth(t *testing.T, c Config, stop bool) {
 	t.Helper()
-	h := HealthSample{RunID: c.RunID, BudgetRef: c.Performance.BudgetRef, At: time.Now(), Stop: stop, HostCPUPercent: 5, HostAvailableBytes: 1 << 30, DiskFreeBytes: 1 << 30, OSRSSBytes: 1 << 20, OSHeapBytes: 1 << 19}
+	h := HealthSample{
+		RunID:              c.RunID,
+		BudgetRef:          c.Performance.BudgetRef,
+		At:                 time.Now(),
+		Stop:               stop,
+		HostCPUPercent:     5,
+		HostAvailableBytes: 1 << 30,
+		DiskFreeBytes:      1 << 30,
+		OSRSSBytes:         1 << 20,
+		OSHeapBytes:        1 << 19,
+	}
 	b, _ := json.Marshal(h)
-	if e := os.WriteFile(c.Performance.HealthFile, b, 0600); e != nil {
+	if e := os.WriteFile(c.Performance.HealthFile, b, 0o600); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -72,7 +100,10 @@ func TestPerformanceProfileRejectsMissingOrOverlappingBudget(t *testing.T) {
 		{"valid", func(*Config) {}},
 		{"no-resource-budget", func(c *Config) { c.Performance.BudgetRef = "" }},
 		{"inherited-health", func(c *Config) { c.Performance.HealthFile = "" }},
-		{"same-index-next-round", func(c *Config) { c.Performance.Rounds[1].Stores[0] = c.Performance.Rounds[0].Stores[0] }},
+		{
+			"same-index-next-round",
+			func(c *Config) { c.Performance.Rounds[1].Stores[0] = c.Performance.Rounds[0].Stores[0] },
+		},
 		{"app-scope", func(c *Config) { c.Performance.Rounds[0].Stores[0].KnowledgeBaseID = "real-app-kb" }},
 		{"one-store", func(c *Config) { c.Performance.Rounds[0].Stores = c.Performance.Rounds[0].Stores[:1] }},
 		{"too-many-docs", func(c *Config) { c.Performance.MaxDocuments = 1 }},
@@ -107,10 +138,14 @@ func TestPerformanceFormalMultiStoreFullReconciliation(t *testing.T) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			if fault == "" {
-				if e != nil || result.Status != "PASS" || result.CorrectUnique != 162 || len(result.ActualManifests) != 2 || result.BulkBytes <= 0 {
+				if e != nil || result.Status != "PASS" || result.CorrectUnique != 162 ||
+					len(result.ActualManifests) != 2 ||
+					result.BulkBytes <= 0 {
 					t.Fatalf("result=%+v error=%v", result, e)
 				}
-				if result.Budget.Peak > c.TotalRequests || result.Budget.WritePeak > c.WriteRequests || result.Budget.InFlight != 0 || result.Budget.Queued != 0 {
+				if result.Budget.Peak > c.TotalRequests || result.Budget.WritePeak > c.WriteRequests ||
+					result.Budget.InFlight != 0 ||
+					result.Budget.Queued != 0 {
 					t.Fatal("shared budget violation")
 				}
 				if m.Bulks != 6 || m.Writes != 164 {
@@ -159,7 +194,11 @@ func TestPerformanceCannotReuseExistingIndex(t *testing.T) {
 }
 
 func TestPercentilesDoNotInventP99(t *testing.T) {
-	samples := []Sample{{Kind: "query", Status: "PASS", Seconds: 1}, {Kind: "query", Status: "PASS", Seconds: 2}, {Kind: "query", Status: "FAIL", Seconds: 100}}
+	samples := []Sample{
+		{Kind: "query", Status: "PASS", Seconds: 1},
+		{Kind: "query", Status: "PASS", Seconds: 2},
+		{Kind: "query", Status: "FAIL", Seconds: 100},
+	}
 	q := summarize(samples)["query"]
 	if q["n"] != 2 {
 		t.Fatal(q)
@@ -178,11 +217,24 @@ func TestMixedRoundUsesFormalRetrievalAndApplicationRRFEndpoint(t *testing.T) {
 	m := newMock(t, round.Stores, false)
 	c.Endpoint = m.server.URL
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/knowledge-bases/real-app-kb/hybrid-search" || r.Header.Get("Authorization") != "Bearer synthetic-token" {
-			http.Error(w, "wrong scope", 403)
+		if r.URL.Path != "/api/v1/knowledge-bases/real-app-kb/hybrid-search" ||
+			r.Header.Get("Authorization") != "Bearer synthetic-token" {
+			http.Error(w, "wrong scope", http.StatusForbidden)
 			return
 		}
-		respond(w, map[string]any{"success": true, "data": []any{map[string]any{"id": "real-app-chunk", "knowledge_id": "real-app-doc", "knowledge_base_id": "real-app-kb"}}})
+		respond(
+			w,
+			map[string]any{
+				"success": true,
+				"data": []any{
+					map[string]any{
+						"id":                "real-app-chunk",
+						"knowledge_id":      "real-app-doc",
+						"knowledge_base_id": "real-app-kb",
+					},
+				},
+			},
+		)
 	}))
 	defer app.Close()
 	c.Performance.Application.Endpoint = app.URL

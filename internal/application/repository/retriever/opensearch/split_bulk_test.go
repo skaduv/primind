@@ -12,7 +12,13 @@ func splitFixture(n, dim int) ([]*types.IndexInfo, map[string][]float32) {
 	emb := make(map[string][]float32, n)
 	for i := range infos {
 		id := fmt.Sprintf("c-%05d", i)
-		infos[i] = &types.IndexInfo{ChunkID: id, SourceID: id, KnowledgeID: "k", KnowledgeBaseID: "kb", Content: "text " + id}
+		infos[i] = &types.IndexInfo{
+			ChunkID:         id,
+			SourceID:        id,
+			KnowledgeID:     "k",
+			KnowledgeBaseID: "kb",
+			Content:         "text " + id,
+		}
 		if dim > 0 {
 			v := make([]float32, dim)
 			for j := range v {
@@ -41,7 +47,8 @@ func TestSplitForBulk_EveryGroupFitsBatchSaveLimits(t *testing.T) {
 			if err != nil {
 				t.Fatalf("n=%d dim=%d: group of %d rejected: %v", tc.n, tc.dim, len(g), err)
 			}
-			if len(g) > maxBulkItems || len(body) > maxBulkBytes || estimateBulkBodyBytes(len(g), tc.dim) > maxBulkBytes {
+			if len(g) > maxBulkItems || len(body) > maxBulkBytes ||
+				estimateBulkBodyBytes(len(g), tc.dim) > maxBulkBytes {
 				t.Fatalf("n=%d dim=%d: group of %d exceeds limits (%d bytes)", tc.n, tc.dim, len(g), len(body))
 			}
 			for _, info := range g {

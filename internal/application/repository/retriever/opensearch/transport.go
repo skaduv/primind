@@ -55,19 +55,30 @@ func NewOpenSearchClient(cfg *types.ConnectionConfig, opts ...ClientOption) (*os
 	transport.IdleConnTimeout = options.runtime.IdleConnTimeout
 	client, err := osapi.NewClient(osapi.Config{
 		Client: opensearch.Config{
-			Addresses:    []string{cfg.Addr},
-			Username:     cfg.Username,
-			Password:     cfg.Password,
-			Transport:    &boundedRoundTripper{base: &secutils.SSRFValidatingRoundTripper{Base: transport}, budget: options.budget, maxBytes: options.runtime.MaxResponseBytes},
-			MaxRetries:   3,
-			RetryBackoff: func(attempt int) time.Duration { return time.Duration(1<<min(attempt-1, 2)) * 100 * time.Millisecond },
+			Addresses: []string{cfg.Addr},
+			Username:  cfg.Username,
+			Password:  cfg.Password,
+			Transport: &boundedRoundTripper{
+				base:     &secutils.SSRFValidatingRoundTripper{Base: transport},
+				budget:   options.budget,
+				maxBytes: options.runtime.MaxResponseBytes,
+			},
+			MaxRetries: 3,
+			RetryBackoff: func(attempt int) time.Duration {
+				return time.Duration(1<<min(attempt-1, 2)) * 100 * time.Millisecond
+			},
 		},
 	})
 	if err != nil {
 		transport.CloseIdleConnections()
 		return nil, err
 	}
-	client.Client.Transport = &runtimeTransport{base: client.Client.Transport, pool: transport, options: options.runtime, budget: options.budget}
+	client.Client.Transport = &runtimeTransport{
+		base:    client.Client.Transport,
+		pool:    transport,
+		options: options.runtime,
+		budget:  options.budget,
+	}
 	return client, nil
 }
 

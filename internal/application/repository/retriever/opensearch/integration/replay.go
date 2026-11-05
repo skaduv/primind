@@ -35,6 +35,7 @@ func (s *connectionStats) context(ctx context.Context) context.Context {
 		}
 	}})
 }
+
 func (s *connectionStats) snapshot() map[string]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,7 +59,13 @@ func clientConfig(c Config) (*types.ConnectionConfig, error) {
 	return config, nil
 }
 
-func openSession(ctx context.Context, c Config, s Scope, budget *adapter.RequestBudget, observer func(adapter.WriteObservation)) (*session, error) {
+func openSession(
+	ctx context.Context,
+	c Config,
+	s Scope,
+	budget *adapter.RequestBudget,
+	observer func(adapter.WriteObservation),
+) (*session, error) {
 	config, err := clientConfig(c)
 	if err != nil {
 		return nil, err
@@ -75,7 +82,9 @@ func openSession(ctx context.Context, c Config, s Scope, budget *adapter.Request
 			Distribution string `json:"distribution"`
 		} `json:"version"`
 	}
-	if _, err = r.json(ctx, "GET", "/", nil, &info); err == nil && (info.ClusterUUID != c.ClusterUUID || info.Version.Number != c.Version || info.Version.Distribution != "opensearch") {
+	if _, err = r.json(ctx, "GET", "/", nil, &info); err == nil &&
+		(info.ClusterUUID != c.ClusterUUID || info.Version.Number != c.Version ||
+			info.Version.Distribution != "opensearch") {
 		err = errors.New("authorized cluster/version mismatch")
 	}
 	if err != nil {
@@ -110,6 +119,7 @@ func parameters(docs []Document) ([]*types.IndexInfo, map[string]any) {
 	return infos, map[string]any{"embedding": embedding, "chunk_enabled": enabled}
 }
 
+// ReplayStep is one action of a replay run and the records it observed.
 type ReplayStep struct {
 	Action         string         `json:"action"`
 	Status         string         `json:"status"`
@@ -123,6 +133,7 @@ type ReplayStep struct {
 	SearchRevision *Revision      `json:"search_revision,omitempty"`
 }
 
+// ReplayResult is the full result of a replay run.
 type ReplayResult struct {
 	RunID       string                 `json:"run_id"`
 	Status      string                 `json:"status"`
@@ -165,7 +176,18 @@ func runReplay(parent context.Context, c Config) (result ReplayResult, err error
 	if err != nil {
 		return result, err
 	}
-	result.Steps = append(result.Steps, ReplayStep{Action: "baseline", Status: "PASS", Alias: s.Alias, Physical: s.Physical, Records: manifest(before), AfterRevision: &baseline, SearchRevision: &visible})
+	result.Steps = append(
+		result.Steps,
+		ReplayStep{
+			Action:         "baseline",
+			Status:         "PASS",
+			Alias:          s.Alias,
+			Physical:       s.Physical,
+			Records:        manifest(before),
+			AfterRevision:  &baseline,
+			SearchRevision: &visible,
+		},
+	)
 	// Only this existing real document supplies its vector. There is no synthetic
 	// fallback. SourceID and ChunkID may differ and remain separate keys.
 	previous := baseline
@@ -181,7 +203,14 @@ func runReplay(parent context.Context, c Config) (result ReplayResult, err error
 	return result, nil
 }
 
-func replayStep(ctx context.Context, sess *session, s Scope, original Document, previous Revision, action string) (step ReplayStep, next Revision, err error) {
+func replayStep(
+	ctx context.Context,
+	sess *session,
+	s Scope,
+	original Document,
+	previous Revision,
+	action string,
+) (step ReplayStep, next Revision, err error) {
 	started := time.Now()
 	step = ReplayStep{Action: action, Status: "FAIL", Alias: s.Alias, Physical: s.Physical}
 	defer func() { step.ElapsedSeconds = time.Since(started).Seconds() }()

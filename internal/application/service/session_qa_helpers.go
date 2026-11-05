@@ -111,7 +111,8 @@ func (s *sessionService) filterReadableKnowledgeBases(ctx context.Context, kbIDs
 			readable = append(readable, id)
 			continue
 		}
-		logger.Warnf(ctx, "Dropping knowledge base %s from QA scope: caller may not read it", secutils.SanitizeForLog(id))
+		logger.Warnf(ctx, "Dropping knowledge base %s from QA scope: caller may not read it",
+			secutils.SanitizeForLog(id))
 	}
 	return readable
 }

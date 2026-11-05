@@ -73,7 +73,10 @@ func inspectDeleteByQueryResponse(body io.Reader) error {
 	if err := json.NewDecoder(body).Decode(&result); err != nil {
 		return ErrTransport
 	}
-	if result.Total == nil || result.Deleted == nil || *result.Total < 0 || *result.Deleted != *result.Total || result.TimedOut || result.VersionConflicts != 0 || len(result.Failures) != 0 {
+	if result.Total == nil || result.Deleted == nil || *result.Total < 0 || *result.Deleted != *result.Total ||
+		result.TimedOut ||
+		result.VersionConflicts != 0 ||
+		len(result.Failures) != 0 {
 		return fmt.Errorf("opensearch: incomplete delete: %w", ErrTransport)
 	}
 	return nil

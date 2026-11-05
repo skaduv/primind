@@ -972,9 +972,16 @@ func TestEnsureReady_ConcurrentCallers_SingleCreate(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:          newTestClient(t, ts.URL),
-		baseIndex:       "primind_test",
-		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		client:    newTestClient(t, ts.URL),
+		baseIndex: "primind_test",
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
 		initializations: make(map[int]*indexInitialization),
 	}
 
@@ -1000,9 +1007,16 @@ func TestEnsureReady_PerDimensionIsolation(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:          newTestClient(t, ts.URL),
-		baseIndex:       "primind_test",
-		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		client:    newTestClient(t, ts.URL),
+		baseIndex: "primind_test",
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
 		initializations: make(map[int]*indexInitialization),
 	}
 
@@ -1036,7 +1050,10 @@ func (h *errorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.indexPutsAttempted.Add(1)
 		w.WriteHeader(h.statusForIndexPut)
 		// Write a minimal OS error response so wrapTransport can parse it.
-		errBody := `{"error":{"type":"server_error","reason":"simulated"},"status":` + fmt.Sprintf("%d", h.statusForIndexPut) + `}`
+		errBody := `{"error":{"type":"server_error","reason":"simulated"},"status":` + fmt.Sprintf(
+			"%d",
+			h.statusForIndexPut,
+		) + `}`
 		_, _ = w.Write([]byte(errBody))
 	default:
 		w.WriteHeader(http.StatusOK)
@@ -1051,9 +1068,16 @@ func TestEnsureReady_TransientError_NotCached(t *testing.T) {
 	defer ts.Close()
 
 	repo := &Repository{
-		client:          newTestClient(t, ts.URL),
-		baseIndex:       "primind_test",
-		cfg:             internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
+		client:    newTestClient(t, ts.URL),
+		baseIndex: "primind_test",
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
 		initializations: make(map[int]*indexInitialization),
 	}
 
@@ -1389,10 +1413,13 @@ func TestOS02_ExistenceProtocol(t *testing.T) {
 						case req.Method == http.MethodHead && req.RequestURI == prefix+headPath:
 							heads.Add(1)
 							w.WriteHeader(status)
-						case status == 404 && req.Method == http.MethodPut && req.RequestURI == prefix+createPath && heads.Load() == 1 && creates.Add(1) == 1:
-							io.WriteString(w, `{"acknowledged":true}`)
-						case !keyword && status == 404 && req.Method == http.MethodPut && req.RequestURI == prefix+createPath+"/_alias/"+name && creates.Load() == 1 && aliases.Add(1) == 1:
-							io.WriteString(w, `{"acknowledged":true}`)
+						case status == 404 && req.Method == http.MethodPut && req.RequestURI == prefix+createPath &&
+							heads.Load() == 1 && creates.Add(1) == 1:
+							_, _ = io.WriteString(w, `{"acknowledged":true}`)
+						case !keyword && status == 404 && req.Method == http.MethodPut &&
+							req.RequestURI == prefix+createPath+"/_alias/"+name && creates.Load() == 1 &&
+							aliases.Add(1) == 1:
+							_, _ = io.WriteString(w, `{"acknowledged":true}`)
 						default:
 							t.Errorf("unexpected request: %s Host=%q URI=%q", req.Method, req.Host, req.RequestURI)
 							w.WriteHeader(http.StatusBadRequest)
@@ -1429,7 +1456,14 @@ func TestOS02_ExistenceProtocol(t *testing.T) {
 						}
 					}
 					if heads.Load() == 0 || creates.Load() != wantCreates || aliases.Load() != wantAliases {
-						t.Fatalf("HEAD/create/alias=%d/%d/%d, want HEAD>0 and %d/%d", heads.Load(), creates.Load(), aliases.Load(), wantCreates, wantAliases)
+						t.Fatalf(
+							"HEAD/create/alias=%d/%d/%d, want HEAD>0 and %d/%d",
+							heads.Load(),
+							creates.Load(),
+							aliases.Load(),
+							wantCreates,
+							wantAliases,
+						)
 					}
 				})
 			}
@@ -1454,8 +1488,14 @@ func TestOS02_ExistenceResponseAndTransport(t *testing.T) {
 			client := newTestClient(t, "http://127.0.0.1:1")
 			body := &existenceTestBody{Reader: strings.NewReader("synthetic response")}
 			client.Client.Transport = existenceTestTransport(func(req *http.Request) (*http.Response, error) {
-				if req.Method != http.MethodHead || req.Host != "" || req.URL.Host != "" || req.URL.RequestURI() != "/_alias/protocol_3" {
-					t.Errorf("invalid request before transport: method=%s host=%q URL=%s", req.Method, req.Host, req.URL)
+				if req.Method != http.MethodHead || req.Host != "" || req.URL.Host != "" ||
+					req.URL.RequestURI() != "/_alias/protocol_3" {
+					t.Errorf(
+						"invalid request before transport: method=%s host=%q URL=%s",
+						req.Method,
+						req.Host,
+						req.URL,
+					)
 				}
 				return &http.Response{StatusCode: status, Body: body, Header: make(http.Header)}, nil
 			})

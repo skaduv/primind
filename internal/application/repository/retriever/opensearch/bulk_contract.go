@@ -14,8 +14,10 @@ import (
 	"github.com/primind/primind/internal/types"
 )
 
-const maxBulkBytes = 10 << 20
-const maxBulkItems = 1000
+const (
+	maxBulkBytes = 10 << 20
+	maxBulkItems = 1000
+)
 
 // Invalid UTF-8 replacement is encoder-version dependent. Determine its
 // constant width once, avoiding a tiny allocation for every invalid byte.
@@ -24,6 +26,7 @@ var invalidUTF8JSONSize = func() int {
 	return len(b) - 2
 }()
 
+// ItemOutcome records the result of one submitted bulk item by its input position.
 type ItemOutcome struct {
 	Position int
 	State    string
@@ -40,6 +43,7 @@ type WriteObservation struct {
 	Items                                             []ItemOutcome
 }
 
+// BulkWriteError reports a bulk write that was not fully confirmed, with per-item counts.
 type BulkWriteError struct {
 	Result     WriteObservation
 	Cause      error
@@ -47,7 +51,15 @@ type BulkWriteError struct {
 }
 
 func (e *BulkWriteError) Error() string {
-	return fmt.Sprintf("opensearch: bulk outcome (%d confirmed, %d items failed, %d unknown, %d not sent; types=%s): %v", e.Result.Confirmed, e.Result.Failed, e.Result.Unknown, e.Result.NotSent, strings.Join(e.ErrorTypes, ","), e.Cause)
+	return fmt.Sprintf(
+		"opensearch: bulk outcome (%d confirmed, %d items failed, %d unknown, %d not sent; types=%s): %v",
+		e.Result.Confirmed,
+		e.Result.Failed,
+		e.Result.Unknown,
+		e.Result.NotSent,
+		strings.Join(e.ErrorTypes, ","),
+		e.Cause,
+	)
 }
 func (e *BulkWriteError) Unwrap() error { return e.Cause }
 
@@ -173,7 +185,11 @@ func jsonSize(v any, remaining int) (int, error) {
 // split follows the actual vector dimension instead of a fixed count. A
 // document that alone exceeds a limit gets a group of its own; BatchSave then
 // rejects it explicitly.
-func splitForBulk(alias string, infos []*types.IndexInfo, embBySource map[string][]float32) ([][]*types.IndexInfo, error) {
+func splitForBulk(
+	alias string,
+	infos []*types.IndexInfo,
+	embBySource map[string][]float32,
+) ([][]*types.IndexInfo, error) {
 	var groups [][]*types.IndexInfo
 	start, size, dim := 0, 0, 0
 	for i, info := range infos {
@@ -206,7 +222,13 @@ func buildBulkBody(alias string, infos []*types.IndexInfo, emb [][]float32, para
 	return buildBulkBodyContext(context.Background(), alias, infos, emb, params)
 }
 
-func buildBulkBodyContext(ctx context.Context, alias string, infos []*types.IndexInfo, emb [][]float32, params map[string]any) ([]byte, error) {
+func buildBulkBodyContext(
+	ctx context.Context,
+	alias string,
+	infos []*types.IndexInfo,
+	emb [][]float32,
+	params map[string]any,
+) ([]byte, error) {
 	if len(infos) > maxBulkItems {
 		return nil, ErrBatchTooLarge
 	}
@@ -323,7 +345,14 @@ func inspectBulkResponse(body io.Reader, expected ...string) error {
 
 func safeBulkErrorType(s string) string {
 	switch s {
-	case "mapper_parsing_exception", "version_conflict_engine_exception", "es_rejected_execution_exception", "security_exception", "illegal_argument_exception", "document_missing_exception", "cluster_block_exception", "knn_circuit_breaker_exception":
+	case "mapper_parsing_exception",
+		"version_conflict_engine_exception",
+		"es_rejected_execution_exception",
+		"security_exception",
+		"illegal_argument_exception",
+		"document_missing_exception",
+		"cluster_block_exception",
+		"knn_circuit_breaker_exception":
 		return s
 	}
 	return "remote_error"

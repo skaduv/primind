@@ -52,7 +52,9 @@ func TestSearchEntityResolvesSharedChunksWithinScope(t *testing.T) {
 	cm := &types.ChatManage{PipelineState: types.PipelineState{
 		Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-shared"},
 	}}
-	cm.SearchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-shared", TenantID: 2}}
+	cm.SearchTargets = types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-shared", TenantID: 2},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 
 	if err := plugin.OnEvent(ctx, types.ENTITY_SEARCH, cm, func() *PluginError { return nil }); err != nil {
@@ -94,16 +96,29 @@ func TestSearchEntityIgnoresKnowledgeBasesOutsideSearchTargets(t *testing.T) {
 		targets types.SearchTargets
 		want    []string
 	}{
-		{"kb scope", types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign", "kb-own"}},
+		{
+			"kb scope",
+			types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign", "kb-own"}},
 			types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-own", TenantID: 200}},
-			[]string{"own"}},
-		{"file scope", types.PipelineState{Entity: []string{"Docker"},
-			EntityKnowledge: map[string]string{"doc-f": "kb-foreign", "doc-o": "kb-own"}},
-			types.SearchTargets{{Type: types.SearchTargetTypeKnowledge, KnowledgeBaseID: "kb-own", TenantID: 200,
-				KnowledgeIDs: []string{"doc-o"}}},
-			[]string{"own"}},
-		{"no authorized target", types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign"}},
-			nil, nil},
+			[]string{"own"},
+		},
+		{
+			"file scope",
+			types.PipelineState{
+				Entity:          []string{"Docker"},
+				EntityKnowledge: map[string]string{"doc-f": "kb-foreign", "doc-o": "kb-own"},
+			},
+			types.SearchTargets{{
+				Type: types.SearchTargetTypeKnowledge, KnowledgeBaseID: "kb-own", TenantID: 200,
+				KnowledgeIDs: []string{"doc-o"},
+			}},
+			[]string{"own"},
+		},
+		{
+			"no authorized target",
+			types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign"}},
+			nil, nil,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cm := &types.ChatManage{PipelineState: tc.state}

@@ -26,15 +26,19 @@ type RuntimeOptions struct {
 	IdleConnTimeout     time.Duration
 }
 
+// DefaultRuntimeOptions returns the default timeouts, response limit and connection pool sizes.
 func DefaultRuntimeOptions() RuntimeOptions {
 	return RuntimeOptions{30 * time.Second, 16 << 20, 32, 32, 32, 90 * time.Second}
 }
 
 func (o RuntimeOptions) validate() error {
-	if o.RequestTimeout <= 0 || o.RequestTimeout > 5*time.Minute || o.MaxResponseBytes <= 0 || o.MaxResponseBytes > 64<<20 ||
+	if o.RequestTimeout <= 0 || o.RequestTimeout > 5*time.Minute ||
+		o.MaxResponseBytes <= 0 || o.MaxResponseBytes > 64<<20 ||
 		o.MaxConnsPerHost <= 0 || o.MaxConnsPerHost > 1024 || o.MaxIdleConns <= 0 || o.MaxIdleConns > 1024 ||
-		o.MaxIdleConnsPerHost <= 0 || o.MaxIdleConnsPerHost > o.MaxConnsPerHost || o.MaxIdleConnsPerHost > o.MaxIdleConns ||
-		o.IdleConnTimeout <= 0 || o.IdleConnTimeout > 10*time.Minute {
+		o.MaxIdleConnsPerHost <= 0 || o.MaxIdleConnsPerHost > o.MaxConnsPerHost ||
+		o.MaxIdleConnsPerHost > o.MaxIdleConns ||
+		o.IdleConnTimeout <= 0 ||
+		o.IdleConnTimeout > 10*time.Minute {
 		return ErrConfigInvalid
 	}
 	return nil
@@ -44,8 +48,11 @@ type clientOptions struct {
 	runtime RuntimeOptions
 	budget  *RequestBudget
 }
+
+// ClientOption configures an OpenSearch client created by NewOpenSearchClient.
 type ClientOption func(*clientOptions) error
 
+// WithRuntimeOptions overrides the default runtime options after validating them.
 func WithRuntimeOptions(o RuntimeOptions) ClientOption {
 	return func(c *clientOptions) error {
 		if err := o.validate(); err != nil {
@@ -82,12 +89,14 @@ type RequestBudget struct {
 	waitNanos                                       int64
 }
 
+// BudgetSnapshot is a point-in-time copy of a RequestBudget's counters.
 type BudgetSnapshot struct {
 	InFlight, Writing, Queued, Peak, WritePeak, QueuePeak int
 	Attempts, RequestBytes, ResponseBytes, Rejected       int64
 	Wait                                                  time.Duration
 }
 
+// NewRequestBudget creates a budget with total permits, a write cap below total and a waiter cap.
 func NewRequestBudget(total, writes, waiting int) (*RequestBudget, error) {
 	if total < 2 || total > 1024 || writes < 1 || writes >= total || waiting < 1 || waiting > 4096 {
 		return nil, ErrConfigInvalid
@@ -97,10 +106,23 @@ func NewRequestBudget(total, writes, waiting int) (*RequestBudget, error) {
 
 var processRequestBudget = func() *RequestBudget { b, _ := NewRequestBudget(16, 12, 64); return b }()
 
+// Snapshot returns the current counters.
 func (b *RequestBudget) Snapshot() BudgetSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return BudgetSnapshot{b.inflight, b.writing, b.queued, b.peak, b.writePeak, b.queuePeak, b.attempts, b.requestBytes, b.responseBytes, b.rejected, time.Duration(b.waitNanos)}
+	return BudgetSnapshot{
+		b.inflight,
+		b.writing,
+		b.queued,
+		b.peak,
+		b.writePeak,
+		b.queuePeak,
+		b.attempts,
+		b.requestBytes,
+		b.responseBytes,
+		b.rejected,
+		time.Duration(b.waitNanos),
+	}
 }
 
 func (b *RequestBudget) acquire(ctx context.Context, write bool) (func(), error) {
@@ -168,12 +190,14 @@ func isWriteRequest(r *http.Request) bool {
 	return true
 }
 
-type requestTraceKey struct{}
-type operationLeaseKey struct{}
-type operationLease struct {
-	budget *RequestBudget
-	write  bool
-}
+type (
+	requestTraceKey   struct{}
+	operationLeaseKey struct{}
+	operationLease    struct {
+		budget *RequestBudget
+		write  bool
+	}
+)
 type requestTrace struct{ attempts atomic.Int64 }
 
 type runtimeTransport struct {
@@ -186,7 +210,8 @@ type runtimeTransport struct {
 func (t *runtimeTransport) Perform(req *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(req.Context(), t.options.RequestTimeout)
 	defer cancel()
-	if lease, ok := ctx.Value(operationLeaseKey{}).(operationLease); ok && lease.budget == t.budget && (lease.write || !isWriteRequest(req)) {
+	if lease, ok := ctx.Value(operationLeaseKey{}).(operationLease); ok && lease.budget == t.budget &&
+		(lease.write || !isWriteRequest(req)) {
 		return t.base.Perform(req.Clone(ctx))
 	}
 	release, err := t.budget.acquire(ctx, isWriteRequest(req))
@@ -209,7 +234,8 @@ func (t *runtimeTransport) Perform(req *http.Request) (*http.Response, error) {
 func admitWriteOperation(ctx context.Context, client *osapi.Client) (context.Context, func(), error) {
 	if client != nil && client.Client != nil {
 		if t, ok := client.Client.Transport.(*runtimeTransport); ok {
-			if lease, ok := ctx.Value(operationLeaseKey{}).(operationLease); ok && lease.budget == t.budget && lease.write {
+			if lease, ok := ctx.Value(operationLeaseKey{}).(operationLease); ok && lease.budget == t.budget &&
+				lease.write {
 				return ctx, func() {}, nil // borrowing must not release the outer owner's permit
 			}
 			release, err := t.budget.acquire(ctx, true)
@@ -329,7 +355,11 @@ func operationContext(ctx context.Context, client *osapi.Client) (context.Contex
 
 // WaitForVisibility is a finite polling helper for later isolated acceptance.
 // The caller supplies a read-only visibility check; it never forces a refresh.
-func WaitForVisibility(ctx context.Context, timeout, interval time.Duration, check func(context.Context) (bool, error)) error {
+func WaitForVisibility(
+	ctx context.Context,
+	timeout, interval time.Duration,
+	check func(context.Context) (bool, error),
+) error {
 	if ctx == nil || timeout <= 0 || timeout > 5*time.Minute || interval <= 0 || interval > timeout || check == nil {
 		return ErrConfigInvalid
 	}

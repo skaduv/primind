@@ -54,12 +54,12 @@ func TestOS01_InitializationAdmissionCancelRecheckAndCacheReads(t *testing.T) {
 			heads.Add(1) // index already exists; only one HEAD is needed per cached dimension
 		case strings.HasSuffix(r.URL.Path, "/_search"):
 			queries.Add(1)
-			io.WriteString(w, `{"hits":{"hits":[]}}`)
+			_, _ = io.WriteString(w, `{"hits":{"hits":[]}}`)
 		default:
 			close(writeEntered)
 			select {
 			case <-releaseWrite:
-				io.WriteString(w, `{"_id":"blocker","result":"created"}`)
+				_, _ = io.WriteString(w, `{"_id":"blocker","result":"created"}`)
 			case <-r.Context().Done():
 			}
 		}
@@ -78,7 +78,10 @@ func TestOS01_InitializationAdmissionCancelRecheckAndCacheReads(t *testing.T) {
 	}
 	blocker := make(chan error, 1)
 	go func() {
-		_, err := repo.client.Index(ctx, osapi.IndexReq{Index: "other", DocumentID: "blocker", Body: strings.NewReader(`{}`)})
+		_, err := repo.client.Index(
+			ctx,
+			osapi.IndexReq{Index: "other", DocumentID: "blocker", Body: strings.NewReader(`{}`)},
+		)
 		blocker <- err
 	}()
 	select {
@@ -116,9 +119,17 @@ func TestOS01_InitializationAdmissionCancelRecheckAndCacheReads(t *testing.T) {
 	if err := repo.ensureKeywordsIndex(readCtx); err != nil {
 		t.Fatalf("keyword cache hit needed write admission: %v", err)
 	}
-	_, err = repo.Retrieve(readCtx, types.RetrieveParams{RetrieverType: types.VectorRetrieverType, Embedding: []float32{1, 2, 3}, TopK: 1})
+	_, err = repo.Retrieve(
+		readCtx,
+		types.RetrieveParams{RetrieverType: types.VectorRetrieverType, Embedding: []float32{1, 2, 3}, TopK: 1},
+	)
 	if err != nil || queries.Load() != 1 || heads.Load() != 2 {
-		t.Fatalf("cached vector read blocked or initialized again: err=%v queries=%d heads=%d", err, queries.Load(), heads.Load())
+		t.Fatalf(
+			"cached vector read blocked or initialized again: err=%v queries=%d heads=%d",
+			err,
+			queries.Load(),
+			heads.Load(),
+		)
 	}
 	go func() { completed <- repo.ensureReady(ctx, 4) }() // retry after cancellation
 	waitBudgetState(t, budget, func(s BudgetSnapshot) bool { return s.Queued == 2 })
@@ -136,11 +147,22 @@ func TestOS01_InitializationAdmissionCancelRecheckAndCacheReads(t *testing.T) {
 	if err := <-blocker; err != nil {
 		t.Fatal(err)
 	}
-	final := waitBudgetState(t, budget, func(s BudgetSnapshot) bool { return s.InFlight == 0 && s.Writing == 0 && s.Queued == 0 })
+	final := waitBudgetState(
+		t,
+		budget,
+		func(s BudgetSnapshot) bool { return s.InFlight == 0 && s.Writing == 0 && s.Queued == 0 },
+	)
 	if heads.Load() != 3 || final.Peak > 2 || final.WritePeak != 1 {
-		t.Fatalf("admission recheck duplicated initialization or leaked permit: heads=%d final=%+v", heads.Load(), final)
+		t.Fatalf(
+			"admission recheck duplicated initialization or leaked permit: heads=%d final=%+v",
+			heads.Load(),
+			final,
+		)
 	}
-	t.Logf("cache reads progressed with write slot occupied; canceled admission retried; one new HEAD; final=%+v", final)
+	t.Logf(
+		"cache reads progressed with write slot occupied; canceled admission retried; one new HEAD; final=%+v",
+		final,
+	)
 }
 
 func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
@@ -151,7 +173,11 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			headEntered, releaseHead := make(chan struct{}), make(chan struct{})
-			markHead, unblockHead := sync.OnceFunc(func() { close(headEntered) }), sync.OnceFunc(func() { close(releaseHead) })
+			markHead, unblockHead := sync.OnceFunc(
+				func() { close(headEntered) },
+			), sync.OnceFunc(
+				func() { close(releaseHead) },
+			)
 			var heads, creates, saves, bulks, live atomic.Int32
 			ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -165,29 +191,30 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 					case <-r.Context().Done():
 					}
 				case r.URL.Path == "/":
-					io.WriteString(w, `{"version":{"distribution":"opensearch","number":"2.19.7"}}`)
+					_, _ = io.WriteString(w, `{"version":{"distribution":"opensearch","number":"2.19.7"}}`)
 				case r.URL.Path == "/_cat/plugins":
-					io.WriteString(w, `[{"name":"node","component":"opensearch-knn"}]`)
+					_, _ = io.WriteString(w, `[{"name":"node","component":"opensearch-knn"}]`)
 				case strings.HasSuffix(r.URL.Path, "/_bulk"):
 					bulks.Add(1)
 					echoBulk(w, r)
 				case strings.Contains(r.URL.Path, "/_doc/"):
 					saves.Add(1)
-					io.WriteString(w, `{"_id":"save","result":"created"}`)
+					_, _ = io.WriteString(w, `{"_id":"save","result":"created"}`)
 				case r.Method == http.MethodPut:
 					if !strings.Contains(r.URL.Path, "/_alias/") {
 						creates.Add(1)
 					}
-					io.WriteString(w, `{"acknowledged":true}`)
+					_, _ = io.WriteString(w, `{"acknowledged":true}`)
 				default:
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusBadRequest)
 				}
 			}))
 			ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-				if state == http.StateNew {
+				switch state {
+				case http.StateNew:
 					live.Add(1)
-				} else if state == http.StateClosed {
+				case http.StateClosed:
 					live.Add(-1)
 				}
 			}
@@ -196,7 +223,11 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 			defer unblockHead()
 			options := DefaultRuntimeOptions()
 			options.RequestTimeout = 10 * time.Second
-			client, err := NewOpenSearchClient(&types.ConnectionConfig{Addr: ts.URL}, WithRequestBudget(budget), WithRuntimeOptions(options))
+			client, err := NewOpenSearchClient(
+				&types.ConnectionConfig{Addr: ts.URL},
+				WithRequestBudget(budget),
+				WithRuntimeOptions(options),
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +253,10 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 			initial := budget.Snapshot()
 			for i := 0; i < 2; i++ {
 				go func(i int) {
-					results <- repo.BatchSave(ctx, []*types.IndexInfo{{ChunkID: fmt.Sprintf("batch-%d", i), SourceID: "source"}}, params)
+					results <- repo.BatchSave(ctx, []*types.IndexInfo{{
+						ChunkID:  fmt.Sprintf("batch-%d", i),
+						SourceID: "source",
+					}}, params)
 				}(i)
 			}
 			// Both batch callers must have either acquired a write permit or
@@ -246,7 +280,12 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 						t.Errorf("healthy mixed operation failed: %v", err)
 					}
 				case <-deadline:
-					t.Errorf("healthy operations stalled after HEAD release: initial=%+v gated=%+v now=%+v", initial, gated, budget.Snapshot())
+					t.Errorf(
+						"healthy operations stalled after HEAD release: initial=%+v gated=%+v now=%+v",
+						initial,
+						gated,
+						budget.Snapshot(),
+					)
 					cancel() // terminate the red case without waiting for the 10s operation timeout
 					deadline = nil
 					i--
@@ -262,16 +301,32 @@ func TestOS01_SaveAndBatchInitializationShareBudget(t *testing.T) {
 					}
 				}
 			}
-			final := waitBudgetState(t, budget, func(s BudgetSnapshot) bool { return s.InFlight == 0 && s.Writing == 0 && s.Queued == 0 })
+			final := waitBudgetState(
+				t,
+				budget,
+				func(s BudgetSnapshot) bool { return s.InFlight == 0 && s.Writing == 0 && s.Queued == 0 },
+			)
 			if heads.Load() != 1 || creates.Load() != 1 || saves.Load() != 1 || bulks.Load() != 2 {
-				t.Errorf("no false success: head=%d create=%d save=%d bulk=%d", heads.Load(), creates.Load(), saves.Load(), bulks.Load())
+				t.Errorf(
+					"no false success: head=%d create=%d save=%d bulk=%d",
+					heads.Load(),
+					creates.Load(),
+					saves.Load(),
+					bulks.Load(),
+				)
 			}
 			if final.Peak > 3 || final.WritePeak > 2 {
 				t.Errorf("shared budget exceeded: %+v", final)
 			}
 			CloseIdleConnections(client)
 			awaitCondition(t, func() bool { return live.Load() == 0 })
-			t.Logf("HEAD release to completion=%s; gated=%+v final=%+v; connections=%d", time.Since(started), gated, final, live.Load())
+			t.Logf(
+				"HEAD release to completion=%s; gated=%+v final=%+v; connections=%d",
+				time.Since(started),
+				gated,
+				final,
+				live.Load(),
+			)
 		})
 	}
 }

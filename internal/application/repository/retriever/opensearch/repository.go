@@ -187,7 +187,8 @@ func (r *Repository) ensureIndex(ctx context.Context, dim int, create func(conte
 	attempt.err = create(ctx)
 	r.initMu.Lock()
 	close(attempt.done)
-	if isTransientErr(attempt.err) || errors.Is(attempt.err, context.Canceled) || errors.Is(attempt.err, context.DeadlineExceeded) {
+	if isTransientErr(attempt.err) || errors.Is(attempt.err, context.Canceled) ||
+		errors.Is(attempt.err, context.DeadlineExceeded) {
 		delete(r.initializations, dim)
 	}
 	r.initMu.Unlock()
@@ -347,7 +348,10 @@ func wrapTransport(err error) error {
 		return nil
 	}
 	// Never log raw SDK errors: they can contain document bodies or credentials.
-	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, ErrRequestBudgetFull, ErrResponseTooLarge} {
+	for _, sentinel := range []error{
+		context.Canceled, context.DeadlineExceeded, ErrRequestBudgetFull,
+		ErrResponseTooLarge,
+	} {
 		if errors.Is(err, sentinel) {
 			return fmt.Errorf("%w: %w", ErrTransport, sentinel)
 		}

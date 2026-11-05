@@ -17,11 +17,14 @@ import (
 	"github.com/primind/primind/internal/types"
 )
 
-var errNotRun = errors.New("NOT_RUN: explicit OS-02 opt-in and dedicated config required")
-var safeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,180}$`)
-var safeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,180}$`)
-var secretName = regexp.MustCompile(`^OS02_SECRET_[A-Z0-9_]+$`)
+var (
+	errNotRun  = errors.New("NOT_RUN: explicit OS-02 opt-in and dedicated config required")
+	safeName   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,180}$`)
+	safeID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,180}$`)
+	secretName = regexp.MustCompile(`^OS02_SECRET_[A-Z0-9_]+$`)
+)
 
+// Config is the approved run configuration loaded from the integration config file.
 type Config struct {
 	Mode                string       `json:"mode"`
 	RunID               string       `json:"run_id"`
@@ -48,7 +51,8 @@ type Config struct {
 	Performance         *Performance `json:"performance,omitempty"`
 }
 
-// IndexConfig must be the explicitly approved effective configuration. Requiring
+// Scope describes one approved store and index under test. Its IndexConfig must be
+// the explicitly approved effective configuration. Requiring
 // nonzero effective values prevents adapter env/default fallback, including the
 // existing replicas=0 -> 1 projection; it does not repair that public DTO here.
 type Scope struct {
@@ -64,6 +68,7 @@ type Scope struct {
 	RefreshInterval string            `json:"refresh_interval"`
 }
 
+// Performance configures an approved performance run and its rounds.
 type Performance struct {
 	AllowIndexCreationAndOrphanCleanup bool         `json:"allow_adapter_index_creation_and_orphan_cleanup"`
 	ProfileRef                         string       `json:"profile_ref"`
@@ -78,6 +83,7 @@ type Performance struct {
 	Application                        *Application `json:"application,omitempty"`
 }
 
+// Round is one write or mixed read/write round of a performance run.
 type Round struct {
 	ID                        string  `json:"id"`
 	Variant                   string  `json:"variant"`
@@ -92,6 +98,7 @@ type Round struct {
 	Stores                    []Scope `json:"stores"`
 }
 
+// Application points a performance run at the application HTTP API for end-to-end evidence.
 type Application struct {
 	Endpoint          string   `json:"endpoint"`
 	TokenEnv          string   `json:"token_env"`
@@ -135,14 +142,14 @@ func strictJSON(b []byte, out any) error {
 	return nil
 }
 
-func readLimited(path string, cap int64) ([]byte, error) {
+func readLimited(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, cap+1))
-	if int64(len(b)) > cap {
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if int64(len(b)) > limit {
 		return nil, errors.New("file exceeds cap")
 	}
 	return b, err
@@ -177,7 +184,8 @@ func (c Config) validate(now time.Time) error {
 		return errors.New("dedicated credential environment references required")
 	}
 	if c.MaxSeconds < 1 || c.MaxSeconds > 3600 || c.VisibilitySeconds < 1 || c.VisibilitySeconds > 300 ||
-		c.PollMilliseconds < 10 || c.PollMilliseconds > 10000 || c.PollMilliseconds > c.VisibilitySeconds*1000 || c.PageSize < 1 || c.PageSize > 100 ||
+		c.PollMilliseconds < 10 || c.PollMilliseconds > 10000 || c.PollMilliseconds > c.VisibilitySeconds*1000 ||
+		c.PageSize < 1 || c.PageSize > 100 ||
 		c.MaxRecords < 1 || c.MaxRecords > 100000 || c.TotalRequests < 2 || c.TotalRequests > 16 ||
 		c.WriteRequests < 1 || c.WriteRequests >= c.TotalRequests || c.Waiters < 1 || c.Waiters > 64 {
 		return errors.New("finite local runner limits required (never larger than approved adapter budget)")
@@ -210,8 +218,11 @@ func (c Config) validate(now time.Time) error {
 func (s Scope) validate() error {
 	i := s.Index
 	if !safeID.MatchString(s.StoreID) || len(s.StoreID) < 16 || !safeName.MatchString(i.IndexName) ||
-		!safeID.MatchString(s.KnowledgeBaseID) || !safeID.MatchString(s.KnowledgeID) || s.Dimension < 0 || s.Dimension > 16000 ||
-		i.NumberOfShards < 1 || i.NumberOfReplicas < 1 || i.HNSWM < 1 || i.HNSWEFConstruction < 1 || i.HNSWEFSearch < 1 ||
+		!safeID.MatchString(
+			s.KnowledgeBaseID,
+		) || !safeID.MatchString(s.KnowledgeID) || s.Dimension < 0 || s.Dimension > 16000 ||
+		i.NumberOfShards < 1 || i.NumberOfReplicas < 1 || i.HNSWM < 1 || i.HNSWEFConstruction < 1 ||
+		i.HNSWEFSearch < 1 ||
 		(i.KNNEngine != "lucene" && i.KNNEngine != "faiss") || s.RefreshInterval == "" {
 		return errors.New("incomplete explicit scope/index configuration")
 	}
@@ -222,7 +233,8 @@ func (s Scope) validate() error {
 		expected = base + "_keywords"
 		physical = expected
 	}
-	if s.Alias != expected || s.Physical != physical || !safeName.MatchString(s.Alias) || !safeName.MatchString(s.Physical) {
+	if s.Alias != expected || s.Physical != physical || !safeName.MatchString(s.Alias) ||
+		!safeName.MatchString(s.Physical) {
 		return errors.New("alias/physical target differs from formal adapter routing")
 	}
 	return nil
@@ -232,9 +244,12 @@ func (s Scope) keywordIndex() string { return s.Index.IndexName + "_" + s.StoreI
 
 func (c Config) validatePerformance() error {
 	p := c.Performance
-	if !p.AllowIndexCreationAndOrphanCleanup || p.ProfileRef == "" || p.BudgetRef == "" || p.Seed == "" || p.MaxDocuments < 1 || p.MaxDocuments > c.MaxRecords ||
+	if !p.AllowIndexCreationAndOrphanCleanup || p.ProfileRef == "" || p.BudgetRef == "" || p.Seed == "" ||
+		p.MaxDocuments < 1 || p.MaxDocuments > c.MaxRecords ||
 		p.MaxConcurrency < 1 || p.MaxConcurrency > c.WriteRequests || p.MaxHeapBytes == 0 || p.HealthFile == "" ||
-		p.HealthMaxAgeSeconds < 1 || p.HealthMaxAgeSeconds > 30 || len(p.Rounds) == 0 || len(p.Rounds) > 40 {
+		p.HealthMaxAgeSeconds < 1 || p.HealthMaxAgeSeconds > 30 ||
+		len(p.Rounds) == 0 ||
+		len(p.Rounds) > 40 {
 		return errors.New("frozen workload, finite budget and approved fresh health feed required")
 	}
 	seen := map[string]bool{}
@@ -254,7 +269,15 @@ func (c Config) validatePerformance() error {
 			return errors.New("invalid finite round/multi-store/minimum workload")
 		}
 		seen["round:"+r.ID] = true
-		sig := fmt.Sprintf("%d/%d/%d/%t/%d/%d", r.BatchSize, r.Concurrency, r.DocumentsPerStore, r.Mixed, r.MinimumSeconds, r.MinimumQueries)
+		sig := fmt.Sprintf(
+			"%d/%d/%d/%t/%d/%d",
+			r.BatchSize,
+			r.Concurrency,
+			r.DocumentsPerStore,
+			r.Mixed,
+			r.MinimumSeconds,
+			r.MinimumQueries,
+		)
 		if old, ok := signatures[r.Variant]; ok && old != sig {
 			return errors.New("variant changed across repetitions")
 		}
@@ -272,13 +295,15 @@ func (c Config) validatePerformance() error {
 			if s.RefreshInterval != "1s" {
 				return errors.New("formal adapter creates indexes with 1s refresh; no tuning override allowed")
 			}
-			if !r.Warmup && r.Concurrency == 1 && ((s.Dimension > 0 && r.BatchSize != 40) || (s.Dimension == 0 && r.BatchSize != 10)) {
+			if !r.Warmup && r.Concurrency == 1 &&
+				((s.Dimension > 0 && r.BatchSize != 40) || (s.Dimension == 0 && r.BatchSize != 10)) {
 				return errors.New("single-worker baseline preserves existing vector 40 / keyword 10 batch")
 			}
 			prefix := "os02perf_" + c.RunID + "_"
 			if !strings.HasPrefix(s.Index.IndexName, prefix) || !strings.HasPrefix(s.Namespace, prefix) ||
 				s.ChunkID != "" || s.KnowledgeBaseID != s.Namespace+"_kb" || s.KnowledgeID != s.Namespace+"_doc" ||
-				seen["index:"+s.Alias] || seen["namespace:"+s.Namespace] || seen["store:"+r.ID+":"+s.StoreID] || (r.Mixed && s.Dimension < 1) {
+				seen["index:"+s.Alias] || seen["namespace:"+s.Namespace] || seen["store:"+r.ID+":"+s.StoreID] ||
+				(r.Mixed && s.Dimension < 1) {
 				return errors.New("fresh dedicated synthetic scopes required; application chunks are forbidden")
 			}
 			seen["index:"+s.Alias] = true
@@ -346,8 +371,11 @@ func (c Config) validatePerformance() error {
 	if err := validateEndpoint(a.Endpoint); err != nil {
 		return err
 	}
-	if !secretName.MatchString(a.TokenEnv) || !safeID.MatchString(a.KnowledgeBaseID) || !safeID.MatchString(a.KnowledgeAID) ||
-		len(a.EvidenceAChunkIDs) == 0 || a.MatchCount < 1 || a.MatchCount > 100 || a.VectorThreshold < -1 || a.VectorThreshold > 1 || a.KeywordThreshold < 0 {
+	if !secretName.MatchString(a.TokenEnv) || !safeID.MatchString(a.KnowledgeBaseID) ||
+		!safeID.MatchString(a.KnowledgeAID) ||
+		len(a.EvidenceAChunkIDs) == 0 || a.MatchCount < 1 || a.MatchCount > 100 || a.VectorThreshold < -1 ||
+		a.VectorThreshold > 1 ||
+		a.KeywordThreshold < 0 {
 		return errors.New("application scope, frozen retrieval parameters and independent A evidence IDs required")
 	}
 	for _, id := range a.EvidenceAChunkIDs {

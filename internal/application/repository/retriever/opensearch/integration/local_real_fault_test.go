@@ -160,8 +160,10 @@ func TestLocalRealConnectionLossAndReconcile(t *testing.T) {
 	if !errors.Is(err, adapter.ErrTransport) {
 		t.Fatalf("outage error not classified as transport: %v", err)
 	}
-	if _, err := c.repo.Retrieve(ctx, types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType,
-		Query: "sample", KnowledgeBaseIDs: []string{kb}, TopK: 5, AdditionalParams: map[string]any{"dim": localDim}}); err == nil {
+	if _, err := c.repo.Retrieve(ctx, types.RetrieveParams{
+		RetrieverType: types.KeywordsRetrieverType,
+		Query:         "sample", KnowledgeBaseIDs: []string{kb}, TopK: 5, AdditionalParams: map[string]any{"dim": localDim},
+	}); err == nil {
 		t.Fatal("retrieve during outage reported success")
 	}
 	t.Logf("outage error: %v", err)
