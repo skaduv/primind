@@ -80,7 +80,41 @@ func (s *sessionService) resolveKnowledgeBases(
 	if err != nil {
 		return nil, nil, err
 	}
-	return kbIDs, knowledgeIDs, nil
+	return s.filterReadableKnowledgeBases(ctx, kbIDs), knowledgeIDs, nil
+}
+
+// filterReadableKnowledgeBases keeps the KBs the caller may read: its own
+// workspace's, those shared to it, or those granted by a shared agent — the
+// same check buildSearchTargets applies. Others (another tenant's, unknown)
+// are dropped silently, so every consumer of the resolved list (graph search,
+// fallback document listing, model selection) sees only authorized KBs, not
+// just the search targets. An empty result falls through to the no-KB path.
+func (s *sessionService) filterReadableKnowledgeBases(ctx context.Context, kbIDs []string) []string {
+	if len(kbIDs) == 0 {
+		return kbIDs
+	}
+	kbs, err := s.knowledgeBaseService.GetKnowledgeBasesByIDsOnly(ctx, uniqueNonEmptyStrings(kbIDs))
+	if err != nil {
+		logger.Warnf(ctx, "Failed to load knowledge bases for QA access check: %v", err)
+		return nil
+	}
+	owner := make(map[string]uint64, len(kbs))
+	for _, kb := range kbs {
+		if kb != nil {
+			owner[kb.ID] = kb.TenantID
+		}
+	}
+	permissions := kbReadPermissions(ctx, s.kbShareService)
+	readable := make([]string, 0, len(kbIDs))
+	for _, id := range kbIDs {
+		if allowed, err := permissions.Check(id, owner[id], types.OrgRoleViewer); err == nil && allowed {
+			readable = append(readable, id)
+			continue
+		}
+		logger.Warnf(ctx, "Dropping knowledge base %s from QA scope: caller may not read it",
+			secutils.SanitizeForLog(id))
+	}
+	return readable
 }
 
 // questionOriginAnchor returns the knowledge base a picked suggested question

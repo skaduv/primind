@@ -52,6 +52,9 @@ func TestSearchEntityResolvesSharedChunksWithinScope(t *testing.T) {
 	cm := &types.ChatManage{PipelineState: types.PipelineState{
 		Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-shared"},
 	}}
+	cm.SearchTargets = types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-shared", TenantID: 2},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 
 	if err := plugin.OnEvent(ctx, types.ENTITY_SEARCH, cm, func() *PluginError { return nil }); err != nil {
@@ -66,5 +69,70 @@ func TestSearchEntityResolvesSharedChunksWithinScope(t *testing.T) {
 func entityChunk(id string, tenantID uint64, kbID, knowledgeID string) *types.Chunk {
 	return &types.Chunk{
 		ID: id, TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeID: knowledgeID, IsEnabled: true, Content: id,
+	}
+}
+
+// Graph namespaces are only searched for KBs the turn is authorized for: a KB
+// named in the request but absent from the permission-checked search targets
+// (another tenant's, unshared) must not contribute chunks or references.
+func TestSearchEntityIgnoresKnowledgeBasesOutsideSearchTargets(t *testing.T) {
+	plugin := &PluginSearchEntity{
+		graphRepo: &entityGraphRepo{graph: &types.GraphData{Node: []*types.GraphNode{
+			{Name: "Docker", Chunks: []string{"foreign", "own"}},
+		}}},
+		chunkRepo: &expandChunkRepo{chunks: map[string]*types.Chunk{
+			"foreign": entityChunk("foreign", 100, "kb-foreign", "doc-f"),
+			"own":     entityChunk("own", 200, "kb-own", "doc-o"),
+		}},
+		knowledgeRepo: &entityKnowledgeRepo{knowledge: map[string]*types.Knowledge{
+			"doc-f": {ID: "doc-f", KnowledgeBaseID: "kb-foreign", Title: "Foreign"},
+			"doc-o": {ID: "doc-o", KnowledgeBaseID: "kb-own", Title: "Own"},
+		}},
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(200))
+	for _, tc := range []struct {
+		name    string
+		state   types.PipelineState
+		targets types.SearchTargets
+		want    []string
+	}{
+		{
+			"kb scope",
+			types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign", "kb-own"}},
+			types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-own", TenantID: 200}},
+			[]string{"own"},
+		},
+		{
+			"file scope",
+			types.PipelineState{
+				Entity:          []string{"Docker"},
+				EntityKnowledge: map[string]string{"doc-f": "kb-foreign", "doc-o": "kb-own"},
+			},
+			types.SearchTargets{{
+				Type: types.SearchTargetTypeKnowledge, KnowledgeBaseID: "kb-own", TenantID: 200,
+				KnowledgeIDs: []string{"doc-o"},
+			}},
+			[]string{"own"},
+		},
+		{
+			"no authorized target",
+			types.PipelineState{Entity: []string{"Docker"}, EntityKBIDs: []string{"kb-foreign"}},
+			nil, nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := &types.ChatManage{PipelineState: tc.state}
+			cm.SearchTargets = tc.targets
+			if err := plugin.OnEvent(ctx, types.ENTITY_SEARCH, cm, func() *PluginError { return nil }); err != nil {
+				t.Fatalf("OnEvent: %v", err)
+			}
+			var got []string
+			for _, r := range cm.SearchResult {
+				got = append(got, r.ID)
+			}
+			if len(got) != len(tc.want) || (len(got) > 0 && got[0] != tc.want[0]) {
+				t.Fatalf("results = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

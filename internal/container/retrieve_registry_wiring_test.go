@@ -41,6 +41,7 @@ func TestRetrieveEngineRegistryWiring(t *testing.T) {
 	provide(func() *config.Config { return &config.Config{} })
 	provide(func() interfaces.AuditLogService { return &fakeAuditSvc{} })
 	provide(repository.NewVectorStoreRepository)
+	provide(NewResourceCleaner)
 	provide(NewEngineFactory)
 	provide(initRetrieveEngineRegistry)
 

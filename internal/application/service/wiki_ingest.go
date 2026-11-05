@@ -189,7 +189,14 @@ return proposed
 	// "unexpected end of JSON input" (EXTRACT_FAILED). Raising the budget to
 	// 32768 matches verified complete outputs for large Chinese policy docs;
 	// shorter replies still stop early via finish_reason=stop. See #2604.
+	// It is the ceiling: wikiMaxTokensFor sizes each call to the model, since
+	// a fixed 32768 is rejected outright by a model whose whole context
+	// window is 32768 (prompt + output must fit).
 	wikiLLMMaxTokens = 32768
+	// wikiLLMMinTokens is the floor for a known small context window.
+	wikiLLMMinTokens = 4096
+	// wikiLLMDefaultTokens is used when the model's context window is unknown.
+	wikiLLMDefaultTokens = 16384
 
 	// wikiPageModifyMaxContinuations bounds how many extra LLM rounds a page
 	// rewrite may take when the provider stopped at the completion budget
@@ -2659,6 +2666,33 @@ func (s *wikiIngestService) deduplicateExtractedBatch(
 // Callers that need the provider stop reason — or that write a page body and
 // therefore care whether the answer was cut off — use
 // generateWithTemplateResult instead.
+// wikiMaxTokensFor sizes the completion budget from the model's context window:
+// a quarter of it, clamped to [wikiLLMMinTokens, wikiLLMMaxTokens], and never
+// above the model's own output limit. Unknown windows get wikiLLMDefaultTokens.
+func wikiMaxTokensFor(contextWindow, maxOutputTokens int) int {
+	budget := wikiLLMDefaultTokens
+	if contextWindow > 0 {
+		budget = min(max(contextWindow/4, wikiLLMMinTokens), wikiLLMMaxTokens)
+	}
+	if maxOutputTokens > 0 {
+		budget = min(budget, maxOutputTokens)
+	}
+	return budget
+}
+
+// wikiMaxTokens resolves the model's limits; lookup failures fall back to the
+// unknown-window default.
+func (s *wikiIngestService) wikiMaxTokens(ctx context.Context, chatModel chat.Chat) int {
+	if s.modelService == nil || chatModel == nil {
+		return wikiMaxTokensFor(0, 0)
+	}
+	m, err := s.modelService.GetModelByID(ctx, chatModel.GetModelID())
+	if err != nil || m == nil {
+		return wikiMaxTokensFor(0, 0)
+	}
+	return wikiMaxTokensFor(m.Parameters.ContextWindow, m.Parameters.MaxOutputTokens)
+}
+
 func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel chat.Chat, promptTpl string, data map[string]string) (string, error) {
 	result, err := s.generateWithTemplateResult(ctx, chatModel, promptTpl, data)
 	if err != nil {
@@ -2741,7 +2775,7 @@ func (s *wikiIngestService) generateWithTemplateResult(
 		)
 	}
 	thinking := false
-	opts := &chat.ChatOptions{Temperature: 0.3, Thinking: &thinking, MaxTokens: wikiLLMMaxTokens}
+	opts := &chat.ChatOptions{Temperature: 0.3, Thinking: &thinking, MaxTokens: s.wikiMaxTokens(ctx, chatModel)}
 	prefixFingerprint := chat.PromptPrefixFingerprint(messages, opts)
 	warmupKey := ""
 	if promptTpl == agent.WikiPageModifyUserPrompt {

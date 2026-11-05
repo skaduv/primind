@@ -650,10 +650,49 @@ func TestGenerateWithTemplateSetsMaxTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateWithTemplate() error = %v", err)
 	}
-	if model.options.MaxTokens != wikiLLMMaxTokens {
-		t.Fatalf("MaxTokens = %d, want %d", model.options.MaxTokens, wikiLLMMaxTokens)
+	if model.options.MaxTokens != wikiLLMDefaultTokens {
+		t.Fatalf("MaxTokens = %d, want %d", model.options.MaxTokens, wikiLLMDefaultTokens)
 	}
 	if model.options.Thinking == nil || *model.options.Thinking {
 		t.Fatalf("Thinking should be non-nil false, got %#v", model.options.Thinking)
+	}
+}
+
+func TestWikiMaxTokensForContextWindow(t *testing.T) {
+	cases := []struct {
+		name                  string
+		contextWindow, output int
+		want                  int
+	}{
+		{"unknown window uses default", 0, 0, wikiLLMDefaultTokens},
+		{"32k window gets a quarter", 32768, 0, 8192},
+		{"small window clamps to floor", 8192, 0, wikiLLMMinTokens},
+		{"large window clamps to ceiling", 1 << 20, 0, wikiLLMMaxTokens},
+		{"128k window", 131072, 0, wikiLLMMaxTokens},
+		{"model output limit wins", 131072, 4096, 4096},
+		{"output limit caps default", 0, 2048, 2048},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := wikiMaxTokensFor(tc.contextWindow, tc.output); got != tc.want {
+				t.Fatalf("wikiMaxTokensFor(%d, %d) = %d, want %d", tc.contextWindow, tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
+// A 32k-context model used to receive max_tokens=32768 and every wiki call
+// was rejected (prompt + output exceed the window); the request now fits.
+func TestGenerateWithTemplateSizesMaxTokensToModel(t *testing.T) {
+	model := &templateCaptureChatModel{response: `{"entities":[],"concepts":[]}`}
+	service := &wikiIngestService{modelService: &stubModelService{modelsByID: map[string]*types.Model{
+		"capture": {ID: "capture", Parameters: types.ModelParameters{ContextWindow: 32768}},
+	}}}
+	if _, err := service.generateWithTemplate(context.Background(), model,
+		`Content={{.Content}}`, map[string]string{"Content": "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if model.options.MaxTokens != 8192 {
+		t.Fatalf("MaxTokens = %d, want 8192 for a 32768-token window", model.options.MaxTokens)
 	}
 }

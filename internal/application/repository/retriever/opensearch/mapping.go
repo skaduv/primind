@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
+	"github.com/opensearch-project/opensearch-go/v4"
 	osapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 
 	"github.com/primind/primind/internal/logger"
@@ -190,42 +192,40 @@ func buildKeywordsMapping(cfg internalCfg) ([]byte, error) {
 	return out, nil
 }
 
-// ensureKeywordsIndex creates the dim-less keyword-only index used by
-// the no-embedding save path. mutex + flag pattern so transient
-// failures can be retried by the next caller (sync.Once cannot be
-// reset).
+// ensureKeywordsIndex uses the shared initialization-attempt mechanism for
+// the dim-less index. The ready flag is a fast path after successful creation.
 func (r *Repository) ensureKeywordsIndex(ctx context.Context) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	r.keywordsMu.Lock()
-	defer r.keywordsMu.Unlock()
-
-	if r.keywordsReady {
-		return nil
+	ready := r.keywordsReady
+	r.keywordsMu.Unlock()
+	if ready {
+		return ctx.Err()
 	}
-	if r.keywordsErr != nil && !isTransientErr(r.keywordsErr) {
-		// Permanent failure — don't retry, surface the same error.
-		return r.keywordsErr
-	}
+	return r.ensureIndex(ctx, 0, r.createKeywordsIndex)
+}
 
+func (r *Repository) createKeywordsIndex(ctx context.Context) error {
 	name := r.keywordsIndex()
-	exists, err := r.aliasExists(ctx, name) // returns true if index exists too
+	resp, requestErr := r.client.Client.Do(ctx, osapi.IndicesExistsReq{Indices: []string{name}}, nil)
+	exists, err := existenceResponse(resp, requestErr)
 	if err != nil {
-		r.keywordsErr = err
 		return err
 	}
 	if exists {
+		r.keywordsMu.Lock()
 		r.keywordsReady = true
-		r.keywordsErr = nil
+		r.keywordsMu.Unlock()
 		return nil
 	}
 	body, err := buildKeywordsMapping(r.cfg)
 	if err != nil {
-		r.keywordsErr = err
 		return err
 	}
 	created := false
 	if err := r.indicesCreate(ctx, name, body); err != nil {
 		if !isAlreadyExistsError(err) {
-			r.keywordsErr = err
 			return err
 		}
 		// resource_already_exists_exception — race with concurrent process,
@@ -233,8 +233,9 @@ func (r *Repository) ensureKeywordsIndex(ctx context.Context) error {
 	} else {
 		created = true
 	}
+	r.keywordsMu.Lock()
 	r.keywordsReady = true
-	r.keywordsErr = nil
+	r.keywordsMu.Unlock()
 	if created {
 		// dim=0 marks the dim-less keyword-only index.
 		r.auditSink().EmitIndexCreated(ctx, name, 0)
@@ -270,36 +271,41 @@ func (r *Repository) indicesDelete(ctx context.Context, name string) error {
 	return nil
 }
 
-// aliasExists uses HEAD /_alias/<name> (Indices.Alias.Exists) — returns
-// true on 200, false on 404, error on 5xx / transport.
-//
-// SDK quirk (opensearch-go v4.6.0): the Exists method passes
-// dataPointer=nil to its internal do(), which means non-2xx responses
-// come back as a plain *errors.errorString ("status: 404 Not Found")
-// rather than as a *opensearch.StructError. We therefore inspect
-// resp.StatusCode directly (resp is always returned even when err is
-// non-nil) and only fall back to wrapTransport for the "no response at
-// all" case (true network failure).
+// aliasExistsRequest avoids SDK v4.6.0's empty-Indices // _alias path
+// (without the space), which net/http parses as an authority. Only this
+// request's construction changes; Client.Do retains the configured transport,
+// endpoint prefix, authentication, SSRF checks, runtime budget and context.
+type aliasExistsRequest string
+
+func (alias aliasExistsRequest) GetRequest() (*http.Request, error) {
+	return opensearch.BuildRequest(http.MethodHead, "/_alias/"+string(alias), nil, nil, nil)
+}
+
 func (r *Repository) aliasExists(ctx context.Context, alias string) (bool, error) {
-	req := osapi.AliasExistsReq{Alias: []string{alias}}
-	resp, err := r.client.Indices.Alias.Exists(ctx, req)
+	resp, err := r.client.Client.Do(ctx, aliasExistsRequest(alias), nil)
+	return existenceResponse(resp, err)
+}
+
+// HEAD responses have no error document to decode. Classify the status through
+// the same sentinel mapper as other requests, accepting only 200 and 404.
+func existenceResponse(resp *opensearch.Response, err error) (bool, error) {
 	if resp != nil {
-		statusCode := resp.StatusCode
-		drainAndClose(resp.Body)
-		switch statusCode {
-		case 200:
-			return true, nil
-		case 404:
-			return false, nil
-		}
-		// Unexpected status (5xx) — fall through to the err path so
-		// wrapTransport can classify (and so the test handler's
-		// errBody is logged for diagnosis).
+		defer drainAndClose(resp.Body)
 	}
 	if err != nil {
 		return false, wrapTransport(err)
 	}
-	return false, nil
+	if resp == nil {
+		return false, wrapTransport(fmt.Errorf("missing existence response"))
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, wrapTransport(&opensearch.StructError{Status: resp.StatusCode})
+	}
 }
 
 // aliasPut creates an alias pointing at index. Single add operation

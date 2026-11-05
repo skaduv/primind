@@ -3,6 +3,7 @@ package retriever
 import (
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -51,6 +52,15 @@ func NewKVHybridRetrieveEngine(indexRepository interfaces.RetrieveEngineReposito
 	engineType types.RetrieverEngineType,
 ) interfaces.RetrieveEngineService {
 	return &KeywordsVectorHybridRetrieveEngineService{indexRepository: indexRepository, engineType: engineType}
+}
+
+// Close releases the repository's resources when the repository owns any
+// (it implements io.Closer); otherwise it is a no-op.
+func (v *KeywordsVectorHybridRetrieveEngineService) Close() error {
+	if c, ok := v.indexRepository.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // EngineType returns the type of the retrieval engine

@@ -54,7 +54,8 @@ func TestQuestionOriginInTargets(t *testing.T) {
 // An agent that retrieves only on @mention treats a picked suggestion from
 // one of its bases as selecting that base, and nothing outside its scope.
 func TestResolveKnowledgeBasesAnchorsOnQuestionOriginWhenRetrievingOnlyOnMention(t *testing.T) {
-	svc := &sessionService{}
+	svc := ownerTenantSessionService(10000, "kb-a", "kb-b")
+	ctx := ownerTenantContext(10000)
 	request := func(originKB string) *types.QARequest {
 		req := &types.QARequest{
 			Session: &types.Session{TenantID: 10000},
@@ -70,16 +71,16 @@ func TestResolveKnowledgeBasesAnchorsOnQuestionOriginWhenRetrievingOnlyOnMention
 		return req
 	}
 
-	kbIDs, knowledgeIDs, err := svc.resolveKnowledgeBases(context.Background(), request("kb-b"))
+	kbIDs, knowledgeIDs, err := svc.resolveKnowledgeBases(ctx, request("kb-b"))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"kb-b"}, kbIDs)
 	assert.Empty(t, knowledgeIDs)
 
-	kbIDs, _, err = svc.resolveKnowledgeBases(context.Background(), request("kb-outside"))
+	kbIDs, _, err = svc.resolveKnowledgeBases(ctx, request("kb-outside"))
 	require.NoError(t, err)
 	assert.Empty(t, kbIDs, "an origin outside the agent's bases must not enable retrieval")
 
-	kbIDs, _, err = svc.resolveKnowledgeBases(context.Background(), request(""))
+	kbIDs, _, err = svc.resolveKnowledgeBases(ctx, request(""))
 	require.NoError(t, err)
 	assert.Empty(t, kbIDs)
 }

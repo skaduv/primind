@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"time"
 
 	osapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 
@@ -34,6 +35,14 @@ func (r *Repository) Save(
 	info *types.IndexInfo,
 	params map[string]any,
 ) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if info == nil {
+		return ErrConfigInvalid
+	}
 	emb := lookupEmbedding(params, info.SourceID)
 	enabled := lookupChunkEnabled(params, info.ChunkID, info.IsEnabled)
 	dim := len(emb)
@@ -75,17 +84,57 @@ func (r *Repository) Save(
 // BatchSave NDJSON-bulk-indexes chunks. Inspects per-item errors and
 // returns a typed error if ANY item fails.
 //
-// Dim-aware pre-marshal size cap: estimateBulkBodyBytes predicts NDJSON
-// size before allocating; over-cap callers get ErrBatchTooLarge instead
-// of a 50MB allocation that's then rejected. The service layer is
-// responsible for dim-aware sub-batching above this.
+// Preserve the existing count/estimated-size rejection, then preflight exact
+// encoded sizes before building a capped NDJSON buffer. Over-cap input returns
+// ErrBatchTooLarge without sending any part of this batch.
 func (r *Repository) BatchSave(
 	ctx context.Context,
 	infos []*types.IndexInfo,
 	params map[string]any,
-) error {
+) (retErr error) {
 	if len(infos) == 0 {
 		return nil
+	}
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
+	started := time.Now()
+	trace := &requestTrace{}
+	observation := WriteObservation{Total: len(infos)}
+	defer func() {
+		if retErr != nil {
+			var be *BulkWriteError
+			if !errors.As(retErr, &be) {
+				be = bulkUnconfirmed(len(infos), trace.attempts.Load() > 0, retErr)
+				retErr = be
+			}
+			be.Result.Bytes = observation.Bytes
+			be.Result.Attempts = trace.attempts.Load()
+			be.Result.Duration = time.Since(started)
+			observation = be.Result
+		} else {
+			observation.Confirmed = len(infos)
+			observation.Attempts = trace.attempts.Load()
+			observation.Duration = time.Since(started)
+		}
+		if r.writeObserver != nil {
+			r.writeObserver(observation)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(infos) > maxBulkItems {
+		return ErrBatchTooLarge
+	}
+	ctx, release, admissionErr := admitWriteOperation(ctx, r.client)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer release()
+	for _, info := range infos {
+		if info == nil {
+			return ErrConfigInvalid
+		}
 	}
 	emb, dim, err := extractBatchEmbeddings(params, infos)
 	if err != nil {
@@ -99,129 +148,59 @@ func (r *Repository) BatchSave(
 			estimated, len(infos), dim, ErrBatchTooLarge,
 		)
 	}
-	if len(infos) > 1000 {
-		return fmt.Errorf("opensearch: bulk n=%d exceeds 1000-doc cap: %w",
-			len(infos), ErrBatchTooLarge)
-	}
 
 	// Route by dim: dim==0 means the entire batch is keyword-only
 	// (concurrentBatchSaveNoEmbedding path), use the dim-less index.
 	var alias string
 	if dim == 0 {
-		if err := r.ensureKeywordsIndex(ctx); err != nil {
-			return err
-		}
 		alias = r.keywordsIndex()
 	} else {
-		if err := r.ensureReady(ctx, dim); err != nil {
-			return err
-		}
 		alias = r.indexAlias(dim)
 	}
 
-	body, err := buildBulkBody(alias, infos, emb, params)
+	body, err := buildBulkBodyContext(ctx, alias, infos, emb, params)
+	if err != nil {
+		return err
+	}
+	observation.Bytes = len(body)
+	if dim == 0 {
+		err = r.ensureKeywordsIndex(ctx)
+	} else {
+		err = r.ensureReady(ctx, dim)
+	}
 	if err != nil {
 		return err
 	}
 	req := osapi.BulkReq{Body: bytes.NewReader(body)}
-	resp, err := r.client.Bulk(ctx, req)
+	resp, err := r.client.Bulk(context.WithValue(ctx, requestTraceKey{}, trace), req)
 	if err != nil {
+		// Non-runtime clients (legacy callers / old parser tests) cannot
+		// prove whether bytes were sent. Conservatively report unknown.
+		if _, managed := r.client.Client.Transport.(*runtimeTransport); !managed {
+			trace.attempts.Add(1)
+		}
 		return wrapTransport(err)
 	}
-	if resp != nil {
-		defer drainAndClose(resp.Inspect().Response.Body)
+	if resp == nil || resp.Inspect().Response == nil {
+		return bulkUnconfirmed(len(infos), true, ErrTransport)
 	}
+	defer drainAndClose(resp.Inspect().Response.Body)
 	// Cap response body at 64MB (bulks of 1000 items are ~1-2MB success,
 	// can balloon with full per-item errors).
-	return inspectBulkResponse(io.LimitReader(resp.Inspect().Response.Body, 64<<20))
+	ids := make([]string, len(infos))
+	for i, info := range infos {
+		ids[i] = info.ChunkID
+	}
+	return inspectBulkResponse(io.LimitReader(resp.Inspect().Response.Body, 64<<20), ids...)
 }
 
-// estimateBulkBodyBytes returns a rough NDJSON size in bytes. Slight
-// overestimate so the cap fires before real allocation. Per-item:
+// estimateBulkBodyBytes preserves the legacy rough NDJSON estimate. It can
+// underestimate long/escaped content and floats; buildBulkBodyContext supplies
+// the exact hard limit. Per-item estimate:
 //   - action header `{"index":{"_index":"...","_id":"..."}}\n` ≈ 100B
 //   - doc body: dim*5 (float ASCII) + ~700B metadata + content ≈ 1024B
 func estimateBulkBodyBytes(n, dim int) int {
 	return n * (100 + dim*5 + 1024)
-}
-
-// buildBulkBody constructs the NDJSON request body. emb[i] may be nil/
-// empty — toDoc handles the keyword-only case by omitting the
-// "embedding" field. chunk_enabled lookup also happens per-doc.
-func buildBulkBody(alias string, infos []*types.IndexInfo, emb [][]float32, params map[string]any) ([]byte, error) {
-	var buf bytes.Buffer
-	for i, info := range infos {
-		action := map[string]any{
-			"index": map[string]any{
-				"_index": alias,
-				"_id":    info.ChunkID,
-			},
-		}
-		actionJSON, err := json.Marshal(action)
-		if err != nil {
-			return nil, fmt.Errorf("opensearch: marshal bulk action %d: %w", i, err)
-		}
-		buf.Write(actionJSON)
-		buf.WriteByte('\n')
-
-		enabled := lookupChunkEnabled(params, info.ChunkID, info.IsEnabled)
-		docJSON, err := json.Marshal(toDoc(info, emb[i], enabled))
-		if err != nil {
-			return nil, fmt.Errorf("opensearch: marshal doc %d: %w", i, err)
-		}
-		buf.Write(docJSON)
-		buf.WriteByte('\n')
-	}
-	return buf.Bytes(), nil
-}
-
-// inspectBulkResponse parses OpenSearch bulk response, returns a typed
-// error if any item has a per-item .error. Surfaces up to 5 distinct
-// error messages + total count for operator diagnosis.
-//
-// Does NOT include det.Error.Reason in the wrapped public error
-// (Reason can contain document content fragments). Only ID + bounded
-// enum Type is included. Full per-item Reason goes to log.Debug.
-func inspectBulkResponse(body io.Reader) error {
-	var r struct {
-		Errors bool `json:"errors"`
-		Items  []map[string]struct {
-			ID     string `json:"_id"`
-			Status int    `json:"status"`
-			Error  *struct {
-				Type   string `json:"type"`
-				Reason string `json:"reason"`
-			} `json:"error,omitempty"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(body).Decode(&r); err != nil {
-		return fmt.Errorf("opensearch: parse bulk response: %w", ErrTransport)
-	}
-	if !r.Errors {
-		return nil
-	}
-	log := logger.GetLogger(context.Background())
-	var msgs []string
-	total := 0
-	for _, item := range r.Items {
-		for op, det := range item { // {"index": {...}}
-			if det.Error == nil {
-				continue
-			}
-			total++
-			// Full reason → debug log only (may contain doc content).
-			log.Debugf("[OpenSearch] bulk item err: op=%s id=%s type=%s reason=%s",
-				op, det.ID, det.Error.Type, det.Error.Reason)
-			if len(msgs) < 5 {
-				// Public message: ID (operator-meaningful) + Type (bounded enum).
-				msgs = append(msgs, fmt.Sprintf("[%s %s] %s", op, det.ID, det.Error.Type))
-			}
-		}
-	}
-	if total == 0 {
-		return nil // shouldn't happen if r.Errors=true, but defensive
-	}
-	return fmt.Errorf("opensearch: bulk partial failure (%d items failed, first 5: %s): %w",
-		total, strings.Join(msgs, "; "), ErrTransport)
 }
 
 // toDoc projects IndexInfo + embedding to the OpenSearch document
@@ -325,12 +304,8 @@ func extractBatchEmbeddings(params map[string]any, infos []*types.IndexInfo) ([]
 // ErrBatchTooLarge; the async task path that lifts the cap arrives in
 // a later change.
 //
-// Refresh policy: opensearch-go v4's typed Params.Refresh is *bool, so
-// the wire-level "wait_for" value documented in the OpenSearch REST
-// API is not directly expressible. Refresh:&true forces immediate
-// segment flush (read-your-writes guaranteed, but expensive at scale).
-// A follow-up can revisit via a custom raw request if telemetry shows
-// the cost is material at production batch frequencies.
+// Refresh policy: preserve the existing by-query boolean Refresh=true.
+// Bulk's string refresh parameter is a different API contract.
 func (r *Repository) DeleteByChunkIDList(
 	ctx context.Context, chunkIDs []string, dim int, _ string,
 ) error {
@@ -355,6 +330,8 @@ func (r *Repository) DeleteByKnowledgeIDList(
 func (r *Repository) deleteByList(
 	ctx context.Context, ids []string, dim int, field string,
 ) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	if len(ids) == 0 {
 		return nil
 	}
@@ -388,6 +365,9 @@ func (r *Repository) deleteByTerms(
 	if err != nil {
 		return fmt.Errorf("opensearch: marshal delete body: %w", err)
 	}
+	if err := r.refreshBeforeByQuery(ctx, index); err != nil {
+		return err
+	}
 	refresh := true
 	req := osapi.DocumentDeleteByQueryReq{
 		Indices: []string{index},
@@ -398,8 +378,9 @@ func (r *Repository) deleteByTerms(
 	if err != nil {
 		return wrapTransport(err)
 	}
-	if resp != nil {
-		drainAndClose(resp.Inspect().Response.Body)
+	if resp == nil {
+		return ErrTransport
 	}
-	return nil
+	defer drainAndClose(resp.Inspect().Response.Body)
+	return inspectDeleteByQueryResponse(resp.Inspect().Response.Body)
 }

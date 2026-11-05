@@ -37,7 +37,15 @@ func TestCopyIndices_EmptyMapping_NoOp(t *testing.T) {
 		t.Errorf("unexpected HTTP call: %s %s", r.Method, r.URL.Path)
 	})
 	defer ts.Close()
-	err := repo.CopyIndices(context.Background(), "kbSrc", map[string]string{}, map[string]string{}, "kbDst", 768, "manual")
+	err := repo.CopyIndices(
+		context.Background(),
+		"kbSrc",
+		map[string]string{},
+		map[string]string{},
+		"kbDst",
+		768,
+		"manual",
+	)
 	if err != nil {
 		t.Fatalf("want nil, got %v", err)
 	}
@@ -73,7 +81,7 @@ func TestCopyIndices_ScanThenBatchSave(t *testing.T) {
 			mu.Lock()
 			bulkBody = string(b)
 			mu.Unlock()
-			_, _ = w.Write([]byte(`{"errors":false,"items":[]}`))
+			_, _ = w.Write([]byte(`{"errors":false,"items":[{"index":{"_id":"tgtChunk","status":201}}]}`))
 		default:
 			_, _ = w.Write([]byte(`{}`))
 		}
@@ -83,10 +91,17 @@ func TestCopyIndices_ScanThenBatchSave(t *testing.T) {
 	spy := &spySink{}
 	repo.sink = spy
 
-	err := repo.CopyIndices(context.Background(), "kbSrc",
-		map[string]string{"srcKnow": "tgtKnow"}, // knowledge_id remap (sourceToTargetKBIDMap is keyed by knowledge_id, mirroring ES)
+	err := repo.CopyIndices(
+		context.Background(),
+		"kbSrc",
+		map[string]string{
+			"srcKnow": "tgtKnow",
+		}, // knowledge_id remap (sourceToTargetKBIDMap is keyed by knowledge_id, mirroring ES)
 		map[string]string{"srcChunk": "tgtChunk"},
-		"kbDst", 768, "manual")
+		"kbDst",
+		768,
+		"manual",
+	)
 	if err != nil {
 		t.Fatalf("CopyIndices: %v", err)
 	}

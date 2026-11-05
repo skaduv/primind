@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/primind/primind/internal/errors"
@@ -186,6 +187,7 @@ func (s *vectorStoreService) UpdateStore(ctx context.Context, store *types.Vecto
 //	the engine from their own caches until process restart. This method
 //	does not broadcast invalidation across the cluster.
 func (s *vectorStoreService) DeleteStore(ctx context.Context, tenantID uint64, id string) error {
+	var deleted types.VectorStore
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// tx inherits ctx from WithContext above; no need to re-attach.
 
@@ -215,6 +217,7 @@ func (s *vectorStoreService) DeleteStore(ctx context.Context, tenantID uint64, i
 		}
 
 		// 3. Soft-delete (gorm.DeletedAt fills automatically).
+		deleted = store
 		return tx.Delete(&store).Error
 	})
 	if err != nil {
@@ -226,7 +229,27 @@ func (s *vectorStoreService) DeleteStore(ctx context.Context, tenantID uint64, i
 	s.unregisterSafely(ctx, id)
 	logger.Infof(ctx, "Deleted vector store: tenant=%d, id=%s", tenantID,
 		secutils.SanitizeForLog(id))
+	// Backend data is intentionally kept (no cascading delete, so a mistaken
+	// store deletion cannot destroy indices); say what is left to clean up.
+	logger.Warnf(ctx, "[vectorstore.delete] %s", vectorStoreLeftoverHint(deleted))
 	return nil
+}
+
+// vectorStoreLeftoverHint names what a deleted store leaves in its backend.
+// For OpenSearch it gives the exact index prefix this store owns
+// (<index_name>_<first 12 chars of the store ID>_*), which never matches
+// another store's indices, so operators can remove it without a wildcard
+// over the whole cluster.
+func vectorStoreLeftoverHint(store types.VectorStore) string {
+	if store.EngineType == types.OpenSearchRetrieverEngineType && len(store.ID) >= 12 {
+		base := types.ResolveIndexName(&store.IndexConfig, "OPENSEARCH_INDEX", "primind")
+		return fmt.Sprintf("vector store %s deleted; its OpenSearch indices and aliases are NOT removed "+
+			"and must be cleaned up manually: indices matching %s_%s_* on %s",
+			secutils.SanitizeForLog(store.ID), strings.ToLower(base), strings.ToLower(store.ID[:12]),
+			secutils.SanitizeForLog(store.ConnectionConfig.Addr))
+	}
+	return fmt.Sprintf("vector store %s (%s) deleted; data already written to the backend is NOT removed "+
+		"and must be cleaned up manually", secutils.SanitizeForLog(store.ID), store.EngineType)
 }
 
 // unregisterSafely calls the registry's idempotent unregister with panic

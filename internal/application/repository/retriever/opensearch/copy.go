@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -18,6 +19,14 @@ import (
 // copyBatchSize is the pagination size for the source scan. Kept under the
 // BatchSave per-call cap so each copied page is a single bulk request.
 const copyBatchSize = 500
+
+// copyScanPageSize bounds a scan page so its response (vectors as JSON, up to
+// ~16 bytes per float32, plus a few KB of fields and text) stays within half
+// the client's response cap. 768 dims keeps the full 500; 4096 dims gives 120.
+func copyScanPageSize(dim int, respCap int64) int {
+	perDoc := int64(dim)*16 + 4096
+	return int(max(1, min(int64(copyBatchSize), respCap/2/perDoc)))
+}
 
 // copySourceDoc is the full _source read during CopyIndices — it includes the
 // embedding vector and is_recommended, which the retrieve-path hit struct
@@ -69,6 +78,8 @@ func (r *Repository) CopyIndices(
 	dimension int,
 	knowledgeType string,
 ) error {
+	ctx, cancel := operationContext(ctx, r.client)
+	defer cancel()
 	log := logger.GetLogger(ctx)
 	if len(sourceToTargetChunkIDMap) == 0 {
 		log.Warn("[OpenSearch] CopyIndices: empty chunk mapping, skipping")
@@ -82,13 +93,26 @@ func (r *Repository) CopyIndices(
 		return err
 	}
 	alias := r.indexAlias(dimension)
+	if err := r.refreshBeforeByQuery(ctx, alias); err != nil {
+		return err
+	}
 
 	var total int64
-	for from := 0; ; from += copyBatchSize {
-		docs, err := r.copyScanBatch(ctx, alias, sourceKnowledgeBaseID, from, copyBatchSize)
+	page := copyScanPageSize(dimension, responseCap(r.client))
+	for from := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		docs, err := r.copyScanBatch(ctx, alias, sourceKnowledgeBaseID, from, page)
+		if errors.Is(err, ErrResponseTooLarge) && page > 1 {
+			// Unusually long chunk text: retry the same offset with a smaller page.
+			page /= 2
+			continue
+		}
 		if err != nil {
 			return err
 		}
+		from += len(docs)
 		if len(docs) == 0 {
 			break
 		}
@@ -133,12 +157,20 @@ func (r *Repository) CopyIndices(
 				"embedding":     embMap,
 				"chunk_enabled": enabledMap,
 			}
-			if err := r.BatchSave(ctx, infos, params); err != nil {
-				return fmt.Errorf("opensearch: CopyIndices batch save: %w", err)
+			// A scan page can exceed one bulk request (e.g. 500 × 4096-dim
+			// vectors > 10MB), so write it in size-bounded groups.
+			groups, err := splitForBulk(alias, infos, embMap)
+			if err != nil {
+				return fmt.Errorf("opensearch: CopyIndices split: %w", err)
 			}
-			total += int64(len(infos))
+			for _, group := range groups {
+				if err := r.BatchSave(ctx, group, params); err != nil {
+					return fmt.Errorf("opensearch: CopyIndices batch save after %d docs copied: %w", total, err)
+				}
+				total += int64(len(group))
+			}
 		}
-		if len(docs) < copyBatchSize {
+		if len(docs) < page {
 			break
 		}
 	}

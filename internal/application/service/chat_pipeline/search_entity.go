@@ -48,10 +48,28 @@ func (p *PluginSearchEntity) OnEvent(ctx context.Context,
 		return next()
 	}
 
+	// Only KBs among the permission-checked search targets may be searched:
+	// EntityKBIDs / EntityKnowledge derive from the request's raw IDs.
+	authorized := make(map[string]bool, len(chatManage.SearchTargets))
+	for _, target := range chatManage.SearchTargets {
+		if target != nil && target.KnowledgeBaseID != "" {
+			authorized[target.KnowledgeBaseID] = true
+		}
+	}
 	// Use EntityKBIDs (knowledge bases with ExtractConfig enabled)
-	knowledgeBaseIDs := chatManage.EntityKBIDs
+	var knowledgeBaseIDs []string
+	for _, id := range chatManage.EntityKBIDs {
+		if authorized[id] {
+			knowledgeBaseIDs = append(knowledgeBaseIDs, id)
+		}
+	}
 	// Use EntityKnowledge (KnowledgeID -> KnowledgeBaseID mapping for graph-enabled files)
-	entityKnowledge := chatManage.EntityKnowledge
+	entityKnowledge := make(map[string]string, len(chatManage.EntityKnowledge))
+	for knowledgeID, kbID := range chatManage.EntityKnowledge {
+		if authorized[kbID] {
+			entityKnowledge[knowledgeID] = kbID
+		}
+	}
 
 	if len(knowledgeBaseIDs) == 0 && len(entityKnowledge) == 0 {
 		logger.Warnf(ctx, "No knowledge base IDs or knowledge IDs with ExtractConfig enabled for entity search")
