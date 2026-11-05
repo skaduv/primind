@@ -29,8 +29,8 @@
 | NG-03-AC04 取消/过期不污染新图 | PASS | ecfe7cd, 62c4a00 | 发现并修复“抽图期间被重解析取代仍写图” |
 | NG-03-AC05 失败可定位/重试有界 | PASS | 84d5f05, 62c4a00, 本次提交 | graphd 运行中暂停约 25s 实测：删除时写图失败明确报错，asynq 约 50s 后重试成功清理；恢复后首次图检索即成功，无需重启应用；应用清理关闭 Nebula 连接池（graphd 会话 10→14→10） |
 | NG-03-AC06 Agent/共享/移动路径 | PASS（真实） | 5e65515, df2c9fa, 621f39c, 本次提交 | 同 store 移动、知识库复制修复后真实验证通过；Agent 真实图检索通过（模型汇总时漏掉一条已返回的关系，见下）。仅本地单测覆盖：组织共享；未测：跨 store 移动（reparse 模式，走重解析链路） |
-| NG-04-AC01 双后端共同契约 | PARTIAL | 84d5f05, 5c85053 | nebulagraph PASS；Neo4j BLOCKED（本机无 Neo4j，未覆盖） |
-| NG-04-AC02 旧配置/显式切换 | PASS（disabled↔nebulagraph） | 5c85053 | Neo4j 切换未覆盖 |
+| NG-04-AC01 双后端共同契约 | PASS（nebulagraph 与 neo4j） | 84d5f05, 5c85053, 工作区未提交 | 同一套 Q1–Q10/S1/R1/C1/D1/D2 夹具在两个后端都通过；Neo4j 2026.10.1（APOC 2026.10.1）+ 驱动 v6.0.0 |
+| NG-04-AC02 旧配置/显式切换 | PASS（neo4j、nebulagraph、disabled 三者） | 5c85053, 工作区未提交 | 真实启动矩阵含 Neo4j：旧 `NEO4J_ENABLE=true`、显式 `GRAPH_BACKEND=neo4j`、两种冲突配置均正确，系统信息引擎名正确，见 NG-E |
 | NG-04-AC03 切回覆盖说明 | PASS | 5c85053 | — |
 | NG-04-AC04 交付演练前置 | NOT_RUN | — | 归交付阶段 |
 | NG-04-AC05 Wiki/Agent/无 mock 冒充 | PASS | 5c85053 | — |
@@ -160,8 +160,8 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 
 | AC | 状态 | 验证方式 | 结果 |
 | --- | --- | --- | --- |
-| AC01 共同业务契约 | nebulagraph PASS；Neo4j **BLOCKED（未覆盖）** | NG-B 真实契约测试（Q1–Q10/S1/R1/C1/D1/D2） | 本机未部署 Neo4j，按约定不补；Neo4j 端契约回归未覆盖 |
-| AC02 旧配置与显式切换 | PASS（disabled/nebulagraph） | 同一库 `primind_ng` 先以 `GRAPH_BACKEND=disabled` 启动，再切回 `nebulagraph`；单测矩阵含旧 `NEO4J_ENABLE` 全部组合 | disabled：不建 Neo4j 驱动、不连 Nebula，`graph_database_engine=Not Enabled`，问答日志 `skipping extract entity, knowledge graph is disabled`、`entity_results=0`，文本链路照常回答。切回 nebulagraph：连接已有 Space（不重建 Schema），`graph_database_engine=NebulaGraph`，同题图检索 `2 nodes, 1 relations`、`entity_results=2`。状态字段不冒充另一后端 |
+| AC01 共同业务契约 | PASS（nebulagraph 与 neo4j） | Nebula：NG-B 真实契约测试。Neo4j：新增 `TestNeo4jRealContract`（`retriever/nebula/contract_neo4j_integration_test.go`，同一套夹具与黄金集，经正式三方法；需 `PRIMIND_NEO4J_TEST_URI/_USER/_PASSWORD`，密码只在命令里注入） | 驱动：neo4j-go-driver v6.0.0 连接认证 Neo4j/2026.10.1 成功（Bolt 6.0）。首次因 neo4j-local 未装 APOC 阻塞（写入/删除依赖 apoc.merge.*、apoc.coll.union、apoc.periodic.iterate）；用户同意后启用 APOC 2026.10.1 重建容器。重跑：基线 9 实体/8 关系，Q1–Q10 结果数与黄金集一致（如 Q3 4 实体/5 关系，Q5/Q6/Q10 为空），Q7/Q8 无越界 chunk，S1、R1 幂等、C1 两个独立客户端并发追加来源、D1 重复删除、D2 全删均通过；测后 Neo4j 总节点 0 |
+| AC02 旧配置与显式切换 | PASS（neo4j / nebulagraph / disabled） | 本机连续 4 次真实启动（Neo4j 密码只在启动命令中经命令替换注入，日志中出现 0 次）；disabled 两种组合见前 | `GRAPH_BACKEND=`(空)+`NEO4J_ENABLE=true`：`backend=neo4j`，建立 Neo4j 驱动，`graph_database_engine=Neo4j`。显式 `GRAPH_BACKEND=neo4j`（未设旧开关）：同上，无告警。`GRAPH_BACKEND=neo4j`+`NEO4J_ENABLE=false`：告警 `overrides legacy NEO4J_ENABLE (which implies disabled)`，仍走 neo4j，引擎 `Neo4j`。`GRAPH_BACKEND=nebulagraph`+`NEO4J_ENABLE=true`：告警 `which implies neo4j`，不建 Neo4j 驱动，连接 Nebula，引擎 `NebulaGraph`。三者之间切换只需改配置重启，状态字段不冒充另一后端 |
 | AC03 切回覆盖说明 | PASS（说明） | — | 无双写、无迁移：选 disabled 期间新增/修改/删除/重解析/移动的文档不会写入或清理 Nebula，旧图数据原样保留；切回 nebulagraph 后，期间删除的文档可能留下已失效来源（问答侧由 chunk/文档存在性过滤，不进入上下文），期间新增的文档没有图数据，需重解析补图。从 Neo4j 切到 Nebula（或反向）同理不迁移，需对受影响 KB 重解析重建 |
 | AC04 交付演练前置 | NOT_RUN | — | 切换时点、暂停写入范围、补图/对账步骤归交付阶段 |
 | AC05 Wiki/Agent | PASS（单测） | NG-C 已跑的 Agent 图工具、Wiki 相关单测 | 实体图改造未影响 Wiki；Agent 仍注入同一图仓库 |
@@ -203,3 +203,12 @@ go test -count=1 -ldflags="-extldflags=-static" ./internal/application/repositor
 - 结果：Agent 3 轮调用 `query_knowledge_graph`（参数 `knowledge_base_ids=[37677598…]`、`query="常州驰远电气 产品 零部件 供应商"`），`execute_done success=true`。工具返回内容来自 Nebula，包含 常州驰远电气-供应-伺服电机/青鸾分拣机，以及 宁海动力-供应-青鸾分拣机。
 - 回答：“常州驰远电气为青鸾分拣机供应伺服电机（销售代表孙一帆）”，引用副本 KB 下的 chunk `6a6d7f31…`，正确。但称“未显示其他供应商”——工具结果里已有 宁海动力，模型汇总时漏掉。属于模型推理问题，图检索与工具链路本身正确。
 - 观察：Agent 只要启用 `search_knowledge` 就强制要求重排模型；本机环境因重排不可达，无法测“文本 + 图”混合的 Agent。
+
+### Neo4j 后端应用级真实链路（2026-11-05）
+
+- 启动：`GRAPH_BACKEND=neo4j`，`NEO4J_URI=bolt://127.0.0.1:7687`、`NEO4J_USERNAME=neo4j`，`NEO4J_PASSWORD` 只在启动命令里用命令替换注入（日志中出现 0 次）。日志 `backend=neo4j`，`/system/info` 为 `Neo4j`。
+- 抽图写入：新建开启抽图的 KB `a1e28b29…`，上传 qingluan-memo.md（1 chunk）与 key.md（2 chunk），3 个图任务全部完成；Neo4j 中该 KB 标签下 19 节点、8 关系（qingluan 9/6，key.md 10/2）。
+- 问答：租户 A 问“青鸾分拣机的伺服电机由哪家公司供应，销售代表是谁？”：`entity search result count: 4 nodes, 3 relations`、`entity_results=1`，回答“常州驰远电气，销售代表孙一帆”，引用 chunk `e86d8200…`，references 4 条。
+- 跨租户：租户 B 传该 KB ID 问同一问题，references 0，回答“资料中未提及”，A 的内容出现 0 次。
+- 删除：删除 qingluan 后该文档 Neo4j 节点/关系 0/0，key.md 仍为 10/2；删除 KB 后该 KB 标签下 0/0，Neo4j 全库节点 0（测试数据全部清理）。
+- 未测：Neo4j 后端上的移动、复制（Nebula 已真实验证；两者都走 `enqueueTransferredGraphExtract` 后端无关的投递逻辑）。
