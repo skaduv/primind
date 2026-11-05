@@ -140,7 +140,7 @@
 
         <!-- Swiper Carousel -->
         <div class="carousel-container">
-          <swiper :modules="modules" :slides-per-view="1" :loop="true" :autoplay="{
+          <swiper :key="`carousel-${locale}`" :modules="modules" :slides-per-view="1" :loop="true" :autoplay="{
             delay: 4000,
             disableOnInteraction: false,
           }" :effect="'fade'" :fade-effect="{ crossFade: true }"
@@ -347,11 +347,16 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 
-// Import screenshot images
-import screenshot1 from '@/assets/img/screenshot-1.svg'
-import screenshot2 from '@/assets/img/screenshot-2.svg'
-import screenshot3 from '@/assets/img/screenshot-3.svg'
-import screenshot4 from '@/assets/img/screenshot-4.svg'
+// Import screenshot images. `?url` keeps the asset as a URL instead of
+// inlining it, so both language variants stay separate files.
+import screenshot1 from '@/assets/img/screenshot-1.svg?url'
+import screenshot2 from '@/assets/img/screenshot-2.svg?url'
+import screenshot3 from '@/assets/img/screenshot-3.svg?url'
+import screenshot4 from '@/assets/img/screenshot-4.svg?url'
+import screenshot1En from '@/assets/img/screenshot-1-en.svg?url'
+import screenshot2En from '@/assets/img/screenshot-2-en.svg?url'
+import screenshot3En from '@/assets/img/screenshot-3-en.svg?url'
+import screenshot4En from '@/assets/img/screenshot-4-en.svg?url'
 
 const router = useRouter()
 const route = useRoute()
@@ -362,29 +367,42 @@ const { formatRole, roleIcon } = useRoleLabel()
 // Swiper modules
 const modules = [Autoplay, EffectFade, Pagination]
 
-// Carousel slides data
-const slides = [
+// Carousel artwork is baked into the SVG, so it is picked by locale rather
+// than translated at runtime: Chinese locales use screenshot-N.svg, the
+// rest use screenshot-N-en.svg.
+const SCREENSHOTS = {
+  agenticRag: { zh: screenshot4, en: screenshot4En },
+  hybridSearch: { zh: screenshot2, en: screenshot2En },
+  wiki: { zh: screenshot3, en: screenshot3En },
+  smartDocRetrieval: { zh: screenshot1, en: screenshot1En }
+}
+
+const useChineseArtwork = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
+
+// Carousel slides data. Computed so that switching language swaps both the
+// titles and the artwork without a reload.
+const slides = computed(() => [
   {
-    image: screenshot4,
+    image: useChineseArtwork.value ? SCREENSHOTS.agenticRag.zh : SCREENSHOTS.agenticRag.en,
     title: t('platform.carousel.agenticRagTitle'),
     description: t('platform.carousel.agenticRagDesc')
   },
   {
-    image: screenshot2,
+    image: useChineseArtwork.value ? SCREENSHOTS.hybridSearch.zh : SCREENSHOTS.hybridSearch.en,
     title: t('platform.carousel.hybridSearchTitle'),
     description: t('platform.carousel.hybridSearchDesc')
   },
   {
-    image: screenshot3,
+    image: useChineseArtwork.value ? SCREENSHOTS.wiki.zh : SCREENSHOTS.wiki.en,
     title: t('platform.carousel.wikiTitle'),
     description: t('platform.carousel.wikiDesc')
   },
   {
-    image: screenshot1,
+    image: useChineseArtwork.value ? SCREENSHOTS.smartDocRetrieval.zh : SCREENSHOTS.smartDocRetrieval.en,
     title: t('platform.carousel.smartDocRetrievalTitle'),
     description: t('platform.carousel.smartDocRetrievalDesc')
   }
-]
+])
 
 // Form references
 const formRef = ref()
