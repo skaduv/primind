@@ -31,24 +31,91 @@ import (
 	secutils "github.com/primind/primind/internal/utils"
 )
 
-const f01Run = "2026-10-29-functional-01"
-const f01Output = "outputs/phase2-ai/OS-02/" + f01Run
+const (
+	f01Run    = "2026-10-29-functional-01"
+	f01Output = "outputs/phase2-ai/OS-02/" + f01Run
+)
 
 // Fixed synthetic technical objects, never application DB IDs or model output.
 func f01Plan(now time.Time) (Config, []Document) {
-	s := Scope{StoreID: "f01a20261029store0001", Index: types.IndexConfig{IndexName: "primind_os02_f01_20261029", NumberOfShards: 1, NumberOfReplicas: 1, KNNEngine: "lucene", HNSWM: 16, HNSWEFConstruction: 100, HNSWEFSearch: 100}, Dimension: 4,
+	s := Scope{
+		StoreID: "f01a20261029store0001", Index: types.IndexConfig{IndexName: "primind_os02_f01_20261029", NumberOfShards: 1, NumberOfReplicas: 1, KNNEngine: "lucene", HNSWM: 16, HNSWEFConstruction: 100, HNSWEFSearch: 100}, Dimension: 4,
 		Alias: "primind_os02_f01_20261029_f01a20261029_4", Physical: "primind_os02_f01_20261029_f01a20261029_4_v1",
-		KnowledgeBaseID: "f01-synthetic-kb", KnowledgeID: "f01-synthetic-doc", ChunkID: "f01-chunk-a", RefreshInterval: "1s"}
-	c := Config{Mode: "replay", RunID: f01Run, AuthorizationRef: "coordinator-F01-user-authorized-synthetic-only", Expires: now.Add(10 * time.Minute),
+		KnowledgeBaseID: "f01-synthetic-kb", KnowledgeID: "f01-synthetic-doc", ChunkID: "f01-chunk-a", RefreshInterval: "1s",
+	}
+	c := Config{
+		Mode: "replay", RunID: f01Run, AuthorizationRef: "coordinator-F01-user-authorized-synthetic-only", Expires: now.Add(10 * time.Minute),
 		Endpoint: "https://127.0.0.1:19200", ClusterUUID: "OGhRMiAtR3SAitp5LFtWKw", Version: "2.19.7", UsernameEnv: "OS02_SECRET_F01_USER", PasswordEnv: "OS02_SECRET_F01_PASSWORD",
-		QuiescentScope: true, MaxSeconds: 300, VisibilitySeconds: 20, PollMilliseconds: 500, PageSize: 2, MaxRecords: 20, TotalRequests: 2, WriteRequests: 1, Waiters: 2, Replay: &s}
+		QuiescentScope: true, MaxSeconds: 300, VisibilitySeconds: 20, PollMilliseconds: 500, PageSize: 2, MaxRecords: 20, TotalRequests: 2, WriteRequests: 1, Waiters: 2, Replay: &s,
+	}
 	docs := []Document{
-		{ChunkID: s.ChunkID, SourceID: "f01-source-a", SourceType: 0, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "f01-tag-a", Content: "Synthetic only F01ANCHOR seal replacement A", Enabled: true, Recommended: true, Embedding: []float32{1, 0, 0, 0}},
-		{ChunkID: "f01-chunk-b", SourceID: "f01-source-b", SourceType: 1, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "f01-tag-b", Content: "Synthetic only F01BETA bearing replacement B", Enabled: true, Embedding: []float32{0, 1, 0, 0}},
-		{ChunkID: "f01-chunk-disabled", SourceID: "f01-source-disabled", SourceType: 2, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "f01-tag-disabled", Content: "Synthetic only F01ANCHOR disabled control", Enabled: false, Recommended: true, Embedding: []float32{1, 0, 0, 0}},
-		{ChunkID: "f01-chunk-other-kb", SourceID: "f01-source-other-kb", SourceType: 0, KnowledgeID: "f01-other-doc", KnowledgeBaseID: "f01-other-kb", TagID: "f01-tag-other", Content: "Synthetic only F01ANCHOR other scope control", Enabled: true, Embedding: []float32{1, 0, 0, 0}},
-		{ChunkID: "f01-chunk-survivor", SourceID: "f01-source-survivor", SourceType: 0, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "f01-tag-survivor", Content: "Synthetic only F01SURVIVOR retained before index cleanup", Enabled: true, Embedding: []float32{0, 0, 1, 0}},
-		{ChunkID: "f01-chunk-keyword", SourceID: "f01-source-keyword", SourceType: 0, KnowledgeID: s.KnowledgeID, KnowledgeBaseID: s.KnowledgeBaseID, TagID: "f01-tag-keyword", Content: "Synthetic only F01KEYWORD no vector", Enabled: true},
+		{
+			ChunkID:         s.ChunkID,
+			SourceID:        "f01-source-a",
+			SourceType:      0,
+			KnowledgeID:     s.KnowledgeID,
+			KnowledgeBaseID: s.KnowledgeBaseID,
+			TagID:           "f01-tag-a",
+			Content:         "Synthetic only F01ANCHOR seal replacement A",
+			Enabled:         true,
+			Recommended:     true,
+			Embedding:       []float32{1, 0, 0, 0},
+		},
+		{
+			ChunkID:         "f01-chunk-b",
+			SourceID:        "f01-source-b",
+			SourceType:      1,
+			KnowledgeID:     s.KnowledgeID,
+			KnowledgeBaseID: s.KnowledgeBaseID,
+			TagID:           "f01-tag-b",
+			Content:         "Synthetic only F01BETA bearing replacement B",
+			Enabled:         true,
+			Embedding:       []float32{0, 1, 0, 0},
+		},
+		{
+			ChunkID:         "f01-chunk-disabled",
+			SourceID:        "f01-source-disabled",
+			SourceType:      2,
+			KnowledgeID:     s.KnowledgeID,
+			KnowledgeBaseID: s.KnowledgeBaseID,
+			TagID:           "f01-tag-disabled",
+			Content:         "Synthetic only F01ANCHOR disabled control",
+			Enabled:         false,
+			Recommended:     true,
+			Embedding:       []float32{1, 0, 0, 0},
+		},
+		{
+			ChunkID:         "f01-chunk-other-kb",
+			SourceID:        "f01-source-other-kb",
+			SourceType:      0,
+			KnowledgeID:     "f01-other-doc",
+			KnowledgeBaseID: "f01-other-kb",
+			TagID:           "f01-tag-other",
+			Content:         "Synthetic only F01ANCHOR other scope control",
+			Enabled:         true,
+			Embedding:       []float32{1, 0, 0, 0},
+		},
+		{
+			ChunkID:         "f01-chunk-survivor",
+			SourceID:        "f01-source-survivor",
+			SourceType:      0,
+			KnowledgeID:     s.KnowledgeID,
+			KnowledgeBaseID: s.KnowledgeBaseID,
+			TagID:           "f01-tag-survivor",
+			Content:         "Synthetic only F01SURVIVOR retained before index cleanup",
+			Enabled:         true,
+			Embedding:       []float32{0, 0, 1, 0},
+		},
+		{
+			ChunkID:         "f01-chunk-keyword",
+			SourceID:        "f01-source-keyword",
+			SourceType:      0,
+			KnowledgeID:     s.KnowledgeID,
+			KnowledgeBaseID: s.KnowledgeBaseID,
+			TagID:           "f01-tag-keyword",
+			Content:         "Synthetic only F01KEYWORD no vector",
+			Enabled:         true,
+		},
 	}
 	return c, docs
 }
@@ -100,12 +167,15 @@ func (j *f01Journal) add(action string, value any) {
 func TestRealFunctionalF01(t *testing.T) {
 	f01Functional(t, "F01_SYNTHETIC_ONLY", "functional-events.jsonl")
 }
+
 func TestRealF01ReadOnlyReserved(t *testing.T) {
 	f01Functional(t, "F01_READ_ONLY_RESERVED", "readonly-formal-events.jsonl")
 }
+
 func TestRealF01Resume(t *testing.T) {
 	f01Functional(t, "F01_RESUME_VERIFIED", "resume-events.jsonl")
 }
+
 func f01Functional(t *testing.T, mode, evidenceName string) {
 	if os.Getenv("OS02_F01_OPT_IN") != mode {
 		t.Skip("NOT_RUN: F01 explicit opt-in absent")
@@ -130,7 +200,7 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 		t.Fatal("unexpected repository root")
 	}
 	path := filepath.Join(root, filepath.FromSlash(f01Output), evidenceName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal("evidence must be new; no automatic rerun")
 	}
@@ -141,7 +211,15 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 	fail := func(stage string, e error) {
 		t.Helper()
 		if e != nil {
-			j.add("failure", map[string]any{"stage": stage, "error": e.Error(), "further_writes": "STOPPED", "resources": "preserved; reconcile before any retry"})
+			j.add(
+				"failure",
+				map[string]any{
+					"stage":          stage,
+					"error":          e.Error(),
+					"further_writes": "STOPPED",
+					"resources":      "preserved; reconcile before any retry",
+				},
+			)
 			t.Fatalf("%s: %v", stage, e)
 		}
 	}
@@ -172,12 +250,28 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 			}
 			lines := bytes.Split(bytes.TrimSpace(prior), []byte("\n"))
 			fail("prior final receipt", json.Unmarshal(lines[len(lines)-1], &last))
-			if last.Action != "final" || last.Evidence.Status != "PASS_READONLY_FULL_MANIFEST" || last.Evidence.Commit != sha {
-				fail("prior fixed readonly run", errors.New("same fixed candidate must first verify owned objects without writing"))
+			if last.Action != "final" || last.Evidence.Status != "PASS_READONLY_FULL_MANIFEST" ||
+				last.Evidence.Commit != sha {
+				fail(
+					"prior fixed readonly run",
+					errors.New("same fixed candidate must first verify owned objects without writing"),
+				)
 			}
 		}
 	}
-	j.add("frozen_plan", map[string]any{"commit": sha, "config": c, "synthetic": true, "documents": manifest(f01Map(docs)), "unique_chunks": len(docs), "maximum_inflight": 2, "normal_refresh": true, "application_and_models": "NOT_RUN"})
+	j.add(
+		"frozen_plan",
+		map[string]any{
+			"commit":                 sha,
+			"config":                 c,
+			"synthetic":              true,
+			"documents":              manifest(f01Map(docs)),
+			"unique_chunks":          len(docs),
+			"maximum_inflight":       2,
+			"normal_refresh":         true,
+			"application_and_models": "NOT_RUN",
+		},
+	)
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "OS02_REAL_OPT_IN", "OS02_REAL_CONFIG"} {
 		t.Setenv(name, "")
 	}
@@ -192,22 +286,37 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 	cert, err := x509.ParseCertificate(block.Bytes)
 	fail("CA parse", err)
 	caHash := sha256.Sum256(cert.Raw)
-	j.add("ca_fingerprint", map[string]any{"sha256_der": hex.EncodeToString(caHash[:]), "not_before": cert.NotBefore, "not_after": cert.NotAfter, "trust_action": "read only; use existing Windows system roots"})
+	j.add(
+		"ca_fingerprint",
+		map[string]any{
+			"sha256_der":   hex.EncodeToString(caHash[:]),
+			"not_before":   cert.NotBefore,
+			"not_after":    cert.NotAfter,
+			"trust_action": "read only; use existing Windows system roots",
+		},
+	)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	stats := &connectionStats{}
 	ctx = stats.context(ctx)
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{TLSHandshakeDone: func(cs tls.ConnectionState, e error) {
-		value := map[string]any{"verified_chains": len(cs.VerifiedChains), "tls_version": cs.Version, "success": e == nil}
-		if e != nil {
-			value["error"] = e.Error()
-		}
-		if len(cs.PeerCertificates) > 0 {
-			h := sha256.Sum256(cs.PeerCertificates[0].Raw)
-			value["leaf_sha256_der"] = hex.EncodeToString(h[:])
-		}
-		j.add("formal_go_tls", value)
-	}})
+	ctx = httptrace.WithClientTrace(
+		ctx,
+		&httptrace.ClientTrace{TLSHandshakeDone: func(cs tls.ConnectionState, e error) {
+			value := map[string]any{
+				"verified_chains": len(cs.VerifiedChains),
+				"tls_version":     cs.Version,
+				"success":         e == nil,
+			}
+			if e != nil {
+				value["error"] = e.Error()
+			}
+			if len(cs.PeerCertificates) > 0 {
+				h := sha256.Sum256(cs.PeerCertificates[0].Raw)
+				value["leaf_sha256_der"] = hex.EncodeToString(h[:])
+			}
+			j.add("formal_go_tls", value)
+		}},
+	)
 	budget, err := adapter.NewRequestBudget(2, 1, 2)
 	fail("budget", err)
 	defer func() { j.add("runtime", map[string]any{"budget": budget.Snapshot(), "connections": stats.snapshot()}) }()
@@ -232,7 +341,8 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 	_, err = r.json(ctx, "GET", "/", nil, &info)
 	fail("identity read", err)
 	j.add("cluster_identity", info)
-	if info.ClusterUUID != c.ClusterUUID || info.ClusterName != "primind-os-dev" || info.Version.Number != c.Version || info.Version.Distribution != "opensearch" {
+	if info.ClusterUUID != c.ClusterUUID || info.ClusterName != "primind-os-dev" || info.Version.Number != c.Version ||
+		info.Version.Distribution != "opensearch" {
 		fail("identity", errors.New("cluster identity mismatch"))
 	}
 	var nodes struct {
@@ -249,7 +359,13 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 			} `json:"plugins"`
 		} `json:"nodes"`
 	}
-	_, err = r.json(ctx, "GET", "/_nodes/plugins?filter_path=_nodes,nodes.*.version,nodes.*.plugins.name,nodes.*.plugins.version", nil, &nodes)
+	_, err = r.json(
+		ctx,
+		"GET",
+		"/_nodes/plugins?filter_path=_nodes,nodes.*.version,nodes.*.plugins.name,nodes.*.plugins.version",
+		nil,
+		&nodes,
+	)
 	fail("nodes/plugins", err)
 	j.add("nodes_plugins", nodes)
 	if nodes.Summary.Total != 2 || nodes.Summary.Successful != 2 || nodes.Summary.Failed != 0 || len(nodes.Nodes) != 2 {
@@ -278,7 +394,13 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 			}
 		}
 	}
-	repo, err := adapter.NewRepository(ctx, client, s.StoreID, &s.Index, adapter.WithWriteObserver(func(o adapter.WriteObservation) { j.add("bulk_observation", o) }))
+	repo, err := adapter.NewRepository(
+		ctx,
+		client,
+		s.StoreID,
+		&s.Index,
+		adapter.WithWriteObserver(func(o adapter.WriteObservation) { j.add("bulk_observation", o) }),
+	)
 	fail("formal repository", err)
 	sess := &session{reader: r, repo: repo}
 	if initial {
@@ -313,7 +435,8 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 		}
 		if !initial {
 			expected, ok := recovery.Objects[target.Physical]
-			if !ok || expected.UUID != u || expected.CreationDate != settings[target.Physical].Settings["index.creation_date"] {
+			if !ok || expected.UUID != u ||
+				expected.CreationDate != settings[target.Physical].Settings["index.creation_date"] {
 				fail("preserved object identity", errors.New("UUID/creation date changed; no writes permitted"))
 			}
 		}
@@ -339,11 +462,29 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 		if got.hash() != d.hash() {
 			fail("per-item full fields", errors.New("mismatch"))
 		}
-		j.add("item_verified", map[string]any{"id": d.ChunkID, "physical": target.Physical, "revision": rev, "source_hash": got.hash(), "vector_hash": got.vectorHash(), "dimension": len(got.Embedding)})
+		j.add(
+			"item_verified",
+			map[string]any{
+				"id":          d.ChunkID,
+				"physical":    target.Physical,
+				"revision":    rev,
+				"source_hash": got.hash(),
+				"vector_hash": got.vectorHash(),
+				"dimension":   len(got.Embedding),
+			},
+		)
 	}
 	fail("normal-refresh vector visibility", f01Visible(ctx, r, s, f01Map(docs[:5])))
 	fail("normal-refresh keyword visibility", f01Visible(ctx, r, ks, f01Map(docs[5:])))
-	j.add("full_reconciliation", map[string]any{"vector": manifest(f01Map(docs[:5])), "keyword": manifest(f01Map(docs[5:])), "status": "PASS", "forced_refresh": false})
+	j.add(
+		"full_reconciliation",
+		map[string]any{
+			"vector":         manifest(f01Map(docs[:5])),
+			"keyword":        manifest(f01Map(docs[5:])),
+			"status":         "PASS",
+			"forced_refresh": false,
+		},
+	)
 	if mode == "F01_READ_ONLY_RESERVED" {
 		state = "PASS_READONLY_FULL_MANIFEST"
 		return
@@ -353,14 +494,25 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 	fail("replay baseline", err)
 	before, observed, err := sess.visibleRevision(ctx, s, d, previous)
 	fail("replay baseline visibility", err)
-	j.add("synthetic_replay_baseline", map[string]any{"revision": previous, "search_revision": observed, "records": manifest(before)})
+	j.add(
+		"synthetic_replay_baseline",
+		map[string]any{"revision": previous, "search_revision": observed, "records": manifest(before)},
+	)
 	for _, action := range []string{"Save-1", "Save-2", "BatchSave-1", "BatchSave-2"} {
 		step, next, e := replayStep(ctx, sess, s, d, previous, action)
 		j.add("synthetic_replay_step", step)
 		fail(action, e)
 		previous = next
 	}
-	kw := types.RetrieveParams{RetrieverType: types.KeywordsRetrieverType, Query: "F01ANCHOR", KnowledgeBaseIDs: []string{s.KnowledgeBaseID}, KnowledgeIDs: []string{s.KnowledgeID}, TopK: 10, Threshold: 0, AdditionalParams: map[string]any{"dim": 4}}
+	kw := types.RetrieveParams{
+		RetrieverType:    types.KeywordsRetrieverType,
+		Query:            "F01ANCHOR",
+		KnowledgeBaseIDs: []string{s.KnowledgeBaseID},
+		KnowledgeIDs:     []string{s.KnowledgeID},
+		TopK:             10,
+		Threshold:        0,
+		AdditionalParams: map[string]any{"dim": 4},
+	}
 	vec := kw
 	vec.RetrieverType = types.VectorRetrieverType
 	vec.Embedding = []float32{1, 0, 0, 0}
@@ -373,8 +525,17 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 	}
 	// Actual existing composite/hybrid engine fan-out; no HTTP app, model or RRF emulation.
 	registry := engines.NewRetrieveEngineRegistry(nil, nil)
-	fail("in-memory registry", registry.Register(engines.NewKVHybridRetrieveEngine(repo, types.OpenSearchRetrieverEngineType)))
-	composite, err := engines.NewCompositeRetrieveEngine(registry, []types.RetrieverEngineParams{{RetrieverEngineType: types.OpenSearchRetrieverEngineType, RetrieverType: types.KeywordsRetrieverType}, {RetrieverEngineType: types.OpenSearchRetrieverEngineType, RetrieverType: types.VectorRetrieverType}})
+	fail(
+		"in-memory registry",
+		registry.Register(engines.NewKVHybridRetrieveEngine(repo, types.OpenSearchRetrieverEngineType)),
+	)
+	composite, err := engines.NewCompositeRetrieveEngine(
+		registry,
+		[]types.RetrieverEngineParams{
+			{RetrieverEngineType: types.OpenSearchRetrieverEngineType, RetrieverType: types.KeywordsRetrieverType},
+			{RetrieverEngineType: types.OpenSearchRetrieverEngineType, RetrieverType: types.VectorRetrieverType},
+		},
+	)
 	fail("composite", err)
 	got, err := composite.Retrieve(ctx, []types.RetrieveParams{kw, vec})
 	fail("existing composite two-mode call", err)
@@ -405,7 +566,17 @@ func f01Functional(t *testing.T, mode, evidenceName string) {
 		}
 		fail("deleted realtime absence", err)
 	}
-	j.add("limited_delete", map[string]any{"deleted_id": s.ChunkID, "realtime_status": status, "vector_survivors": manifest(f01Map(docs[1:5])), "keyword_survivors": manifest(f01Map(docs[5:])), "status": "PASS", "adapter_delete_refresh": "existing adapter uses refresh=true"})
+	j.add(
+		"limited_delete",
+		map[string]any{
+			"deleted_id":             s.ChunkID,
+			"realtime_status":        status,
+			"vector_survivors":       manifest(f01Map(docs[1:5])),
+			"keyword_survivors":      manifest(f01Map(docs[5:])),
+			"status":                 "PASS",
+			"adapter_delete_refresh": "existing adapter uses refresh=true",
+		},
+	)
 	// Cleanup only pre-registered, initially absent physical indices whose UUIDs still match.
 	for _, name := range []string{s.Physical, ks.Physical} {
 		var settings map[string]struct {
@@ -450,24 +621,39 @@ func f01Map(docs []Document) map[string]Document {
 	}
 	return out
 }
+
 func f01Visible(ctx context.Context, r reader, s Scope, want map[string]Document) error {
-	return adapter.WaitForVisibility(ctx, 20*time.Second, 500*time.Millisecond, func(check context.Context) (bool, error) {
-		got, err := r.scan(check, s, s.Physical, s.Dimension, false, false)
-		if err != nil {
-			return false, err
-		}
-		if len(got) != len(want) {
-			return false, nil
-		}
-		return true, reconcile(want, got)
-	})
+	return adapter.WaitForVisibility(
+		ctx,
+		20*time.Second,
+		500*time.Millisecond,
+		func(check context.Context) (bool, error) {
+			got, err := r.scan(check, s, s.Physical, s.Dimension, false, false)
+			if err != nil {
+				return false, err
+			}
+			if len(got) != len(want) {
+				return false, nil
+			}
+			return true, reconcile(want, got)
+		},
+	)
 }
+
 func f01QueryCheck(got []*types.RetrieveResult, mode types.RetrieverType, want Document) error {
-	if len(got) != 1 || got[0] == nil || got[0].Error != nil || got[0].RetrieverType != mode || got[0].RetrieverEngineType != types.OpenSearchRetrieverEngineType || len(got[0].Results) != 1 {
+	if len(got) != 1 || got[0] == nil || got[0].Error != nil || got[0].RetrieverType != mode ||
+		got[0].RetrieverEngineType != types.OpenSearchRetrieverEngineType ||
+		len(got[0].Results) != 1 {
 		return errors.New("query expected exactly one complete anchor hit")
 	}
 	h := got[0].Results[0]
-	if h == nil || h.ID != want.ChunkID || h.ChunkID != want.ChunkID || h.KnowledgeID != want.KnowledgeID || h.KnowledgeBaseID != want.KnowledgeBaseID || h.SourceID != want.SourceID || int(h.SourceType) != want.SourceType || h.TagID != want.TagID || h.Content != want.Content || !h.IsEnabled {
+	if h == nil || h.ID != want.ChunkID || h.ChunkID != want.ChunkID || h.KnowledgeID != want.KnowledgeID ||
+		h.KnowledgeBaseID != want.KnowledgeBaseID ||
+		h.SourceID != want.SourceID ||
+		int(h.SourceType) != want.SourceType ||
+		h.TagID != want.TagID ||
+		h.Content != want.Content ||
+		!h.IsEnabled {
 		return errors.New("query identity/content/filter mismatch")
 	}
 	return nil
@@ -479,7 +665,14 @@ func TestF01PlanEvidence(t *testing.T) {
 	names := []string{c.Replay.Alias, c.Replay.Physical, c.Replay.keywordIndex()}
 	sort.Strings(names)
 	t.Logf("run=%s unique_chunks=%d objects=%v", f01Run, len(docs), names)
-	t.Log(fmt.Sprintf("model_calls=0 app_calls=0 max_seconds=%d max_inflight=%d replicas=%d", c.MaxSeconds, c.TotalRequests, c.Replay.Index.NumberOfReplicas))
+	t.Log(
+		fmt.Sprintf(
+			"model_calls=0 app_calls=0 max_seconds=%d max_inflight=%d replicas=%d",
+			c.MaxSeconds,
+			c.TotalRequests,
+			c.Replay.Index.NumberOfReplicas,
+		),
+	)
 }
 
 // Actual redacted 2.19.7 responses contain arrays among unrelated defaults.
@@ -491,12 +684,17 @@ func TestF01RealSettingsResponse(t *testing.T) {
 		root = filepath.Dir(root)
 	}
 	dir := filepath.Join(root, filepath.FromSlash(f01Output))
+	if _, err := os.Stat(dir); err != nil {
+		t.Skipf("F01 evidence directory %s is not in this checkout (outputs/ evidence is kept out of the repo)", f01Output)
+	}
 	for _, tc := range []struct {
 		name                      string
 		keyword, corrupt, missing bool
 	}{
-		{name: "vector_actual_response"}, {name: "keyword_actual_response", keyword: true},
-		{name: "required_string_cannot_be_array", corrupt: true}, {name: "missing_required_setting", missing: true},
+		{name: "vector_actual_response"},
+		{name: "keyword_actual_response", keyword: true},
+		{name: "required_string_cannot_be_array", corrupt: true},
+		{name: "missing_required_setting", missing: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := *c.Replay
