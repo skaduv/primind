@@ -77,13 +77,17 @@ type fixtureExpected struct {
 	Checks         []fixtureCheck `json:"checks"`
 }
 
-const specialName = "泵\"Q\\X\n第二行"
-const specialType = "标记\"型\\X"
-const specialAttribute = "说明:\"引号\"\\路径\n结束"
+const (
+	specialName      = "泵\"Q\\X\n第二行"
+	specialType      = "标记\"型\\X"
+	specialAttribute = "说明:\"引号\"\\路径\n结束"
+)
 
-var a1 = types.NameSpace{KnowledgeBase: "kb-a", Knowledge: "doc-a1"}
-var a2 = types.NameSpace{KnowledgeBase: "kb-a", Knowledge: "doc-a2"}
-var b1 = types.NameSpace{KnowledgeBase: "kb-b", Knowledge: "doc-b1"}
+var (
+	a1 = types.NameSpace{KnowledgeBase: "kb-a", Knowledge: "doc-a1"}
+	a2 = types.NameSpace{KnowledgeBase: "kb-a", Knowledge: "doc-a2"}
+	b1 = types.NameSpace{KnowledgeBase: "kb-b", Knowledge: "doc-b1"}
+)
 
 func strictDecode(data []byte, target any) error {
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -158,6 +162,7 @@ func oracleState(nodes, relations []int, connected int) fixtureState {
 	}
 	return s
 }
+
 func baselineOracle() fixtureState {
 	return oracleState([]int{0, 1, 2, 3, 4, 5, 6, 7, 8}, []int{0, 1, 2, 3, 4, 5, 6, 7}, 8)
 }
@@ -167,7 +172,10 @@ func inputOracle() fixtureInput {
 	makeCall := func(id string, ns types.NameSpace, ni, ri []int) fixtureCall {
 		g := &types.GraphData{Node: []*types.GraphNode{}, Relation: []*types.GraphRelation{}}
 		for _, i := range ni {
-			g.Node = append(g.Node, &types.GraphNode{Name: n[i].Key.Name, Chunks: slices.Clone(n[i].Chunks), Attributes: slices.Clone(n[i].Attributes)})
+			g.Node = append(g.Node, &types.GraphNode{
+				Name: n[i].Key.Name, Chunks: slices.Clone(n[i].Chunks),
+				Attributes: slices.Clone(n[i].Attributes),
+			})
 		}
 		for _, i := range ri {
 			g.Relation = append(g.Relation, &types.GraphRelation{Node1: r[i].Node1, Node2: r[i].Node2, Type: r[i].Type})
@@ -183,7 +191,8 @@ func inputOracle() fixtureInput {
 	}
 	in.Cases[0].Graphs[0].Node[0].Chunks = []string{"c-a1-01"}
 	in.Cases[1].Graphs[0].Node[0].Chunks = []string{"c-a1-02"}
-	in.Supplemental = []fixtureCall{makeCall("A1-concurrent-05", a1, []int{0}, nil), makeCall("A1-concurrent-06", a1, []int{0}, nil)}
+	in.Supplemental = []fixtureCall{makeCall("A1-concurrent-05", a1, []int{0}, nil), makeCall("A1-concurrent-06", a1,
+		[]int{0}, nil)}
 	in.Supplemental[0].Graphs[0].Node[0].Chunks = []string{"c-a1-05"}
 	in.Supplemental[1].Graphs[0].Node[0].Chunks = []string{"c-a1-06"}
 	return in
@@ -192,8 +201,13 @@ func inputOracle() fixtureInput {
 func checkOracle() []fixtureCheck {
 	refs := []string{"A1-base", "A1-more-source", "A2", "B1"}
 	newCheck := func(id, op, pre string, st fixtureState) fixtureCheck {
-		return fixtureCheck{ID: id, Operation: op, Precondition: pre, InputRefs: refs, QueryNames: []string{}, Expected: st, Empty: len(st.Entities) == 0,
-			NeighborOrder: "unspecified", ForbiddenNamespaces: []types.NameSpace{}, ForbiddenChunks: []string{}, DeleteNamespaces: []types.NameSpace{}, PreservedNamespaces: []types.NameSpace{}, EmptyQueries: []string{}}
+		return fixtureCheck{
+			ID: id, Operation: op, Precondition: pre, InputRefs: refs, QueryNames: []string{},
+			Expected: st, Empty: len(st.Entities) == 0, NeighborOrder: "unspecified",
+			ForbiddenNamespaces: []types.NameSpace{}, ForbiddenChunks: []string{},
+			DeleteNamespaces: []types.NameSpace{}, PreservedNamespaces: []types.NameSpace{},
+			EmptyQueries: []string{},
+		}
 	}
 	// Explicit memberships; numbers identify the manually declared records above.
 	queries := []struct {
@@ -205,8 +219,10 @@ func checkOracle() []fixtureCheck {
 		{"Q2", "泵A", a1, []int{0, 1, 2}, []int{0, 1, 2, 3, 4}},
 		{"Q3", "调节阀B", a1, []int{0, 1, 2, 4}, []int{0, 1, 2, 4, 5}},
 		{"Q4", specialName, a1, []int{4, 1}, []int{5}},
-		{"Q5", "孤立标签", a1, nil, nil}, {"Q6", "不存在", a1, nil, nil},
-		{"Q7", "主泵A", a2, []int{5, 6}, []int{6}}, {"Q8", "主泵A", b1, []int{7, 8}, []int{7}},
+		{"Q5", "孤立标签", a1, nil, nil},
+		{"Q6", "不存在", a1, nil, nil},
+		{"Q7", "主泵A", a2, []int{5, 6}, []int{6}},
+		{"Q8", "主泵A", b1, []int{7, 8}, []int{7}},
 		{"Q9", "主泵A", types.NameSpace{KnowledgeBase: "kb-a"}, []int{0, 1, 2, 5, 6}, []int{0, 1, 2, 3, 4, 6}},
 		{"Q10", "主泵a", a1, nil, nil},
 	}
@@ -217,10 +233,16 @@ func checkOracle() []fixtureCheck {
 		switch q.id {
 		case "Q7":
 			c.ForbiddenNamespaces = []types.NameSpace{a1, b1}
-			c.ForbiddenChunks = []string{"c-a1-01", "c-a1-02", "c-a1-03", "c-a1-04", "c-a1-special", "c-a1-05", "c-a1-06", "c-b1-01"}
+			c.ForbiddenChunks = []string{
+				"c-a1-01", "c-a1-02", "c-a1-03", "c-a1-04", "c-a1-special", "c-a1-05",
+				"c-a1-06", "c-b1-01",
+			}
 		case "Q8":
 			c.ForbiddenNamespaces = []types.NameSpace{a1, a2}
-			c.ForbiddenChunks = []string{"c-a1-01", "c-a1-02", "c-a1-03", "c-a1-04", "c-a1-special", "c-a1-05", "c-a1-06", "c-a2-01"}
+			c.ForbiddenChunks = []string{
+				"c-a1-01", "c-a1-02", "c-a1-03", "c-a1-04", "c-a1-special", "c-a1-05",
+				"c-a1-06", "c-a2-01",
+			}
 		case "Q9":
 			c.ForbiddenNamespaces = []types.NameSpace{b1}
 			c.ForbiddenChunks = []string{"c-b1-01", "c-a1-05", "c-a1-06"}
@@ -276,6 +298,7 @@ func equalSet[T any](label string, got, want []T) error {
 	}
 	return nil
 }
+
 func compareState(got, want fixtureState) error {
 	// The golden format requires explicit collections even for empty results.
 	// This says nothing about nil versus empty slices in runtime GraphData.
@@ -396,7 +419,8 @@ func TestContractFixtureFixedInputsAndGoldenSets(t *testing.T) {
 	}
 	for _, c := range out.Checks {
 		t.Run(c.ID, func(t *testing.T) {
-			t.Logf("E1 golden integrity only: %d entities / %d directed relations; real DB NOT_RUN", len(c.Expected.Entities), len(c.Expected.Relations))
+			t.Logf("E1 golden integrity only: %d entities / %d directed relations; real DB NOT_RUN",
+				len(c.Expected.Entities), len(c.Expected.Relations))
 		})
 	}
 }
@@ -406,45 +430,57 @@ func TestContractFixtureRejectsCorruption(t *testing.T) {
 		name   string
 		mutate func(*fixtureInput, *fixtureExpected)
 	}{
-		{"missing schema", func(i *fixtureInput, o *fixtureExpected) { i.SchemaVersion = 0 }},
-		{"missing empty entity keys", func(i *fixtureInput, o *fixtureExpected) { o.Checks[4].Expected.Entities = nil }},
-		{"missing namespace", func(i *fixtureInput, o *fixtureExpected) { i.Cases[0].Namespace = types.NameSpace{} }},
-		{"duplicate call ID", func(i *fixtureInput, o *fixtureExpected) { i.Supplemental[0].ID = i.Cases[0].ID }},
-		{"concurrent source in baseline", func(i *fixtureInput, o *fixtureExpected) {
+		{"missing schema", func(i *fixtureInput, _ *fixtureExpected) { i.SchemaVersion = 0 }},
+		{"missing empty entity keys", func(_ *fixtureInput,
+			o *fixtureExpected,
+		) {
+			o.Checks[4].Expected.Entities = nil
+		}},
+		{"missing namespace", func(i *fixtureInput, _ *fixtureExpected) { i.Cases[0].Namespace = types.NameSpace{} }},
+		{"duplicate call ID", func(i *fixtureInput, _ *fixtureExpected) { i.Supplemental[0].ID = i.Cases[0].ID }},
+		{"concurrent source in baseline", func(i *fixtureInput, _ *fixtureExpected) {
 			i.Cases[0].Graphs[0].Node[0].Chunks = append(i.Cases[0].Graphs[0].Node[0].Chunks, "c-a1-05")
 		}},
-		{"duplicate check ID", func(i *fixtureInput, o *fixtureExpected) { o.Checks[1].ID = "Q1" }},
-		{"wrong source", func(i *fixtureInput, o *fixtureExpected) { o.Checks[0].Expected.Nodes[0].Chunks = []string{"c-a2-01"} }},
-		{"duplicate source", func(i *fixtureInput, o *fixtureExpected) {
+		{"duplicate check ID", func(_ *fixtureInput, o *fixtureExpected) { o.Checks[1].ID = "Q1" }},
+		{"wrong source", func(_ *fixtureInput,
+			o *fixtureExpected,
+		) {
+			o.Checks[0].Expected.Nodes[0].Chunks = []string{"c-a2-01"}
+		}},
+		{"duplicate source", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[12].Expected.Nodes[0].Chunks = append(o.Checks[12].Expected.Nodes[0].Chunks, "c-a1-05")
 		}},
-		{"reversed feedback", func(i *fixtureInput, o *fixtureExpected) {
+		{"reversed feedback", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[0].Expected.Relations[2].Node1 = "主泵A"
 			o.Checks[0].Expected.Relations[2].Node2 = "调节阀B"
 		}},
-		{"missing parallel type", func(i *fixtureInput, o *fixtureExpected) {
+		{"missing parallel type", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Baseline.Relations = append(o.Baseline.Relations[:1], o.Baseline.Relations[2:]...)
 		}},
-		{"Q3 extra self loop", func(i *fixtureInput, o *fixtureExpected) {
+		{"Q3 extra self loop", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[2].Expected.Relations = append(o.Checks[2].Expected.Relations, o.Baseline.Relations[3])
 		}},
-		{"escaped newline instead of newline", func(i *fixtureInput, o *fixtureExpected) {
+		{"escaped newline instead of newline", func(i *fixtureInput, _ *fixtureExpected) {
 			i.Constants.S = "泵\"Q\\X\\n第二行"
 			i.Cases[0].Graphs[0].Node[4].Name = i.Constants.S
 		}},
-		{"changed attribute", func(i *fixtureInput, o *fixtureExpected) {
+		{"changed attribute", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[3].Expected.Nodes[0].Attributes = []string{"sanitized"}
 		}},
-		{"lost Q1 raw first node", func(i *fixtureInput, o *fixtureExpected) { o.Checks[0].First = nil }},
-		{"fixed neighbor order", func(i *fixtureInput, o *fixtureExpected) { o.Checks[0].NeighborOrder = "alphabetical" }},
-		{"nil empty graph allowed", func(i *fixtureInput, o *fixtureExpected) { o.Checks[4].NonNil = false }},
-		{"D1 collateral deletion", func(i *fixtureInput, o *fixtureExpected) {
+		{"lost Q1 raw first node", func(_ *fixtureInput, o *fixtureExpected) { o.Checks[0].First = nil }},
+		{"fixed neighbor order", func(_ *fixtureInput,
+			o *fixtureExpected,
+		) {
+			o.Checks[0].NeighborOrder = "alphabetical"
+		}},
+		{"nil empty graph allowed", func(_ *fixtureInput, o *fixtureExpected) { o.Checks[4].NonNil = false }},
+		{"D1 collateral deletion", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[13].Expected.Nodes = o.Checks[13].Expected.Nodes[:2]
 		}},
-		{"D2 residual entity", func(i *fixtureInput, o *fixtureExpected) {
+		{"D2 residual entity", func(_ *fixtureInput, o *fixtureExpected) {
 			o.Checks[14].Expected.Entities = append(o.Checks[14].Expected.Entities, o.Baseline.Entities[0])
 		}},
-		{"invented real PASS", func(i *fixtureInput, o *fixtureExpected) { o.DatabaseStatus = "PASS" }},
+		{"invented real PASS", func(_ *fixtureInput, o *fixtureExpected) { o.DatabaseStatus = "PASS" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -491,7 +527,8 @@ func TestContractFixtureSpecialCharactersAndExtractionSerialization(t *testing.T
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Node[4].Name != specialName || decoded.Node[4].Attributes[0] != specialAttribute || decoded.Relation[5].Type != specialType {
+	if decoded.Node[4].Name != specialName || decoded.Node[4].Attributes[0] != specialAttribute ||
+		decoded.Relation[5].Type != specialType {
 		t.Fatal("special characters changed in GraphData round trip")
 	}
 	for _, n := range decoded.Node {

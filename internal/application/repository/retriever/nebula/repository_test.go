@@ -5,10 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/primind/primind/internal/types"
-	ng "github.com/vesoft-inc/nebula-go/v3"
-	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
-	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 	"os"
 	"reflect"
 	"sort"
@@ -17,6 +13,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/primind/primind/internal/types"
+	ng "github.com/vesoft-inc/nebula-go/v3"
+	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
+	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 )
 
 type testWire struct {
@@ -48,14 +49,22 @@ func testConfig() Config {
 func testRepo(c Config, w wireDriver) *Repository { return &Repository{c: newClient(c, w)} }
 func testNS() types.NameSpace                     { return types.NameSpace{KnowledgeBase: "kb-a", Knowledge: "doc-a1"} }
 func sampleGraph() *types.GraphData {
-	return &types.GraphData{Node: []*types.GraphNode{{Name: "泵\"Q\\X\n第二行", Chunks: []string{"c1", "c2"}, Attributes: []string{"a\n\""}}, {Name: "阀"}}, Relation: []*types.GraphRelation{{Node1: "泵\"Q\\X\n第二行", Node2: "阀", Type: "连接"}, {Node1: "泵\"Q\\X\n第二行", Node2: "阀", Type: "反馈"}}}
+	return &types.GraphData{Node: []*types.GraphNode{{
+		Name: "泵\"Q\\X\n第二行", Chunks: []string{"c1", "c2"},
+		Attributes: []string{"a\n\""},
+	}, {Name: "阀"}}, Relation: []*types.GraphRelation{{
+		Node1: "泵\"Q\\X\n第二行",
+		Node2: "阀", Type: "连接",
+	}, {Node1: "泵\"Q\\X\n第二行", Node2: "阀", Type: "反馈"}}}
 }
+
 func requireErr(t *testing.T, err error, target error) {
 	t.Helper()
 	if !errors.Is(err, target) {
 		t.Fatalf("want %v, got %v", target, err)
 	}
 }
+
 func waitSignal(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
 	select {
@@ -64,6 +73,7 @@ func waitSignal(t *testing.T, ch <-chan struct{}) {
 		t.Fatal("coordination timeout")
 	}
 }
+
 func TestIdentityAndPropertyCodec(t *testing.T) {
 	cfg := testConfig()
 	ns := testNS()
@@ -77,7 +87,10 @@ func TestIdentityAndPropertyCodec(t *testing.T) {
 		t.Fatalf("fixed identity vector: %s", id)
 	}
 	keys := map[string]bool{}
-	for _, n := range []types.NameSpace{ns, {KnowledgeBase: "kb_a", Knowledge: ns.Knowledge}, {KnowledgeBase: "kb-a", Knowledge: "doc-a2"}} {
+	for _, n := range []types.NameSpace{ns, {KnowledgeBase: "kb_a", Knowledge: ns.Knowledge}, {
+		KnowledgeBase: "kb-a",
+		Knowledge:     "doc-a2",
+	}} {
 		for _, role := range []string{"entity", "source", "relation"} {
 			x, e := identity(cfg, role, n, "A|B", "C")
 			if e != nil || keys[x] {
@@ -99,6 +112,7 @@ func TestIdentityAndPropertyCodec(t *testing.T) {
 	requireErr(t, err, ErrBudget)
 	requireErr(t, validateNamespace(types.NameSpace{}, false), ErrInvalid)
 }
+
 func TestP1BatchLimitsAndDependency(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchRecords = 2
@@ -181,6 +195,7 @@ func TestP1BatchLimitsAndDependency(t *testing.T) {
 		t.Fatal("prevalidation wrote partial input")
 	}
 }
+
 func TestP2RegistryLifecycleAndInitFailure(t *testing.T) {
 	registry := &registry{entries: map[[32]byte]*poolEntry{}}
 	cfg := testConfig()
@@ -210,11 +225,15 @@ func TestP2RegistryLifecycleAndInitFailure(t *testing.T) {
 	_, err = b.SearchNode(context.Background(), testNS(), nil)
 	requireErr(t, err, ErrClosed)
 	bad := &testWire{}
-	_, err = registry.open(context.Background(), cfg, func(context.Context, Config) (wireDriver, error) { return bad, errors.New("authentication failure") })
+	_, err = registry.open(context.Background(), cfg, func(context.Context, Config) (wireDriver, error) {
+		return bad,
+			errors.New("authentication failure")
+	})
 	if err == nil || bad.closed.Load() != 1 {
 		t.Fatal("partial initialization leaked")
 	}
 }
+
 func TestP3SharedAdmissionAndReservedRead(t *testing.T) {
 	cfg := testConfig()
 	cfg.Connections = 3
@@ -232,7 +251,8 @@ func TestP3SharedAdmissionAndReservedRead(t *testing.T) {
 	done := make(chan error, 3)
 	for i := 0; i < 2; i++ {
 		go func() {
-			done <- r.AddGraph(context.Background(), testNS(), []*types.GraphData{{Node: []*types.GraphNode{{Name: "one"}}}})
+			done <- r.AddGraph(context.Background(), testNS(),
+				[]*types.GraphData{{Node: []*types.GraphNode{{Name: "one"}}}})
 		}()
 		waitSignal(t, entered)
 	}
@@ -300,6 +320,7 @@ func TestP3SharedAdmissionAndReservedRead(t *testing.T) {
 	_, _, err = r.c.admit(context.Background(), true, cfg.PendingBytes+1)
 	requireErr(t, err, ErrCapacity)
 }
+
 func TestP4CancelInFlightAndBoundedClose(t *testing.T) {
 	cfg := testConfig()
 	cfg.CloseTimeout = 20 * time.Millisecond
@@ -341,6 +362,7 @@ func TestP4CancelInFlightAndBoundedClose(t *testing.T) {
 		t.Fatal("drain failed")
 	}
 }
+
 func TestP5PartialFailureAndDeterministicReplay(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchRecords = 1
@@ -356,7 +378,9 @@ func TestP5PartialFailureAndDeterministicReplay(t *testing.T) {
 	graphs := []*types.GraphData{sampleGraph()}
 	err := r.AddGraph(context.Background(), testNS(), graphs)
 	var partial *OperationError
-	if !errors.As(err, &partial) || partial.Batches[0].State != "confirmed" || partial.Batches[1].State != "unknown" || partial.Batches[2].State != "not_sent" {
+	if !errors.As(err,
+		&partial) || partial.Batches[0].State != "confirmed" || partial.Batches[1].State != "unknown" ||
+		partial.Batches[2].State != "not_sent" {
 		t.Fatalf("wrong partial receipt: %v", err)
 	}
 	if calls != 2 {
@@ -378,8 +402,15 @@ func TestP5PartialFailureAndDeterministicReplay(t *testing.T) {
 		}
 	}
 }
+
 func TestSDKScalarDecodeAndReadBudgets(t *testing.T) {
-	response := &gr.ExecutionResponse{ErrorCode: nv.ErrorCode_SUCCEEDED, Data: &nv.DataSet{ColumnNames: [][]byte{[]byte("name")}, Rows: []*nv.Row{{Values: []*nv.Value{{SVal: []byte(encoded("泵"))}}}}}}
+	response := &gr.ExecutionResponse{
+		ErrorCode: nv.ErrorCode_SUCCEEDED,
+		Data: &nv.DataSet{
+			ColumnNames: [][]byte{[]byte("name")},
+			Rows:        []*nv.Row{{Values: []*nv.Value{{SVal: []byte(encoded("泵"))}}}},
+		},
+	}
 	rs, err := ng.GenResultSet(response)
 	if err != nil {
 		t.Fatal(err)
@@ -532,6 +563,7 @@ func goldenWire(t *testing.T, cfg Config, state goldenState, ns types.NameSpace)
 		return wireOutcome{Err: ErrInvalid}
 	}}
 }
+
 func canonicalGraph(g *types.GraphData, kb string) []string {
 	var out []string
 	docs := map[string]string{}
@@ -553,6 +585,7 @@ func canonicalGraph(g *types.GraphData, kb string) []string {
 	sort.Strings(out)
 	return out
 }
+
 func canonicalGolden(s goldenState) []string {
 	var out []string
 	for _, n := range s.Nodes {
@@ -572,6 +605,7 @@ func canonicalGolden(s goldenState) []string {
 	sort.Strings(out)
 	return out
 }
+
 func TestFixedQueriesAgainstIndependentProtocolBaseline(t *testing.T) {
 	g := loadGolden(t)
 	cfg := testConfig()
@@ -586,14 +620,17 @@ func TestFixedQueriesAgainstIndependentProtocolBaseline(t *testing.T) {
 				t.Fatalf("query: %v", err)
 			}
 			if !reflect.DeepEqual(canonicalGraph(got, q.Namespace.KnowledgeBase), canonicalGolden(q.Expected)) {
-				t.Fatalf("fixed expected mismatch\ngot %v\nwant %v", canonicalGraph(got, q.Namespace.KnowledgeBase), canonicalGolden(q.Expected))
+				t.Fatalf("fixed expected mismatch\ngot %v\nwant %v", canonicalGraph(got, q.Namespace.KnowledgeBase),
+					canonicalGolden(q.Expected))
 			}
-			if q.First != nil && (len(got.Node) == 0 || got.Node[0].Name != q.First.Name || got.Node[0].KnowledgeID != q.First.Doc) {
+			if q.First != nil && (len(got.Node) == 0 || got.Node[0].Name != q.First.Name ||
+				got.Node[0].KnowledgeID != q.First.Doc) {
 				t.Fatal("Q1 raw first seed")
 			}
 		})
 	}
 }
+
 func TestDeleteScopeMalformedResponsesAndNoSilentTruncation(t *testing.T) {
 	cfg := testConfig()
 	g := loadGolden(t)
@@ -627,6 +664,7 @@ func TestDeleteScopeMalformedResponsesAndNoSilentTruncation(t *testing.T) {
 	_, err = testRepo(testConfig(), bad).SearchNode(context.Background(), ns, []string{"泵"})
 	requireErr(t, err, ErrInvalid)
 }
+
 func TestSchemaCreationRequiresExplicitScopeBeforeNetwork(t *testing.T) {
 	err := InitializeSchema(context.Background(), testConfig(), SchemaAuthorization{})
 	requireErr(t, err, ErrInvalid)
@@ -636,6 +674,7 @@ func TestSchemaCreationRequiresExplicitScopeBeforeNetwork(t *testing.T) {
 		}
 	}
 }
+
 func ExampleOperationError() {
 	fmt.Println("confirmed / unknown / not_sent") // Output: confirmed / unknown / not_sent
 }

@@ -5,8 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/primind/primind/internal/types"
 	"strings"
+
+	"github.com/primind/primind/internal/types"
 )
 
 var edgeColumns = []string{"src", "dst", "rank", "kb", "doc"}
@@ -18,8 +19,10 @@ func edgeLookup(cfg Config, kind string, ns types.NameSpace) string {
 	if ns.Knowledge != "" {
 		where += " AND " + kind + ".doc == " + literal(encoded(ns.Knowledge))
 	}
-	return "LOOKUP ON " + kind + " WHERE " + where + " YIELD src(edge) AS src,dst(edge) AS dst,rank(edge) AS rank," + kind + ".kb AS kb," + kind + ".doc AS doc | LIMIT " + fmt.Sprint(cfg.SnapshotRecords+1) + ";"
+	return "LOOKUP ON " + kind + " WHERE " + where + " YIELD src(edge) AS src,dst(edge) AS dst,rank(edge) AS rank," +
+		kind + ".kb AS kb," + kind + ".doc AS doc | LIMIT " + fmt.Sprint(cfg.SnapshotRecords+1) + ";"
 }
+
 func parseIdentity(cfg Config, id string) ([]string, error) {
 	if !strings.HasPrefix(id, "ng1_") || len(id) > cfg.VIDBytes {
 		return nil, ErrInvalid
@@ -51,6 +54,7 @@ func parseIdentity(cfg Config, id string) ([]string, error) {
 	}
 	return fields, nil
 }
+
 func (r *Repository) rawEdges(ctx context.Context, ns types.NameSpace) ([]storedEdge, error) {
 	var out []storedEdge
 	seen := map[string]bool{}

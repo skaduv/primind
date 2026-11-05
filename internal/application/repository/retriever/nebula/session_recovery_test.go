@@ -41,7 +41,9 @@ func (h *recoveryHandler) Authenticate(ctx context.Context, u, p []byte) (*gr.Au
 	return h.pipeGraphHandler.Authenticate(ctx, u, p)
 }
 
-func (h *recoveryHandler) ExecuteWithParameter(ctx context.Context, id int64, stmt []byte, params map[string]*nv.Value) (*gr.ExecutionResponse, error) {
+func (h *recoveryHandler) ExecuteWithParameter(ctx context.Context, id int64, stmt []byte,
+	params map[string]*nv.Value,
+) (*gr.ExecutionResponse, error) {
 	if h.wait != nil && string(stmt) != "USE local_protocol_only;" {
 		select {
 		case h.entered <- struct{}{}:
@@ -88,7 +90,10 @@ func recoveryDriver(t *testing.T, cfg Config, setup func(int, *recoveryHandler))
 				break
 			}
 		}
-		h := &recoveryHandler{pipeGraphHandler: &pipeGraphHandler{queries: make(chan string, 512)}, entered: make(chan struct{}, 1), stop: make(chan struct{})}
+		h := &recoveryHandler{
+			pipeGraphHandler: &pipeGraphHandler{queries: make(chan string, 512)},
+			entered:          make(chan struct{}, 1), stop: make(chan struct{}),
+		}
 		peer := &recoveryPeer{local: tracked, remote: remote, handler: h, done: make(chan struct{})}
 		w.mu.Lock()
 		setup(len(w.peers), h)
@@ -96,8 +101,8 @@ func recoveryDriver(t *testing.T, cfg Config, setup func(int, *recoveryHandler))
 		w.mu.Unlock()
 		socket, err := thrift.NewSocket(thrift.SocketConn(remote), thrift.SocketTimeout(time.Second))
 		if err != nil {
-			tracked.Close()
-			remote.Close()
+			_ = tracked.Close()
+			_ = remote.Close()
 			close(peer.done)
 			return nil, err
 		}
@@ -118,8 +123,8 @@ func recoveryDriver(t *testing.T, cfg Config, setup func(int, *recoveryHandler))
 	t.Cleanup(func() {
 		for _, p := range w.snapshot() {
 			close(p.handler.stop)
-			p.local.Close()
-			p.remote.Close()
+			_ = p.local.Close()
+			_ = p.remote.Close()
 			waitSignal(t, p.done)
 		}
 	})
@@ -171,7 +176,8 @@ func TestSessionRecoveryThriftDiscardsWithoutReplayWithinPoolBudget(t *testing.T
 			}
 			for _, p := range peers {
 				waitSignal(t, p.done)
-				if len(p.handler.queries) != 2 || p.handler.authentications.Load() != 1 || p.handler.signouts.Load() != 0 {
+				if len(p.handler.queries) != 2 || p.handler.authentications.Load() != 1 ||
+					p.handler.signouts.Load() != 0 {
 					t.Fatal("failed call replayed or invalid connection not discarded")
 				}
 			}
@@ -201,16 +207,22 @@ func TestSessionRecoveryThriftDiscardsWithoutReplayWithinPoolBudget(t *testing.T
 				t.Fatal(err)
 			}
 			m := r.Metrics()
-			if w.live.Load() != 0 || w.closed.Load() != 4 || m.Active != 0 || m.Waiting != 0 || m.PlanReservedBytes != 0 || m.Peak > cfg.Connections || m.PeakWrites > cfg.Writes {
+			if w.live.Load() != 0 || w.closed.Load() != 4 || m.Active != 0 || m.Waiting != 0 ||
+				m.PlanReservedBytes != 0 || m.Peak > cfg.Connections || m.PeakWrites > cfg.Writes {
 				t.Fatalf("unbounded or undrained recovery: %+v", m)
 			}
-			t.Logf("connections created=%d closed=%d peak=%d; inflight peak=%d writes=%d retries=%d; failed calls each sent exactly one batch", len(peers), w.closed.Load(), w.peak.Load(), m.Peak, m.PeakWrites, d.RetryCount())
+			t.Logf("connections created=%d closed=%d peak=%d; inflight peak=%d writes=%d retries=%d; "+
+				"failed calls each sent exactly one batch",
+				len(peers), w.closed.Load(), w.peak.Load(), m.Peak, m.PeakWrites, d.RetryCount())
 		})
 	}
 }
 
 func TestSessionRecoveryThriftKeepsOrdinaryServerErrors(t *testing.T) {
-	for _, code := range []nv.ErrorCode{nv.ErrorCode_E_SYNTAX_ERROR, nv.ErrorCode_E_BAD_PERMISSION, nv.ErrorCode_E_PARTIAL_SUCCEEDED} {
+	for _, code := range []nv.ErrorCode{
+		nv.ErrorCode_E_SYNTAX_ERROR, nv.ErrorCode_E_BAD_PERMISSION,
+		nv.ErrorCode_E_PARTIAL_SUCCEEDED,
+	} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			cfg := testConfig()
 			cfg.Connections, cfg.Writes = 2, 1
@@ -245,7 +257,8 @@ func TestSessionRecoveryThriftKeepsOrdinaryServerErrors(t *testing.T) {
 					t.Fatal("ordinary session shutdown missed signout")
 				}
 			}
-			t.Log("4 failed requests reused 2 authenticated sessions; no error-triggered reconnect; final close signed out both")
+			t.Log("4 failed requests reused 2 authenticated sessions; " +
+				"no error-triggered reconnect; final close signed out both")
 		})
 	}
 }
@@ -321,13 +334,15 @@ func TestSessionRecoveryThriftCancellationAndClose(t *testing.T) {
 				}
 			}
 			m := r.Metrics()
-			if w.live.Load() != 0 || w.peak.Load() > int32(cfg.Connections) || m.Active != 0 || m.ActiveWrites != 0 || m.Waiting != 0 || m.PlanReservedBytes != 0 {
+			if w.live.Load() != 0 || w.peak.Load() > int32(cfg.Connections) || m.Active != 0 || m.ActiveWrites != 0 ||
+				m.Waiting != 0 || m.PlanReservedBytes != 0 {
 				t.Fatalf("recovery resources not drained: %+v", m)
 			}
 			for _, p := range w.snapshot() {
 				waitSignal(t, p.done)
 			}
-			t.Logf("mode=%s created=%d closed=%d peak=%d active=%d waiting=%d plan_bytes=%d", mode, len(w.snapshot()), w.closed.Load(), w.peak.Load(), m.Active, m.Waiting, m.PlanReservedBytes)
+			t.Logf("mode=%s created=%d closed=%d peak=%d active=%d waiting=%d plan_bytes=%d", mode, len(w.snapshot()),
+				w.closed.Load(), w.peak.Load(), m.Active, m.Waiting, m.PlanReservedBytes)
 		})
 	}
 }

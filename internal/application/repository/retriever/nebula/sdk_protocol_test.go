@@ -2,13 +2,14 @@ package nebula
 
 import (
 	"context"
-	"github.com/vesoft-inc/fbthrift/thrift/lib/go/thrift"
-	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
-	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/vesoft-inc/fbthrift/thrift/lib/go/thrift"
+	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
+	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 )
 
 // Only a net.Pipe is used: no listening port, real database, or successful
@@ -21,9 +22,12 @@ type pipeGraphHandler struct {
 	signouts  atomic.Int32
 }
 
-func (h *pipeGraphHandler) VerifyClientVersion(context.Context, *gr.VerifyClientVersionReq) (*gr.VerifyClientVersionResp, error) {
+func (h *pipeGraphHandler) VerifyClientVersion(context.Context,
+	*gr.VerifyClientVersionReq,
+) (*gr.VerifyClientVersionResp, error) {
 	return &gr.VerifyClientVersionResp{ErrorCode: nv.ErrorCode_SUCCEEDED}, nil
 }
+
 func (h *pipeGraphHandler) Authenticate(_ context.Context, u, p []byte) (*gr.AuthResponse, error) {
 	if string(u) != "synthetic" || string(p) != "synthetic" {
 		return &gr.AuthResponse{ErrorCode: nv.ErrorCode_E_BAD_USERNAME_PASSWORD}, nil
@@ -31,13 +35,17 @@ func (h *pipeGraphHandler) Authenticate(_ context.Context, u, p []byte) (*gr.Aut
 	id := int64(42)
 	return &gr.AuthResponse{ErrorCode: h.authCode, SessionID: &id}, nil
 }
+
 func (h *pipeGraphHandler) Signout(_ context.Context, id int64) error {
 	if id == 42 {
 		h.signouts.Add(1)
 	}
 	return nil
 }
-func (h *pipeGraphHandler) ExecuteWithParameter(_ context.Context, id int64, stmt []byte, _ map[string]*nv.Value) (*gr.ExecutionResponse, error) {
+
+func (h *pipeGraphHandler) ExecuteWithParameter(_ context.Context, id int64, stmt []byte,
+	_ map[string]*nv.Value,
+) (*gr.ExecutionResponse, error) {
 	h.queries <- string(stmt)
 	code := h.queryCode
 	if string(stmt) == "USE local_protocol_only;" {
@@ -48,12 +56,13 @@ func (h *pipeGraphHandler) ExecuteWithParameter(_ context.Context, id int64, stm
 	}
 	return &gr.ExecutionResponse{ErrorCode: code}, nil
 }
+
 func TestGeneratedSDKProtocolFramesAndHalfInitialization(t *testing.T) {
 	for _, mode := range []string{"success", "auth-failure", "partial"} {
 		t.Run(mode, func(t *testing.T) {
 			local, remote := net.Pipe()
-			defer local.Close()
-			defer remote.Close()
+			defer func() { _ = local.Close() }()
+			defer func() { _ = remote.Close() }()
 			h := &pipeGraphHandler{queries: make(chan string, 4)}
 			if mode == "auth-failure" {
 				h.authCode = nv.ErrorCode_E_BAD_USERNAME_PASSWORD

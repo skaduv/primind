@@ -6,10 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"github.com/vesoft-inc/fbthrift/thrift/lib/go/thrift"
-	ng "github.com/vesoft-inc/nebula-go/v3"
-	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
-	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 	"net"
 	"slices"
 	"strconv"
@@ -17,6 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vesoft-inc/fbthrift/thrift/lib/go/thrift"
+	ng "github.com/vesoft-inc/nebula-go/v3"
+	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
+	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 )
 
 type executionError struct {
@@ -61,12 +62,14 @@ func newSDKDriver(ctx context.Context, cfg Config) (wireDriver, error) {
 	d.sessions <- s
 	return d, nil
 }
+
 func resultCode(rs *ng.ResultSet) int {
 	if rs == nil {
 		return -1
 	}
 	return int(rs.GetErrorCode())
 }
+
 func (d *sdkDriver) Execute(ctx context.Context, stmt string) wireOutcome {
 	var s sdkSession
 	select {
@@ -113,6 +116,7 @@ func (d *sdkDriver) Execute(ctx context.Context, stmt string) wireOutcome {
 	table, err := decodeSDKTable(rs, d.cfg)
 	return wireOutcome{Table: table, Sent: true, Err: err}
 }
+
 func (d *sdkDriver) Close() {
 	var wg sync.WaitGroup
 	for i := 0; i < cap(d.sessions); i++ {
@@ -143,9 +147,11 @@ func (c *deadlineConn) SetDeadline(t time.Time) error { return c.Conn.SetDeadlin
 func (c *deadlineConn) SetReadDeadline(t time.Time) error {
 	return c.Conn.SetReadDeadline(c.capDeadline(t))
 }
+
 func (c *deadlineConn) SetWriteDeadline(t time.Time) error {
 	return c.Conn.SetWriteDeadline(c.capDeadline(t))
 }
+
 func (c *deadlineConn) begin(ctx context.Context, timeout time.Duration) error {
 	c.limit = time.Now().Add(timeout)
 	if t, ok := ctx.Deadline(); ok && t.Before(c.limit) {
@@ -180,7 +186,7 @@ func (s *wireSession) rpcCall(ctx context.Context, call func() error) error {
 		return err
 	}
 	stopped := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { _ = s.conn.Conn.Close(); close(stopped) })
+	stop := context.AfterFunc(ctx, func() { _ = s.conn.Close(); close(stopped) })
 	err := call()
 	if !stop() {
 		<-stopped
@@ -190,6 +196,7 @@ func (s *wireSession) rpcCall(ctx context.Context, call func() error) error {
 	}
 	return err
 }
+
 func openWireSession(ctx context.Context, cfg Config, address string) (sdkSession, error) {
 	host, port, err := net.SplitHostPort(address)
 	number, e := strconv.Atoi(port)
@@ -268,6 +275,7 @@ func newWireSessionOnConn(ctx context.Context, cfg Config, conn net.Conn) (sdkSe
 	}
 	return s, nil
 }
+
 func (s *wireSession) Execute(ctx context.Context, stmt string) (*ng.ResultSet, error) {
 	var response *gr.ExecutionResponse
 	err := s.rpcCall(ctx, func() error {
@@ -283,18 +291,21 @@ func (s *wireSession) Execute(ctx context.Context, stmt string) (*ng.ResultSet, 
 	}
 	return ng.GenResultSet(response)
 }
+
 func (s *wireSession) Discard() {
-	s.closeOnce.Do(func() { _ = s.transport.Close(); _ = s.conn.Conn.Close() })
+	s.closeOnce.Do(func() { _ = s.transport.Close(); _ = s.conn.Close() })
 }
+
 func (s *wireSession) Release() {
 	s.closeOnce.Do(func() {
 		if s.authenticated {
 			_ = s.rpcCall(context.Background(), func() error { return s.rpc.Signout(s.id) })
 		}
 		_ = s.transport.Close()
-		_ = s.conn.Conn.Close()
+		_ = s.conn.Close()
 	})
 }
+
 func decodeSDKTable(rs *ng.ResultSet, cfg Config) (wireTable, error) {
 	t := wireTable{Columns: rs.GetColNames()}
 	if rs.IsSetPlanDesc() {
@@ -341,7 +352,8 @@ func decodeSDKTable(rs *ng.ResultSet, cfg Config) (wireTable, error) {
 					return wireTable{}, err
 				}
 			default:
-				return wireTable{}, fmt.Errorf("%w: unsupported result type (column=%q type=%s)", ErrInvalid, t.Columns[j], v.GetType())
+				return wireTable{}, fmt.Errorf("%w: unsupported result type (column=%q type=%s)", ErrInvalid,
+					t.Columns[j], v.GetType())
 			}
 			if err != nil {
 				return wireTable{}, fmt.Errorf("%w: result value", ErrInvalid)
@@ -357,7 +369,10 @@ func decodeSDKTable(rs *ng.ResultSet, cfg Config) (wireTable, error) {
 }
 
 func optionalSchemaCell(columns []string, index int) bool {
-	if slices.Equal(columns, []string{"ID", "Name", "Partition Number", "Replica Factor", "Charset", "Collate", "Vid Type", "Comment"}) {
+	if slices.Equal(columns, []string{
+		"ID", "Name", "Partition Number", "Replica Factor", "Charset", "Collate",
+		"Vid Type", "Comment",
+	}) {
 		return index == 7
 	}
 	if slices.Equal(columns, []string{"Field", "Type", "Null", "Default", "Comment"}) {
@@ -367,7 +382,8 @@ func optionalSchemaCell(columns []string, index int) bool {
 }
 
 func indexColumnsCell(columns []string, index int) bool {
-	return index == 2 && (slices.Equal(columns, []string{"Index Name", "By Tag", "Columns"}) || slices.Equal(columns, []string{"Index Name", "By Edge", "Columns"}))
+	return index == 2 && (slices.Equal(columns, []string{"Index Name", "By Tag", "Columns"}) || slices.Equal(columns,
+		[]string{"Index Name", "By Edge", "Columns"}))
 }
 
 // SHOW TAG/EDGE INDEXES returns a list of property names, not a graph value.

@@ -41,16 +41,29 @@ func TestCoordinatorInvalidSessionsDoNotPoisonPool(t *testing.T) {
 				}
 			}
 			if first.releases.Load() != 1 || second.releases.Load() != 1 || created != 2 {
-				t.Errorf("pool remains poisoned: releases=%d/%d new_sessions=%d", first.releases.Load(), second.releases.Load(), created)
+				t.Errorf("pool remains poisoned: releases=%d/%d new_sessions=%d", first.releases.Load(),
+					second.releases.Load(), created)
 			}
 		})
 	}
 }
 
 func TestCoordinatorPerformanceRequiresConcurrentConfiguration(t *testing.T) {
-	p := RunProfile{Status: "AUTHORIZED", AuthorizationRef: "local-validation-only", RunID: "review", Space: "review", Version: "3.8.0", SDK: "v3.8.0", SourceCommit: strings.Repeat("a", 40), Instances: 1, Connections: 4, C1ConnectionBudget: 12, MaxConcurrency: 2, C1Rounds: 3, MaxDurationSeconds: 3600, DrainSeconds: 30, StatementBytes: 65536, Calls: 20, GroupPairs: 1, MaxSoakCalls: 1000, MaxPhysicalRecords: 500, Rounds: 3, SoakSeconds: 10, MinBatches: 10, MinCalls: 10, BatchSizes: []int{50, 200}, Concurrency: []int{1, 2}, ResourceSamplePath: "not-opened.json", MaxCPUPercent: 60, MaxMemoryBytes: 1 << 30, MaxDiskIOBytesPerSecond: 1 << 30, MinFreeDiskBytes: 1 << 30, MaxServiceLatencyMS: 100, MaxServiceErrorRate: .01, AllowWrite: true, AllowCleanup: true}
+	p := RunProfile{
+		Status: "AUTHORIZED", AuthorizationRef: "local-validation-only", RunID: "review", Space: "review",
+		Version: "3.8.0", SDK: "v3.8.0", SourceCommit: strings.Repeat("a", 40), Instances: 1, Connections: 4,
+		C1ConnectionBudget: 12, MaxConcurrency: 2, C1Rounds: 3, MaxDurationSeconds: 3600, DrainSeconds: 30,
+		StatementBytes: 65536, Calls: 20, GroupPairs: 1, MaxSoakCalls: 1000, MaxPhysicalRecords: 500, Rounds: 3,
+		SoakSeconds: 10, MinBatches: 10, MinCalls: 10, BatchSizes: []int{50, 200}, Concurrency: []int{1, 2},
+		ResourceSamplePath: "not-opened.json", MaxCPUPercent: 60, MaxMemoryBytes: 1 << 30,
+		MaxDiskIOBytesPerSecond: 1 << 30, MinFreeDiskBytes: 1 << 30, MaxServiceLatencyMS: 100, MaxServiceErrorRate: .01,
+		AllowWrite: true, AllowCleanup: true,
+	}
 	p.Environment = map[string]string{}
-	for _, key := range []string{"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index", "partitions", "replicas", "background_load", "window", "resource_sampler"} {
+	for _, key := range []string{
+		"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index",
+		"partitions", "replicas", "background_load", "window", "resource_sampler",
+	} {
 		p.Environment[key] = "synthetic validation only"
 	}
 	if err := p.Validate(true); err != nil {

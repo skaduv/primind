@@ -4,19 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/primind/primind/internal/types"
-	"github.com/primind/primind/internal/types/interfaces"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/primind/primind/internal/types"
+	"github.com/primind/primind/internal/types/interfaces"
 )
 
 var _ interfaces.RetrieveGraphRepository = (*Repository)(nil)
 
-const entityTag = "primind_entity"
-const relationTag = "primind_relation"
-const sourceTag = "primind_source"
+const (
+	entityTag   = "primind_entity"
+	relationTag = "primind_relation"
+	sourceTag   = "primind_source"
+)
 
 var tagFields = map[string][]string{
 	entityTag:   {"kb", "doc", "name", "attrs"},
@@ -33,12 +36,15 @@ func appendBatch(cfg Config, plan *[]batch, kind, prefix, suffix string, rs []re
 	*plan = append(*plan, bs...)
 	return planBytes(cfg, *plan)
 }
+
 func vertexPrefix(tag string) string {
 	return "INSERT VERTEX IF NOT EXISTS " + tag + "(" + strings.Join(tagFields[tag], ",") + ") VALUES "
 }
+
 func edgeRecord(ns types.NameSpace, id, from, to string) record {
 	return record{id, literal(from) + "->" + literal(to) + ":" + values(ns.KnowledgeBase, ns.Knowledge)}
 }
+
 func (r *Repository) addPlan(ns types.NameSpace, graphs []*types.GraphData) ([]batch, error) {
 	cfg := r.c.cfg
 	// Bound planning before constructing encoded statements or spawning work.
@@ -102,7 +108,8 @@ func (r *Repository) addPlan(ns types.NameSpace, graphs []*types.GraphData) ([]b
 			}
 			if !seen[id] {
 				attrs, _ := json.Marshal(n.Attributes)
-				nodes = append(nodes, record{id, literal(id) + ":" + values(ns.KnowledgeBase, ns.Knowledge, n.Name, string(attrs))})
+				nodes = append(nodes, record{id, literal(id) + ":" + values(ns.KnowledgeBase, ns.Knowledge, n.Name,
+					string(attrs))})
 				seen[id] = true
 			}
 			for _, chunk := range n.Chunks {
@@ -114,7 +121,8 @@ func (r *Repository) addPlan(ns types.NameSpace, graphs []*types.GraphData) ([]b
 					return err
 				}
 				if !seenSrc[sid] {
-					sources = append(sources, record{sid, literal(sid) + ":" + values(ns.KnowledgeBase, ns.Knowledge, n.Name, chunk)})
+					sources = append(sources, record{sid, literal(sid) + ":" + values(ns.KnowledgeBase, ns.Knowledge,
+						n.Name, chunk)})
 					owners = append(owners, edgeRecord(ns, sid, sid, id))
 					seenSrc[sid] = true
 				}
@@ -149,7 +157,8 @@ func (r *Repository) addPlan(ns types.NameSpace, graphs []*types.GraphData) ([]b
 			seenRel[id] = true
 			src, _ := identity(cfg, "entity", ns, e.Node1)
 			dst, _ := identity(cfg, "entity", ns, e.Node2)
-			rels = append(rels, record{id, literal(id) + ":" + values(ns.KnowledgeBase, ns.Knowledge, e.Node1, e.Node2, e.Type)})
+			rels = append(rels, record{id, literal(id) + ":" + values(ns.KnowledgeBase, ns.Knowledge, e.Node1, e.Node2,
+				e.Type)})
 			from = append(from, edgeRecord(ns, id, id, src))
 			to = append(to, edgeRecord(ns, id, id, dst))
 		}
@@ -165,13 +174,16 @@ func (r *Repository) addPlan(ns types.NameSpace, graphs []*types.GraphData) ([]b
 			edge    string
 			records []record
 		}{{"primind_owner", owners}, {"primind_from", from}, {"primind_to", to}} {
-			if err := appendBatch(cfg, &plan, part.edge, "INSERT EDGE IF NOT EXISTS "+part.edge+"(kb,doc) VALUES ", ";", part.records); err != nil {
+			if err := appendBatch(cfg, &plan, part.edge, "INSERT EDGE IF NOT EXISTS "+part.edge+"(kb,doc) VALUES ", ";",
+				part.records); err != nil {
 				return nil, err
 			}
 		}
 	}
 	return plan, nil
 }
+
+// AddGraph writes entities, relations and sources in bounded, dependency-ordered batches.
 func (r *Repository) AddGraph(ctx context.Context, ns types.NameSpace, graphs []*types.GraphData) error {
 	if err := r.check(ctx); err != nil {
 		return err
@@ -217,8 +229,10 @@ func lookup(cfg Config, tag string, ns types.NameSpace) string {
 	for _, f := range tagFields[tag] {
 		cols = append(cols, tag+"."+f+" AS "+f)
 	}
-	return "LOOKUP ON " + tag + " WHERE " + where + " YIELD " + strings.Join(cols, ",") + " | LIMIT " + fmt.Sprint(cfg.SnapshotRecords+1) + ";"
+	return "LOOKUP ON " + tag + " WHERE " + where + " YIELD " + strings.Join(cols,
+		",") + " | LIMIT " + fmt.Sprint(cfg.SnapshotRecords+1) + ";"
 }
+
 func (r *Repository) read(ctx context.Context, kind, stmt string) (wireTable, error) {
 	if err := r.check(ctx); err != nil {
 		return wireTable{}, err
@@ -229,6 +243,7 @@ func (r *Repository) read(ctx context.Context, kind, stmt string) (wireTable, er
 	o := r.c.execute(ctx, batch{Kind: kind, Statement: stmt}, false)
 	return o.Table, o.Err
 }
+
 func (r *Repository) rawSnapshot(ctx context.Context, ns types.NameSpace) ([]storedRecord, error) {
 	var out []storedRecord
 	bytes := 0
@@ -260,16 +275,18 @@ func (r *Repository) rawSnapshot(ctx context.Context, ns types.NameSpace) ([]sto
 			if bytes > r.c.cfg.ReadBytes {
 				return nil, ErrBudget
 			}
-			if item.Fields[0] != ns.KnowledgeBase || (ns.Knowledge != "" && item.Fields[1] != ns.Knowledge) || item.Fields[1] == "" {
+			if item.Fields[0] != ns.KnowledgeBase || (ns.Knowledge != "" && item.Fields[1] != ns.Knowledge) ||
+				item.Fields[1] == "" {
 				return nil, fmt.Errorf("%w: namespace leakage", ErrInvalid)
 			}
 			actualNS := types.NameSpace{KnowledgeBase: item.Fields[0], Knowledge: item.Fields[1]}
 			role := "entity"
 			parts := []string{item.Fields[2]}
-			if tag == relationTag {
+			switch tag {
+			case relationTag:
 				role = "relation"
 				parts = item.Fields[2:]
-			} else if tag == sourceTag {
+			case sourceTag:
 				role = "source"
 				parts = item.Fields[2:]
 			}
@@ -282,6 +299,7 @@ func (r *Repository) rawSnapshot(ctx context.Context, ns types.NameSpace) ([]sto
 	}
 	return out, nil
 }
+
 func columns(t wireTable, want []string) error {
 	if len(t.Columns) != len(want) {
 		return fmt.Errorf("%w: result columns", ErrInvalid)
@@ -345,7 +363,10 @@ func (r *Repository) Snapshot(ctx context.Context, ns types.NameSpace) (*types.G
 			if nodes[src] == nil || nodes[dst] == nil {
 				return nil, fmt.Errorf("%w: missing endpoint", ErrInvalid)
 			}
-			graph.Relation = append(graph.Relation, &types.GraphRelation{ID: row.ID, SourceID: src, TargetID: dst, Node1: row.Fields[2], Node2: row.Fields[3], Type: row.Fields[4]})
+			graph.Relation = append(graph.Relation, &types.GraphRelation{
+				ID: row.ID, SourceID: src, TargetID: dst,
+				Node1: row.Fields[2], Node2: row.Fields[3], Type: row.Fields[4],
+			})
 			edges["primind_from"] = append(edges["primind_from"], record{row.ID, literal(row.ID) + "->" + literal(src)})
 			edges["primind_to"] = append(edges["primind_to"], record{row.ID, literal(row.ID) + "->" + literal(dst)})
 		case sourceTag:
@@ -355,7 +376,10 @@ func (r *Repository) Snapshot(ctx context.Context, ns types.NameSpace) (*types.G
 				return nil, fmt.Errorf("%w: missing source owner", ErrInvalid)
 			}
 			node.Chunks = append(node.Chunks, row.Fields[3])
-			edges["primind_owner"] = append(edges["primind_owner"], record{row.ID, literal(row.ID) + "->" + literal(id)})
+			edges["primind_owner"] = append(edges["primind_owner"], record{
+				row.ID,
+				literal(row.ID) + "->" + literal(id),
+			})
 		}
 	}
 	actualEdges, err := r.rawEdges(ctx, ns)
@@ -388,17 +412,23 @@ func (r *Repository) Snapshot(ctx context.Context, ns types.NameSpace) (*types.G
 	return graph, nil
 }
 
+// SearchDiagnostics reports truncation observed during a search.
 type SearchDiagnostics struct {
 	SnapshotNodes, SnapshotRelations                 int
 	CandidateSeeds, SelectedSeeds, ReturnedRelations int
 	SeedTruncated, RelationTruncated                 bool
 }
 
+// SearchNode implements interfaces.RetrieveGraphRepository.
 func (r *Repository) SearchNode(ctx context.Context, ns types.NameSpace, names []string) (*types.GraphData, error) {
 	graph, _, err := r.Search(ctx, ns, names)
 	return graph, err
 }
-func (r *Repository) Search(ctx context.Context, ns types.NameSpace, names []string) (*types.GraphData, SearchDiagnostics, error) {
+
+// Search is SearchNode with truncation diagnostics.
+func (r *Repository) Search(ctx context.Context, ns types.NameSpace, names []string) (*types.GraphData,
+	SearchDiagnostics, error,
+) {
 	d := SearchDiagnostics{}
 	if err := r.check(ctx); err != nil {
 		return nil, d, err
@@ -514,6 +544,8 @@ func (r *Repository) Search(ctx context.Context, ns types.NameSpace, names []str
 	}
 	return out, d, nil
 }
+
+// DelGraph deletes every record of the given namespaces; repeating it is harmless.
 func (r *Repository) DelGraph(ctx context.Context, namespaces []types.NameSpace) error {
 	if err := r.check(ctx); err != nil {
 		return err
@@ -550,7 +582,10 @@ func (r *Repository) DelGraph(ctx context.Context, namespaces []types.NameSpace)
 			var records []record
 			for _, edge := range edges {
 				if edge.Kind == kind {
-					records = append(records, record{edge.Source + "->" + edge.Target, literal(edge.Source) + "->" + literal(edge.Target)})
+					records = append(records, record{
+						edge.Source + "->" + edge.Target,
+						literal(edge.Source) + "->" + literal(edge.Target),
+					})
 				}
 			}
 			if err := appendBatch(r.c.cfg, &plan, "delete_edge", "DELETE EDGE "+kind+" ", ";", records); err != nil {

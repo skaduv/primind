@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	adapter "github.com/primind/primind/internal/application/repository/retriever/nebula"
-	"github.com/primind/primind/internal/types"
 	"math"
 	"os"
 	"path/filepath"
@@ -16,32 +14,56 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	adapter "github.com/primind/primind/internal/application/repository/retriever/nebula"
+	"github.com/primind/primind/internal/types"
 )
 
 // The synthetic oracle is literal business data. It does not call adapter
 // mapping, graph traversal, AddGraph, or inspect emitted nGQL to derive answers.
-func syntheticCalls(run string, count, pairs int, seed int64) ([]adapter.GraphCall, []adapter.GraphCall, map[types.NameSpace]fixtureState) {
+func syntheticCalls(run string, count, pairs int, seed int64) ([]adapter.GraphCall, []adapter.GraphCall,
+	map[types.NameSpace]fixtureState,
+) {
 	calls := []adapter.GraphCall{}
 	hot := []adapter.GraphCall{}
 	expected := map[types.NameSpace]fixtureState{}
 	for i := 0; i < count; i++ {
 		ns := types.NameSpace{KnowledgeBase: run + "-kb", Knowledge: fmt.Sprintf("%s-doc-%06d", run, i)}
 		graph := &types.GraphData{}
-		state := fixtureState{Entities: []entityKey{}, Nodes: []fixtureNode{}, Relations: []relationKey{}, Connected: 2 * pairs}
+		state := fixtureState{
+			Entities: []entityKey{}, Nodes: []fixtureNode{}, Relations: []relationKey{},
+			Connected: 2 * pairs,
+		}
 		for pair := 0; pair < pairs; pair++ {
 			nameA, nameB := specialName, "调节阀B"
 			if pair > 0 {
 				nameA += fmt.Sprintf("-%03d", pair)
 				nameB += fmt.Sprintf("-%03d", pair)
 			}
-			chunks := []string{fmt.Sprintf("%s-c-%06d-%03d-1", run, i, pair), fmt.Sprintf("%s-c-%06d-%03d-2", run, i, pair)}
+			chunks := []string{fmt.Sprintf("%s-c-%06d-%03d-1", run, i, pair), fmt.Sprintf("%s-c-%06d-%03d-2", run, i,
+				pair)}
 			attr := strings.Repeat("参数", 1+int((int64(i+pair)+seed)%16))
-			graph.Node = append(graph.Node, &types.GraphNode{Name: nameA, Chunks: chunks, Attributes: []string{attr}}, &types.GraphNode{Name: nameB, Chunks: chunks[:1], Attributes: []string{}})
-			graph.Relation = append(graph.Relation, &types.GraphRelation{Node1: nameA, Node2: nameB, Type: "连接"}, &types.GraphRelation{Node1: nameA, Node2: nameB, Type: specialType}, &types.GraphRelation{Node1: nameB, Node2: nameA, Type: "反馈"}, &types.GraphRelation{Node1: nameA, Node2: nameA, Type: "自检"})
-			keyA, keyB := entityKey{ns.KnowledgeBase, ns.Knowledge, nameA}, entityKey{ns.KnowledgeBase, ns.Knowledge, nameB}
+			graph.Node = append(graph.Node, &types.GraphNode{Name: nameA, Chunks: chunks, Attributes: []string{attr}},
+				&types.GraphNode{Name: nameB, Chunks: chunks[:1], Attributes: []string{}})
+			graph.Relation = append(graph.Relation, &types.GraphRelation{Node1: nameA, Node2: nameB, Type: "连接"},
+				&types.GraphRelation{Node1: nameA, Node2: nameB, Type: specialType}, &types.GraphRelation{
+					Node1: nameB,
+					Node2: nameA, Type: "反馈",
+				}, &types.GraphRelation{Node1: nameA, Node2: nameA, Type: "自检"})
+			keyA, keyB := entityKey{ns.KnowledgeBase, ns.Knowledge, nameA}, entityKey{
+				ns.KnowledgeBase, ns.Knowledge,
+				nameB,
+			}
 			state.Entities = append(state.Entities, keyA, keyB)
-			state.Nodes = append(state.Nodes, fixtureNode{keyA, chunks, []string{attr}}, fixtureNode{keyB, chunks[:1], []string{}})
-			state.Relations = append(state.Relations, relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameB, "连接"}, relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameB, specialType}, relationKey{ns.KnowledgeBase, ns.Knowledge, nameB, nameA, "反馈"}, relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameA, "自检"})
+			state.Nodes = append(state.Nodes, fixtureNode{keyA, chunks, []string{attr}}, fixtureNode{
+				keyB, chunks[:1],
+				[]string{},
+			})
+			state.Relations = append(state.Relations, relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameB, "连接"},
+				relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameB, specialType}, relationKey{
+					ns.KnowledgeBase,
+					ns.Knowledge, nameB, nameA, "反馈",
+				}, relationKey{ns.KnowledgeBase, ns.Knowledge, nameA, nameA, "自检"})
 		}
 		calls = append(calls, adapter.GraphCall{Namespace: ns, Graphs: []*types.GraphData{graph}})
 		expected[ns] = state
@@ -49,7 +71,13 @@ func syntheticCalls(run string, count, pairs int, seed int64) ([]adapter.GraphCa
 	hotspot := calls[0].Namespace
 	for i := 0; i < count; i++ {
 		chunk := fmt.Sprintf("%s-hot-%06d", run, i)
-		hot = append(hot, adapter.GraphCall{Namespace: hotspot, Graphs: []*types.GraphData{{Node: []*types.GraphNode{{Name: specialName, Chunks: []string{chunk}, Attributes: []string{"must-not-overwrite-on-create"}}}}}})
+		hot = append(hot, adapter.GraphCall{
+			Namespace: hotspot,
+			Graphs: []*types.GraphData{{Node: []*types.GraphNode{{
+				Name: specialName, Chunks: []string{chunk},
+				Attributes: []string{"must-not-overwrite-on-create"},
+			}}}},
+		})
 	}
 	return calls, hot, expected
 }
@@ -74,7 +102,10 @@ func sampleResource(p adapter.RunProfile) (adapter.ResourceSample, error) {
 	if err := readJSONFile(p.ResourceSamplePath, &fields); err != nil {
 		return s, err
 	}
-	for _, name := range []string{"at", "cpu_percent", "memory_bytes", "free_disk_bytes", "service_latency_ms", "service_error_rate", "connections", "sessions", "disk_read_bytes_per_second", "disk_write_bytes_per_second"} {
+	for _, name := range []string{
+		"at", "cpu_percent", "memory_bytes", "free_disk_bytes", "service_latency_ms",
+		"service_error_rate", "connections", "sessions", "disk_read_bytes_per_second", "disk_write_bytes_per_second",
+	} {
 		if len(fields[name]) == 0 || string(fields[name]) == "null" {
 			return s, fmt.Errorf("missing resource observation: %s", name)
 		}
@@ -94,11 +125,16 @@ type replayRepository interface {
 	Metrics() adapter.Metrics
 }
 
-func replay(ctx context.Context, p adapter.RunProfile, r replayRepository, calls []adapter.GraphCall, concurrency int, mode string) (measuredRound, error) {
+func replay(ctx context.Context, p adapter.RunProfile, r replayRepository, calls []adapter.GraphCall, concurrency int,
+	mode string,
+) (measuredRound, error) {
 	return replayWithSampler(ctx, p, r, calls, concurrency, mode, sampleResource)
 }
 
-func replayWithSampler(ctx context.Context, p adapter.RunProfile, r replayRepository, calls []adapter.GraphCall, concurrency int, mode string, readSample func(adapter.RunProfile) (adapter.ResourceSample, error)) (measuredRound, error) {
+func replayWithSampler(ctx context.Context, p adapter.RunProfile, r replayRepository, calls []adapter.GraphCall,
+	concurrency int, mode string, readSample func(adapter.RunProfile) (adapter.ResourceSample, error)) (measuredRound,
+	error,
+) {
 	result := measuredRound{Mode: mode}
 	start := time.Now()
 	local, cancel := context.WithCancel(ctx)
@@ -200,7 +236,10 @@ dispatch:
 	}
 	return result, first
 }
-func reconcileSynthetic(ctx context.Context, cfg adapter.Config, r *adapter.Repository, expected map[types.NameSpace]fixtureState) error {
+
+func reconcileSynthetic(ctx context.Context, cfg adapter.Config, r *adapter.Repository,
+	expected map[types.NameSpace]fixtureState,
+) error {
 	for ns, want := range expected {
 		if err := waitCheck(ctx, cfg, func(ctx context.Context) error {
 			g, err := r.Snapshot(ctx, ns)
@@ -218,14 +257,15 @@ func reconcileSynthetic(ctx context.Context, cfg adapter.Config, r *adapter.Repo
 	}
 	return nil
 }
+
 func pctl(samples []int64, p float64) int64 {
 	if len(samples) == 0 {
 		return 0
 	}
-	copy := append([]int64(nil), samples...)
-	sort.Slice(copy, func(i, j int) bool { return copy[i] < copy[j] })
-	index := max(0, int(math.Ceil(float64(len(copy))*p))-1)
-	return copy[index]
+	sorted := append([]int64(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	index := max(0, int(math.Ceil(float64(len(sorted))*p))-1)
+	return sorted[index]
 }
 
 type performanceEvidenceReporter interface {
@@ -245,7 +285,9 @@ type performanceFailureReporter interface {
 }
 
 // Keep the primary error and FAIL state even if saving its evidence also fails.
-func failPerformanceRound(t performanceFailureReporter, path string, measured measuredRound, checks map[string]any, checkID string, primary error) {
+func failPerformanceRound(t performanceFailureReporter, path string, measured measuredRound, checks map[string]any,
+	checkID string, primary error,
+) {
 	// Use the existing public error text; do not unwrap SDK causes or payloads.
 	measured.FailureCause = primary.Error()
 	checks[checkID] = "FAIL"
@@ -253,7 +295,9 @@ func failPerformanceRound(t performanceFailureReporter, path string, measured me
 	t.Fatal(primary)
 }
 
-func recordSoakWindow(t performanceFailureReporter, path string, measured measuredRound, checks map[string]any, primary error) {
+func recordSoakWindow(t performanceFailureReporter, path string, measured measuredRound, checks map[string]any,
+	primary error,
+) {
 	if primary != nil {
 		failPerformanceRound(t, path, measured, checks, "P6", primary)
 		return
@@ -383,7 +427,10 @@ func runSoak(ctx context.Context, p adapter.RunProfile, run, dir string, h soakH
 		ended := h.Now()
 		e.Calls += measured.Calls
 		e.ReadProbes += len(measured.ReadLatenciesNS)
-		window := soakWindowEvidence{measuredRound: measured, RunID: run, Window: len(e.Windows) + 1, LoadStartedAt: started, LoadEndedAt: ended, LoadDurationNS: int64(ended.Sub(started)), Before: before}
+		window := soakWindowEvidence{
+			measuredRound: measured, RunID: run, Window: len(e.Windows) + 1,
+			LoadStartedAt: started, LoadEndedAt: ended, LoadDurationNS: int64(ended.Sub(started)), Before: before,
+		}
 		var counterErr, sampleErr error
 		window.CounterDelta, counterErr = soakCounterDelta(before, measured.Metrics)
 		window.SuccessfulWriteBatches, sampleErr = soakSuccessfulWrites(measured.Metrics.Samples)
@@ -408,14 +455,18 @@ func runSoak(ctx context.Context, p adapter.RunProfile, run, dir string, h soakH
 	return nil
 }
 
-func finishSoak(ctx context.Context, p adapter.RunProfile, dir string, e *soakEvidence, h soakHooks, primary error) error {
+func finishSoak(ctx context.Context, p adapter.RunProfile, dir string, e *soakEvidence, h soakHooks,
+	primary error,
+) error {
 	e.Format, e.Status, e.ReconcileStatus = "NG_SOAK_EVIDENCE_V2", "FAIL", "NOT_RUN"
 	e.LoadDurationNS = int64(e.LoadEndedAt.Sub(e.LoadStartedAt))
 	after := e.Metrics
 	var counterErr error
 	e.CounterDelta, counterErr = soakCounterDelta(e.Before, after)
 	primary = errors.Join(primary, ctx.Err(), counterErr)
-	if e.LoadDurationNS < int64(time.Duration(p.SoakSeconds)*time.Second) || e.Calls < p.MinCalls || e.Calls > p.MaxSoakCalls || e.ReadProbes == 0 || e.SuccessfulWriteBatches < p.MinBatches || after.Active != 0 || after.ActiveWrites != 0 || after.Waiting != 0 || after.PlanReservedBytes != 0 || after.PlanWaiters != 0 {
+	if e.LoadDurationNS < int64(time.Duration(p.SoakSeconds)*time.Second) || e.Calls < p.MinCalls ||
+		e.Calls > p.MaxSoakCalls || e.ReadProbes == 0 || e.SuccessfulWriteBatches < p.MinBatches || after.Active != 0 ||
+		after.ActiveWrites != 0 || after.Waiting != 0 || after.PlanReservedBytes != 0 || after.PlanWaiters != 0 {
 		primary = errors.Join(primary, fmt.Errorf("soak duration/write minimum/calls/read/drain criteria"))
 	}
 	if primary == nil {
@@ -446,7 +497,7 @@ func TestNebulaPerformance(t *testing.T) {
 		t.Skip("BLOCKED/NOT_RUN: real load budget absent; SKIP is not P6/P7 PASS")
 	}
 	p, cfg, out := loadRun(t, true)
-	if err := os.MkdirAll(out, 0700); err != nil {
+	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeEvidence(filepath.Join(out, "performance-profile.json"), p); err != nil {
@@ -457,24 +508,27 @@ func TestNebulaPerformance(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.MaxDurationSeconds)*time.Second)
 	defer cancel()
-	csvFile, err := os.OpenFile(filepath.Join(out, "performance-results.csv"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	csvFile, err := os.OpenFile(filepath.Join(out, "performance-results.csv"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer csvFile.Close()
+	defer func() { _ = csvFile.Close() }()
 	writer := csv.NewWriter(csvFile)
 	defer writer.Flush()
 	if err := writer.Write(performanceColumns); err != nil {
 		t.Fatal(err)
 	}
-	checks := map[string]any{"P6": "NOT_RUN", "P7": "RUNNING", "C1": "requires separate contract evidence", "business_performance": p.BusinessTargetStatus}
+	checks := map[string]any{
+		"P6": "NOT_RUN", "P7": "RUNNING", "C1": "requires separate contract evidence",
+		"business_performance": p.BusinessTargetStatus,
+	}
 	t.Cleanup(func() { recordPerformanceEvidence(t, filepath.Join(out, "performance-checks.json"), checks) })
 	runNumber := 0
 	runOne := func(batch, concurrency, round int, warm, soak bool) {
 		runNumber++
 		run := fmt.Sprintf("%s_r%03d", p.RunID, runNumber)
 		runDir := filepath.Join(out, run)
-		if err := os.Mkdir(runDir, 0700); err != nil {
+		if err := os.Mkdir(runDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		localCfg := cfg
@@ -555,11 +609,14 @@ func TestNebulaPerformance(t *testing.T) {
 			measured.UniqueEntities = 2 * p.GroupPairs * p.Calls
 			measured.UniqueRelations = 4 * p.GroupPairs * p.Calls
 			measured.UniqueSources = 3 * p.GroupPairs * p.Calls
-			if mode == "hotspot" {
+			switch mode {
+			case "hotspot":
 				measured.UniqueSources += p.Calls
 				measured.NewSources = p.Calls
-			} else if mode == "new" {
-				measured.NewEntities, measured.NewRelations, measured.NewSources = measured.UniqueEntities, measured.UniqueRelations, measured.UniqueSources
+			case "new":
+				measured.NewEntities = measured.UniqueEntities
+				measured.NewRelations = measured.UniqueRelations
+				measured.NewSources = measured.UniqueSources
 			}
 			measured.Metrics.Samples = measured.Metrics.Samples[len(before.Samples):]
 			measured.Metrics.StatementCalls -= before.StatementCalls
@@ -573,7 +630,10 @@ func TestNebulaPerformance(t *testing.T) {
 			err := runSoak(ctx, p, run, runDir, soakHooks{
 				Now: time.Now, Metrics: r.Metrics,
 				TakeSamples: func() { _ = r.TakeSamples() },
-				Replay:      func(ctx context.Context) (measuredRound, error) { return replay(ctx, p, r, calls, concurrency, "soak") },
+				Replay: func(ctx context.Context) (measuredRound, error) {
+					return replay(ctx, p, r, calls,
+						concurrency, "soak")
+				},
 				Probe: func(ctx context.Context) error {
 					queryCtx, c := context.WithTimeout(ctx, localCfg.ReadyTimeout)
 					defer c()
@@ -643,7 +703,17 @@ func TestNebulaPerformance(t *testing.T) {
 				}
 			}
 			seconds := float64(m.WallNS) / float64(time.Second)
-			numbers := []any{m.Run, round, m.Mode, batch, concurrency, m.Calls, m.WallNS, float64(m.Calls-m.Errors) / seconds, pctl(m.LatenciesNS, .5), pctl(m.LatenciesNS, .95), m.VisibilityNS, m.UniqueEntities, m.UniqueRelations, m.UniqueSources, m.NewEntities, m.NewRelations, m.NewSources, float64(m.NewEntities) / seconds, float64(m.NewRelations) / seconds, float64(m.NewSources) / seconds, physical["primind_entity"], physical["primind_relation"], physical["primind_source"], physical["primind_from"] + physical["primind_to"], physical["primind_owner"], m.Metrics.StatementCalls, m.Metrics.SDKReconnects, m.Errors, m.Metrics.Peak, m.Metrics.PeakWrites, len(batchLatencies), pctl(batchLatencies, .5), pctl(batchLatencies, .95), maxCPU, maxMemory, minDisk, maxReadIO, maxWriteIO, maxConn, maxSessions, true, true}
+			numbers := []any{
+				m.Run, round, m.Mode, batch, concurrency, m.Calls, m.WallNS,
+				float64(m.Calls-m.Errors) / seconds, pctl(m.LatenciesNS, .5), pctl(m.LatenciesNS, .95), m.VisibilityNS,
+				m.UniqueEntities, m.UniqueRelations, m.UniqueSources, m.NewEntities, m.NewRelations, m.NewSources,
+				float64(m.NewEntities) / seconds, float64(m.NewRelations) / seconds, float64(m.NewSources) / seconds,
+				physical["primind_entity"], physical["primind_relation"], physical["primind_source"],
+				physical["primind_from"] + physical["primind_to"], physical["primind_owner"], m.Metrics.StatementCalls,
+				m.Metrics.SDKReconnects, m.Errors, m.Metrics.Peak, m.Metrics.PeakWrites, len(batchLatencies),
+				pctl(batchLatencies, .5), pctl(batchLatencies, .95), maxCPU, maxMemory, minDisk, maxReadIO, maxWriteIO,
+				maxConn, maxSessions, true, true,
+			}
 			record := make([]string, len(numbers))
 			for i, v := range numbers {
 				record[i] = fmt.Sprint(v)
@@ -669,7 +739,17 @@ func TestNebulaPerformance(t *testing.T) {
 	checks["P7"] = "MEASURED; source logs, C1, resource trend and suitability review required"
 }
 
-var performanceColumns = []string{"run", "round", "mode", "batch_records", "concurrency", "calls", "wall_ns", "successful_addgraph_per_second", "call_p50_ns", "call_p95_ns", "visibility_ns", "reconciled_total_entities", "reconciled_total_relations", "reconciled_total_sources", "new_entities", "new_relations", "new_sources", "new_entities_per_second", "new_relations_per_second", "new_sources_per_second", "confirmed_entity_records", "confirmed_relation_records", "confirmed_source_records", "confirmed_relation_link_records", "confirmed_owner_records", "statement_calls", "sdk_reconnects", "errors", "peak_inflight", "peak_writes", "batch_sample_count", "batch_p50_ns", "batch_p95_ns", "max_cpu_percent", "max_memory_bytes", "min_disk_free_bytes", "max_disk_read_bytes_per_second", "max_disk_write_bytes_per_second", "max_connections", "max_sessions", "reconciled", "cleaned"}
+var performanceColumns = []string{
+	"run", "round", "mode", "batch_records", "concurrency", "calls", "wall_ns",
+	"successful_addgraph_per_second", "call_p50_ns", "call_p95_ns", "visibility_ns", "reconciled_total_entities",
+	"reconciled_total_relations", "reconciled_total_sources", "new_entities", "new_relations", "new_sources",
+	"new_entities_per_second", "new_relations_per_second", "new_sources_per_second", "confirmed_entity_records",
+	"confirmed_relation_records", "confirmed_source_records", "confirmed_relation_link_records",
+	"confirmed_owner_records", "statement_calls", "sdk_reconnects", "errors", "peak_inflight", "peak_writes",
+	"batch_sample_count", "batch_p50_ns", "batch_p95_ns", "max_cpu_percent", "max_memory_bytes", "min_disk_free_bytes",
+	"max_disk_read_bytes_per_second", "max_disk_write_bytes_per_second", "max_connections", "max_sessions",
+	"reconciled", "cleaned",
+}
 
 func TestPerformanceProfileRejectsUnapprovedOrUnsafeRuns(t *testing.T) {
 	p := adapter.RunProfile{}
@@ -700,7 +780,10 @@ func TestPerformanceProfileRejectsUnapprovedOrUnsafeRuns(t *testing.T) {
 		t.Fatal("load without resource budget accepted")
 	}
 	p.Environment = map[string]string{}
-	for _, k := range []string{"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index", "partitions", "replicas", "background_load", "window", "resource_sampler"} {
+	for _, k := range []string{
+		"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index",
+		"partitions", "replicas", "background_load", "window", "resource_sampler",
+	} {
 		p.Environment[k] = "synthetic local test"
 	}
 	p.Calls = 20
@@ -742,7 +825,9 @@ func TestPerformanceProfileRejectsUnapprovedOrUnsafeRuns(t *testing.T) {
 		t.Fatal("dataset counts")
 	}
 	for ns, state := range expected {
-		if len(state.Entities) != 2 || len(state.Relations) != 4 || len(state.Nodes[0].Chunks) != 2 || !strings.HasPrefix(ns.Knowledge, "test01-") {
+		if len(state.Entities) != 2 || len(state.Relations) != 4 || len(state.Nodes[0].Chunks) != 2 ||
+			!strings.HasPrefix(ns.Knowledge,
+				"test01-") {
 			t.Fatal("synthetic oracle")
 		}
 	}
@@ -753,7 +838,8 @@ func TestPerformanceProfileRejectsUnapprovedOrUnsafeRuns(t *testing.T) {
 	manifestCfg.Space = "test"
 	manifest, err := adapter.BuildManifest(manifestCfg, "test01_r001", append(roundCalls, roundHot...))
 	if err != nil || len(manifest.Vertices) != 76 || len(manifest.Edges) != 92 {
-		t.Fatalf("planned round physical identities: vertices=%d edges=%d err=%v", len(manifest.Vertices), len(manifest.Edges), err)
+		t.Fatalf("planned round physical identities: vertices=%d edges=%d err=%v", len(manifest.Vertices),
+			len(manifest.Edges), err)
 	}
 	// Preserve a reproducible format and avoid accidental credential fields.
 	b, _ := json.Marshal(p)

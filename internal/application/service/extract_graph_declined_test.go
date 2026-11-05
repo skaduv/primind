@@ -154,7 +154,7 @@ func TestChunkExtractDisabledBackendSkipsWithoutWork(t *testing.T) {
 
 type countingEnqueuer struct{ calls int }
 
-func (e *countingEnqueuer) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
+func (e *countingEnqueuer) Enqueue(_ *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
 	e.calls++
 	return &asynq.TaskInfo{ID: "t", Queue: types.QueueGraph}, nil
 }
@@ -176,7 +176,9 @@ func (r *flakyGraphRepo) AddGraph(context.Context, types.NameSpace, []*types.Gra
 	return nil
 }
 
-func graphExtractService(calls *int, graph interfaces.RetrieveGraphRepository, tracker SpanTracker) *ChunkExtractService {
+func graphExtractService(calls *int, graph interfaces.RetrieveGraphRepository,
+	tracker SpanTracker,
+) *ChunkExtractService {
 	return &ChunkExtractService{
 		template: &types.PromptTemplateStructured{Description: "extract", Tags: []string{"knows"}},
 		modelService: &stubModelService{chatModel: countingChat{calls: calls, graphReplyChat: graphReplyChat{
@@ -197,7 +199,10 @@ func graphExtractService(calls *int, graph interfaces.RetrieveGraphRepository, t
 // started while the LLM call was in flight) never writes graph data.
 func TestChunkExtractSupersededAttemptWritesNothing(t *testing.T) {
 	setGraphBackendForTest(t, types.GraphBackendNebula)
-	payload, _ := json.Marshal(types.ExtractChunkPayload{TenantID: 1, ChunkID: "c1", ModelID: "m1", KnowledgeID: "k1", Attempt: 1})
+	payload, _ := json.Marshal(types.ExtractChunkPayload{
+		TenantID: 1, ChunkID: "c1", ModelID: "m1", KnowledgeID: "k1",
+		Attempt: 1,
+	})
 	cases := []struct {
 		name      string
 		latest    []int

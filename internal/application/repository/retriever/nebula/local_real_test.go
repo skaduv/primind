@@ -41,7 +41,10 @@ func openLocalReal(t *testing.T, cfg Config) *Repository {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	// Creates the schema only in an empty Space; otherwise NewRepository validates it.
-	if err := InitializeSchema(ctx, cfg, SchemaAuthorization{Space: cfg.Space, CreateInEmptyDedicatedSpace: true}); err != nil && !errors.Is(err, ErrSchema) {
+	if err := InitializeSchema(ctx, cfg, SchemaAuthorization{
+		Space:                       cfg.Space,
+		CreateInEmptyDedicatedSpace: true,
+	}); err != nil && !errors.Is(err, ErrSchema) {
 		t.Fatal(err)
 	}
 	r, err := NewRepository(ctx, cfg)
@@ -156,7 +159,8 @@ func TestLocalRealSharedAdmission(t *testing.T) {
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			errs[i] = r.AddGraph(ctx, nss[i], []*types.GraphData{syntheticGraph(fmt.Sprintf("%s%d", prefix, i), 80, 20)})
+			errs[i] = r.AddGraph(ctx, nss[i], []*types.GraphData{syntheticGraph(fmt.Sprintf("%s%d", prefix, i), 80,
+				20)})
 		}(i)
 	}
 	t.Cleanup(func() {
@@ -216,7 +220,8 @@ func TestLocalRealCancellationStopsLaterBatches(t *testing.T) {
 	before := r.Metrics()
 	time.Sleep(500 * time.Millisecond)
 	after := r.Metrics()
-	if after.StatementCalls != before.StatementCalls || after.Active != 0 || after.ActiveWrites != 0 || after.PlanReservedBytes != 0 {
+	if after.StatementCalls != before.StatementCalls || after.Active != 0 || after.ActiveWrites != 0 ||
+		after.PlanReservedBytes != 0 {
 		t.Fatalf("work continued after return: calls %d->%d active=%d writes=%d plan=%d",
 			before.StatementCalls, after.StatementCalls, after.Active, after.ActiveWrites, after.PlanReservedBytes)
 	}

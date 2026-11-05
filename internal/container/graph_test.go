@@ -77,10 +77,11 @@ func TestConnectNebulaDoesNotRetryPermanentErrors(t *testing.T) {
 	t.Setenv("NEBULA_PASSWORD", "pw")
 	for _, perm := range []error{nebulaRepo.ErrSchema, nebulaRepo.ErrInvalid} {
 		calls := 0
-		_, err := connectNebula(context.Background(), func(context.Context, nebulaRepo.EnvConfig) (*nebulaRepo.Repository, error) {
+		open := func(context.Context, nebulaRepo.EnvConfig) (*nebulaRepo.Repository, error) {
 			calls++
 			return nil, perm
-		})
+		}
+		_, err := connectNebula(context.Background(), open)
 		if !errors.Is(err, perm) || calls != 1 {
 			t.Fatalf("%v: calls=%d err=%v", perm, calls, err)
 		}

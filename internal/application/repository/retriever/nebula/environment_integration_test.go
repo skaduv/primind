@@ -27,7 +27,7 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var p RunProfile
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
@@ -48,7 +48,7 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 	if !filepath.IsAbs(out) {
 		t.Fatal("absolute evidence directory required")
 	}
-	if err := os.MkdirAll(out, 0700); err != nil {
+	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfg := DefaultConfig()
@@ -70,17 +70,21 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 	tables := map[string]wireTable{}
 	// Persist even partial inventory on failure; SQL below is fixed metadata SQL.
 	t.Cleanup(func() {
-		data, err := json.MarshalIndent(map[string]any{"stage": stage, "source_commit": p.SourceCommit, "space": p.Space, "endpoint": cfg.Addresses[0], "tls": cfg.TLS, "read_only": true, "passed": !t.Failed(), "tables": tables}, "", "  ")
+		data, err := json.MarshalIndent(map[string]any{
+			"stage": stage, "source_commit": p.SourceCommit,
+			"space": p.Space, "endpoint": cfg.Addresses[0], "tls": cfg.TLS, "read_only": true, "passed": !t.Failed(),
+			"tables": tables,
+		}, "", "  ")
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		f, err := os.OpenFile(filepath.Join(out, stage+"-environment.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		f, err := os.OpenFile(filepath.Join(out, stage+"-environment.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := f.Write(append(data, '\n')); err != nil {
 			t.Error(err)
 		}
@@ -106,7 +110,7 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 		for _, row := range table.Rows {
 			v, ok := cell(row, fieldIndex(table, "Version"))
 			status, hasStatus := cell(row, fieldIndex(table, "Status"))
-			if !ok || !(v == "3.8.0" || strings.HasPrefix(v, "3.8.0-")) || !hasStatus || status != "ONLINE" {
+			if !ok || (v != "3.8.0" && !strings.HasPrefix(v, "3.8.0-")) || !hasStatus || status != "ONLINE" {
 				t.Fatal("service version/status incompatible: " + role)
 			}
 		}

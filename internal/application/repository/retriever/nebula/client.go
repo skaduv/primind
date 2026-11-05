@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// Errors returned by the client when work is refused or a budget is exceeded.
 var (
 	ErrClosed   = errors.New("nebula client is closed")
 	ErrCapacity = errors.New("nebula admission capacity exceeded")
@@ -50,8 +51,14 @@ type Config struct {
 	PollInterval     time.Duration
 }
 
+// DefaultConfig returns engineering starting limits; endpoint, Space and credentials must be filled in.
 func DefaultConfig() Config {
-	return Config{Connections: 4, Writes: 2, Waiters: 32, PendingBytes: 8 << 20, PlanBytes: 32 << 20, BatchRecords: 100, StatementBytes: 64 << 10, OperationBytes: 8 << 20, SnapshotRecords: 10000, ReadBytes: 16 << 20, VIDBytes: 1024, AcquireTimeout: 5 * time.Second, SocketTimeout: 5 * time.Second, OperationTimeout: 30 * time.Second, CloseTimeout: 30 * time.Second, ReadyTimeout: 20 * time.Second, PollInterval: 100 * time.Millisecond}
+	return Config{
+		Connections: 4, Writes: 2, Waiters: 32, PendingBytes: 8 << 20, PlanBytes: 32 << 20, BatchRecords: 100,
+		StatementBytes: 64 << 10, OperationBytes: 8 << 20, SnapshotRecords: 10000, ReadBytes: 16 << 20, VIDBytes: 1024,
+		AcquireTimeout: 5 * time.Second, SocketTimeout: 5 * time.Second, OperationTimeout: 30 * time.Second,
+		CloseTimeout: 30 * time.Second, ReadyTimeout: 20 * time.Second, PollInterval: 100 * time.Millisecond,
+	}
 }
 func (Config) String() string { return "NebulaGraph configuration (credentials redacted)" }
 func (c Config) validate() error {
@@ -64,13 +71,20 @@ func (c Config) validate() error {
 			return fmt.Errorf("%w: host:port required", ErrInvalid)
 		}
 	}
-	if c.Connections < 2 || c.Connections > 64 || c.Writes < 1 || c.Writes >= c.Connections || c.Waiters < 1 || c.Waiters > 1024 {
+	if c.Connections < 2 || c.Connections > 64 || c.Writes < 1 || c.Writes >= c.Connections || c.Waiters < 1 ||
+		c.Waiters > 1024 {
 		return fmt.Errorf("%w: connection/write/wait limits", ErrInvalid)
 	}
-	if c.BatchRecords < 1 || c.BatchRecords > 10000 || c.StatementBytes < 256 || c.StatementBytes > 4<<20 || c.OperationBytes < c.StatementBytes || c.OperationBytes > 64<<20 || c.PendingBytes < c.StatementBytes || c.PendingBytes > 64<<20 || c.SnapshotRecords < 1 || c.SnapshotRecords > 100000 || c.ReadBytes < 256 || c.ReadBytes > 128<<20 || c.VIDBytes < 128 || c.VIDBytes > 4096 {
+	if c.BatchRecords < 1 || c.BatchRecords > 10000 || c.StatementBytes < 256 || c.StatementBytes > 4<<20 ||
+		c.OperationBytes < c.StatementBytes || c.OperationBytes > 64<<20 || c.PendingBytes < c.StatementBytes ||
+		c.PendingBytes > 64<<20 || c.SnapshotRecords < 1 || c.SnapshotRecords > 100000 || c.ReadBytes < 256 ||
+		c.ReadBytes > 128<<20 || c.VIDBytes < 128 || c.VIDBytes > 4096 {
 		return fmt.Errorf("%w: byte/record/VID limits", ErrInvalid)
 	}
-	for _, d := range []time.Duration{c.AcquireTimeout, c.SocketTimeout, c.OperationTimeout, c.CloseTimeout, c.ReadyTimeout, c.PollInterval} {
+	for _, d := range []time.Duration{
+		c.AcquireTimeout, c.SocketTimeout, c.OperationTimeout, c.CloseTimeout,
+		c.ReadyTimeout, c.PollInterval,
+	} {
 		if d <= 0 || d > 5*time.Minute {
 			return fmt.Errorf("%w: positive bounded timeout required", ErrInvalid)
 		}
@@ -86,6 +100,7 @@ func (c Config) validate() error {
 	}
 	return nil
 }
+
 func configKey(c Config) [32]byte {
 	b, _ := json.Marshal(c)
 	b = append(b, 0)
@@ -114,6 +129,8 @@ type wireDriver interface {
 }
 type driverFactory func(context.Context, Config) (wireDriver, error)
 
+// Metric is one statement's execution sample.
+//
 // Only statement metadata is retained; no query text, endpoint or credential.
 type Metric struct {
 	ResultRows      int    `json:"result_rows"`
@@ -126,6 +143,8 @@ type Metric struct {
 	RPCNS           int64  `json:"rpc_ns"`
 	Failed          bool   `json:"failed"`
 }
+
+// Metrics is a snapshot of the client's admission counters and samples.
 type Metrics struct {
 	PlanReservedBytes int      `json:"plan_reserved_bytes"`
 	PlanWaiters       int      `json:"plan_waiters"`
@@ -209,6 +228,7 @@ func (c *client) admit(ctx context.Context, write bool, size int) (func(), time.
 		c.mu.Lock()
 	}
 }
+
 func (c *client) release(write bool) {
 	c.mu.Lock()
 	c.active--
@@ -225,6 +245,7 @@ func (c *client) release(write bool) {
 		go func() { c.driver.Close(); close(c.done) }()
 	}
 }
+
 func (c *client) close(ctx context.Context) error {
 	c.mu.Lock()
 	c.closing = true
@@ -244,6 +265,7 @@ func (c *client) close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
 func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 	release, wait, err := c.admit(ctx, write, len(b.Statement))
 	if err != nil {
@@ -258,7 +280,10 @@ func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 	if ctx.Err() != nil {
 		out.Err = ctx.Err()
 	}
-	m := Metric{Kind: b.Kind, Records: len(b.IDs), Bytes: len(b.Statement), WaitNS: int64(wait), RPCNS: int64(time.Since(start)), Failed: out.Err != nil}
+	m := Metric{
+		Kind: b.Kind, Records: len(b.IDs), Bytes: len(b.Statement), WaitNS: int64(wait),
+		RPCNS: int64(time.Since(start)), Failed: out.Err != nil,
+	}
 	m.StatementDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(b.Statement)))
 	m.ResultRows = len(out.Table.Rows)
 	var sdkErr *executionError
@@ -278,6 +303,7 @@ func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 	c.mu.Unlock()
 	return out
 }
+
 func (c *client) snapshotMetrics() Metrics {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -320,6 +346,7 @@ func NewRepository(ctx context.Context, cfg Config) (*Repository, error) {
 	}
 	return r, nil
 }
+
 func (r *registry) open(ctx context.Context, cfg Config, factory driverFactory) (*Repository, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -388,6 +415,7 @@ func (r *registry) open(ctx context.Context, cfg Config, factory driverFactory) 
 	}
 }
 
+// Repository is one handle on a shared, bounded NebulaGraph client.
 type Repository struct {
 	c         *client
 	registry  *registry
@@ -406,6 +434,8 @@ func (r *Repository) check(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Close releases this handle; the last handle drains and closes the shared pool.
 func (r *Repository) Close(ctx context.Context) error {
 	if r == nil || r.c == nil {
 		return nil
@@ -432,6 +462,8 @@ func (r *Repository) Close(ctx context.Context) error {
 	defer cancel()
 	return r.c.close(bounded)
 }
+
+// Metrics returns the shared client's current counters.
 func (r *Repository) Metrics() Metrics { return r.c.snapshotMetrics() }
 
 // TakeSamples drains bounded diagnostic samples. Counters remain cumulative.

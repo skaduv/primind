@@ -52,16 +52,24 @@ func TestConfigFromEnvOverridesEveryBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := []int{cfg.Connections, cfg.Writes, cfg.Waiters, cfg.PendingBytes, cfg.PlanBytes, cfg.BatchRecords,
-		cfg.StatementBytes, cfg.OperationBytes, cfg.SnapshotRecords, cfg.ReadBytes, cfg.VIDBytes}
+	got := []int{
+		cfg.Connections, cfg.Writes, cfg.Waiters, cfg.PendingBytes, cfg.PlanBytes, cfg.BatchRecords,
+		cfg.StatementBytes, cfg.OperationBytes, cfg.SnapshotRecords, cfg.ReadBytes, cfg.VIDBytes,
+	}
 	want := []int{8, 3, 16, 4 << 20, 16 << 20, 50, 32 << 10, 4 << 20, 500, 1 << 20, 512}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("int field %d = %d, want %d", i, got[i], want[i])
 		}
 	}
-	gotD := []time.Duration{cfg.AcquireTimeout, cfg.SocketTimeout, cfg.OperationTimeout, cfg.CloseTimeout, cfg.ReadyTimeout, cfg.PollInterval}
-	wantD := []time.Duration{2 * time.Second, 3 * time.Second, 10 * time.Second, 6 * time.Second, 7 * time.Second, 50 * time.Millisecond}
+	gotD := []time.Duration{
+		cfg.AcquireTimeout, cfg.SocketTimeout, cfg.OperationTimeout, cfg.CloseTimeout,
+		cfg.ReadyTimeout, cfg.PollInterval,
+	}
+	wantD := []time.Duration{
+		2 * time.Second, 3 * time.Second, 10 * time.Second, 6 * time.Second, 7 * time.Second,
+		50 * time.Millisecond,
+	}
 	for i := range wantD {
 		if gotD[i] != wantD[i] {
 			t.Fatalf("duration field %d = %v, want %v", i, gotD[i], wantD[i])

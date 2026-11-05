@@ -23,21 +23,55 @@ func TestResolveGraphBackendMatrix(t *testing.T) {
 		{"legacy false", map[string]string{"NEO4J_ENABLE": "false"}, GraphBackendDisabled, false, false},
 		{"legacy empty", map[string]string{"NEO4J_ENABLE": ""}, GraphBackendDisabled, false, false},
 		{"legacy other", map[string]string{"NEO4J_ENABLE": "yes"}, GraphBackendDisabled, false, false},
-		{"legacy padded true stays off", map[string]string{"NEO4J_ENABLE": " true "}, GraphBackendDisabled, false, false},
+		{
+			"legacy padded true stays off",
+			map[string]string{"NEO4J_ENABLE": " true "},
+			GraphBackendDisabled, false,
+			false,
+		},
 		{"nothing set", map[string]string{}, GraphBackendDisabled, false, false},
-		{"empty GRAPH_BACKEND is unset", map[string]string{"GRAPH_BACKEND": "", "NEO4J_ENABLE": "true"}, GraphBackendNeo4j, false, false},
+		{
+			"empty GRAPH_BACKEND is unset",
+			map[string]string{"GRAPH_BACKEND": "", "NEO4J_ENABLE": "true"},
+			GraphBackendNeo4j, false, false,
+		},
 		{"disabled", map[string]string{"GRAPH_BACKEND": "disabled"}, GraphBackendDisabled, false, false},
-		{"disabled overrides legacy true", map[string]string{"GRAPH_BACKEND": "disabled", "NEO4J_ENABLE": "true"}, GraphBackendDisabled, true, false},
+		{
+			"disabled overrides legacy true",
+			map[string]string{"GRAPH_BACKEND": "disabled", "NEO4J_ENABLE": "true"},
+			GraphBackendDisabled, true, false,
+		},
 		{"neo4j without legacy", map[string]string{"GRAPH_BACKEND": "neo4j"}, GraphBackendNeo4j, false, false},
-		{"neo4j vs legacy false", map[string]string{"GRAPH_BACKEND": "neo4j", "NEO4J_ENABLE": "false"}, GraphBackendNeo4j, true, false},
-		{"neo4j agrees with legacy", map[string]string{"GRAPH_BACKEND": "neo4j", "NEO4J_ENABLE": "true"}, GraphBackendNeo4j, false, false},
+		{
+			"neo4j vs legacy false",
+			map[string]string{"GRAPH_BACKEND": "neo4j", "NEO4J_ENABLE": "false"},
+			GraphBackendNeo4j, true, false,
+		},
+		{
+			"neo4j agrees with legacy",
+			map[string]string{"GRAPH_BACKEND": "neo4j", "NEO4J_ENABLE": "true"},
+			GraphBackendNeo4j, false, false,
+		},
 		{"nebulagraph", map[string]string{"GRAPH_BACKEND": "nebulagraph"}, GraphBackendNebula, false, false},
-		{"nebulagraph vs legacy true", map[string]string{"GRAPH_BACKEND": "nebulagraph", "NEO4J_ENABLE": "true"}, GraphBackendNebula, true, false},
-		{"nebulagraph vs legacy false", map[string]string{"GRAPH_BACKEND": "nebulagraph", "NEO4J_ENABLE": "false"}, GraphBackendNebula, true, false},
+		{
+			"nebulagraph vs legacy true",
+			map[string]string{"GRAPH_BACKEND": "nebulagraph", "NEO4J_ENABLE": "true"},
+			GraphBackendNebula, true, false,
+		},
+		{
+			"nebulagraph vs legacy false",
+			map[string]string{"GRAPH_BACKEND": "nebulagraph", "NEO4J_ENABLE": "false"},
+			GraphBackendNebula, true, false,
+		},
 		{"unknown", map[string]string{"GRAPH_BACKEND": "nebula"}, "", false, true},
 		{"uppercase rejected", map[string]string{"GRAPH_BACKEND": "Neo4j"}, "", false, true},
 		{"padded rejected", map[string]string{"GRAPH_BACKEND": " neo4j"}, "", false, true},
-		{"unknown with legacy true", map[string]string{"GRAPH_BACKEND": "memgraph", "NEO4J_ENABLE": "true"}, "", false, true},
+		{
+			"unknown with legacy true",
+			map[string]string{"GRAPH_BACKEND": "memgraph", "NEO4J_ENABLE": "true"},
+			"", false,
+			true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

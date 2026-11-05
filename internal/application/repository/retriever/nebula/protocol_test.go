@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/primind/primind/internal/types"
-	ng "github.com/vesoft-inc/nebula-go/v3"
-	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
-	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 	"net"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/primind/primind/internal/types"
+	ng "github.com/vesoft-inc/nebula-go/v3"
+	nv "github.com/vesoft-inc/nebula-go/v3/nebula"
+	gr "github.com/vesoft-inc/nebula-go/v3/nebula/graph"
 )
 
 type protocolSession struct {
@@ -27,7 +28,10 @@ func (s *protocolSession) Execute(context.Context, string) (*ng.ResultSet, error
 }
 func (s *protocolSession) Release() { s.releases.Add(1) }
 func TestSDKLeaseReturnAndServerFailure(t *testing.T) {
-	for _, code := range []nv.ErrorCode{nv.ErrorCode_SUCCEEDED, nv.ErrorCode_E_PARTIAL_SUCCEEDED, nv.ErrorCode_E_BAD_PERMISSION} {
+	for _, code := range []nv.ErrorCode{
+		nv.ErrorCode_SUCCEEDED, nv.ErrorCode_E_PARTIAL_SUCCEEDED,
+		nv.ErrorCode_E_BAD_PERMISSION,
+	} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			rs, _ := ng.GenResultSet(&gr.ExecutionResponse{ErrorCode: code})
 			session := &protocolSession{result: rs}
@@ -59,6 +63,7 @@ func TestSDKLeaseReturnAndServerFailure(t *testing.T) {
 		t.Fatal("waiting lease cancellation")
 	}
 }
+
 func TestRegistryInitializationWaitIsCancelable(t *testing.T) {
 	cfg := testConfig()
 	reg := &registry{entries: map[[32]byte]*poolEntry{}}
@@ -80,6 +85,7 @@ func TestRegistryInitializationWaitIsCancelable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestSearchCapsAreVisibleAndRawSeedOrder(t *testing.T) {
 	cfg := testConfig()
 	ns := testNS()
@@ -87,19 +93,29 @@ func TestSearchCapsAreVisibleAndRawSeedOrder(t *testing.T) {
 	for i := 0; i < 201; i++ {
 		name := fmt.Sprintf("泵%03d", i)
 		seedState.Nodes = append(seedState.Nodes, goldenNode{Key: goldenKey{ns.KnowledgeBase, ns.Knowledge, name}})
-		seedState.Relations = append(seedState.Relations, goldenRelation{ns.KnowledgeBase, ns.Knowledge, name, name, "自检"})
+		seedState.Relations = append(seedState.Relations, goldenRelation{
+			ns.KnowledgeBase, ns.Knowledge, name, name,
+			"自检",
+		})
 	}
 	r := testRepo(cfg, goldenWire(t, cfg, seedState, ns))
 	graph, diag, err := r.Search(context.Background(), ns, []string{"泵", "泵200"})
-	if err != nil || len(graph.Relation) != 200 || !diag.SeedTruncated || diag.RelationTruncated || graph.Node[0].Name != "泵200" {
+	if err != nil || len(graph.Relation) != 200 || !diag.SeedTruncated || diag.RelationTruncated ||
+		graph.Node[0].Name != "泵200" {
 		t.Fatalf("seed cap/order: %v %+v", err, diag)
 	}
 	if r.Metrics().SearchTruncations != 1 {
 		t.Fatal("interface-visible counter missing")
 	}
-	relationState := goldenState{Nodes: []goldenNode{{Key: goldenKey{ns.KnowledgeBase, ns.Knowledge, "A"}}, {Key: goldenKey{ns.KnowledgeBase, ns.Knowledge, "B"}}}}
+	relationState := goldenState{Nodes: []goldenNode{
+		{Key: goldenKey{ns.KnowledgeBase, ns.Knowledge, "A"}},
+		{Key: goldenKey{ns.KnowledgeBase, ns.Knowledge, "B"}},
+	}}
 	for i := 0; i < 2001; i++ {
-		relationState.Relations = append(relationState.Relations, goldenRelation{ns.KnowledgeBase, ns.Knowledge, "A", "B", fmt.Sprintf("type%d", i)})
+		relationState.Relations = append(relationState.Relations, goldenRelation{
+			ns.KnowledgeBase, ns.Knowledge, "A",
+			"B", fmt.Sprintf("type%d", i),
+		})
 	}
 	r = testRepo(cfg, goldenWire(t, cfg, relationState, ns))
 	graph, diag, err = r.Search(context.Background(), ns, []string{"A"})
@@ -107,6 +123,7 @@ func TestSearchCapsAreVisibleAndRawSeedOrder(t *testing.T) {
 		t.Fatalf("edge cap: %v %+v", err, diag)
 	}
 }
+
 func TestSnapshotRejectsMissingLinksAndForeignNamespace(t *testing.T) {
 	cfg := testConfig()
 	gold := loadGolden(t)
@@ -139,6 +156,7 @@ func TestSnapshotRejectsMissingLinksAndForeignNamespace(t *testing.T) {
 		})
 	}
 }
+
 func TestOperationDeadlineStopsLaterBatches(t *testing.T) {
 	cfg := testConfig()
 	cfg.OperationTimeout = 10 * time.Millisecond
@@ -158,7 +176,8 @@ func schemaWire(cfg Config) *testWire {
 		t := wireTable{}
 		switch {
 		case strings.HasPrefix(s, "DESCRIBE SPACE "):
-			t = wireTable{Columns: []string{"Vid Type"}, Rows: [][]string{{fmt.Sprintf("FIXED_STRING(%d)", cfg.VIDBytes)}}}
+			t = wireTable{Columns: []string{"Vid Type"}, Rows: [][]string{{fmt.Sprintf("FIXED_STRING(%d)",
+				cfg.VIDBytes)}}}
 		case s == "SHOW TAGS;" || s == "SHOW EDGES;":
 			t = wireTable{Columns: []string{"ID", "Name"}}
 		case strings.HasPrefix(s, "CREATE "):
@@ -173,14 +192,26 @@ func schemaWire(cfg Config) *testWire {
 			t.Rows = [][]string{{"kb", "string", "NO", "", ""}, {"doc", "string", "NO", "", ""}}
 		case strings.HasPrefix(s, "SHOW CREATE EDGE INDEX "):
 			name := strings.TrimSuffix(strings.TrimPrefix(s, "SHOW CREATE EDGE INDEX "), "_scope;")
-			t = wireTable{Columns: []string{"Edge Index Name", "Create Edge Index"}, Rows: [][]string{{name + "_scope", "CREATE EDGE INDEX " + name + "_scope ON " + name + "(kb(128),doc(128))"}}}
+			t = wireTable{Columns: []string{"Edge Index Name", "Create Edge Index"}, Rows: [][]string{{
+				name + "_scope",
+				"CREATE EDGE INDEX " + name + "_scope ON " + name + "(kb(128),doc(128))",
+			}}}
 		case strings.HasPrefix(s, "SHOW CREATE TAG INDEX "):
 			tag := strings.TrimSuffix(strings.TrimPrefix(s, "SHOW CREATE TAG INDEX "), "_scope;")
-			t = wireTable{Columns: []string{"Tag Index Name", "Create Tag Index"}, Rows: [][]string{{tag + "_scope", "CREATE TAG INDEX " + tag + "_scope ON " + tag + "(kb(128), doc(128))"}}}
+			t = wireTable{Columns: []string{"Tag Index Name", "Create Tag Index"}, Rows: [][]string{{
+				tag + "_scope",
+				"CREATE TAG INDEX " + tag + "_scope ON " + tag + "(kb(128), doc(128))",
+			}}}
 		case strings.HasPrefix(s, "SHOW CREATE TAG "):
-			t = wireTable{Columns: []string{"Tag", "Create Tag"}, Rows: [][]string{{"tag", "CREATE TAG x() ttl_duration = 0, ttl_col = \"\""}}}
+			t = wireTable{Columns: []string{"Tag", "Create Tag"}, Rows: [][]string{{
+				"tag",
+				"CREATE TAG x() ttl_duration = 0, ttl_col = \"\"",
+			}}}
 		case strings.HasPrefix(s, "SHOW CREATE EDGE "):
-			t = wireTable{Columns: []string{"Edge", "Create Edge"}, Rows: [][]string{{"edge", "CREATE EDGE x() ttl_duration = 0, ttl_col = \"\""}}}
+			t = wireTable{Columns: []string{"Edge", "Create Edge"}, Rows: [][]string{{
+				"edge",
+				"CREATE EDGE x() ttl_duration = 0, ttl_col = \"\"",
+			}}}
 		case strings.HasPrefix(s, "LOOKUP "):
 			tag := strings.Split(s, " ")[2]
 			t.Columns = append([]string{"vid"}, tagFields[tag]...)
@@ -190,6 +221,7 @@ func schemaWire(cfg Config) *testWire {
 		return wireOutcome{Sent: true, Table: t}
 	}}
 }
+
 func TestSchemaWaitAndIncompatibleStructures(t *testing.T) {
 	cfg := testConfig()
 	cfg.PollInterval = time.Millisecond
@@ -257,8 +289,8 @@ func TestTransportDeadlineAndCancellationCloseActualConnection(t *testing.T) {
 	for _, mode := range []string{"deadline", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			local, peer := net.Pipe()
-			defer peer.Close()
-			defer local.Close()
+			defer func() { _ = peer.Close() }()
+			defer func() { _ = local.Close() }()
 			bounded := &deadlineConn{Conn: local}
 			s := &wireSession{conn: bounded, timeout: 20 * time.Millisecond}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -329,6 +361,7 @@ func TestOrphanInternalEdgesCanBeDeletedWithoutVertices(t *testing.T) {
 		t.Fatalf("orphan edge groups deleted: %d", deletes)
 	}
 }
+
 func TestWholeWritePlanMemoryIsBoundedAndDrainedOnClose(t *testing.T) {
 	cfg := testConfig()
 	w := &testWire{}
@@ -364,6 +397,7 @@ func TestWholeWritePlanMemoryIsBoundedAndDrainedOnClose(t *testing.T) {
 		t.Fatal("planning not drained")
 	}
 }
+
 func TestFormalSearchAndDeleteShareWriteSaturationBudget(t *testing.T) {
 	cfg := testConfig()
 	cfg.Connections = 3
@@ -389,7 +423,8 @@ func TestFormalSearchAndDeleteShareWriteSaturationBudget(t *testing.T) {
 	writes := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			writes <- r.AddGraph(context.Background(), ns, []*types.GraphData{{Node: []*types.GraphNode{{Name: "one"}}}})
+			writes <- r.AddGraph(context.Background(), ns,
+				[]*types.GraphData{{Node: []*types.GraphNode{{Name: "one"}}}})
 		}()
 		waitSignal(t, entered)
 	}

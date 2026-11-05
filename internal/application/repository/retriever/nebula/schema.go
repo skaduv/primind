@@ -4,26 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/primind/primind/internal/types"
 	"strings"
 	"time"
+
+	"github.com/primind/primind/internal/types"
 )
 
 func structNamespaceProbe() types.NameSpace {
 	return types.NameSpace{KnowledgeBase: "__schema_probe__", Knowledge: "__schema_probe__"}
 }
 
+// ErrSchema reports a missing, incompatible or not-yet-ready schema.
 var ErrSchema = errors.New("nebula schema is incompatible or not ready")
 
 func definitionNames() []string {
 	return append([]string{entityTag, relationTag, sourceTag}, edgeNames...)
 }
+
 func definition(name string) (string, []string) {
 	if fields, ok := tagFields[name]; ok {
 		return "TAG", fields
 	}
 	return "EDGE", []string{"kb", "doc"}
 }
+
+// SchemaDDL returns the tag, edge and index definitions the adapter requires.
 func SchemaDDL() []string {
 	var out []string
 	for _, name := range definitionNames() {
@@ -40,6 +45,7 @@ func SchemaDDL() []string {
 	}
 	return out
 }
+
 func fieldIndex(t wireTable, name string) int {
 	for i, n := range t.Columns {
 		if strings.EqualFold(n, name) {
@@ -48,15 +54,18 @@ func fieldIndex(t wireTable, name string) int {
 	}
 	return -1
 }
+
 func cell(row []string, index int) (string, bool) {
 	if index < 0 || index >= len(row) {
 		return "", false
 	}
 	return row[index], true
 }
+
 func normalizedDDL(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "")), ""))
 }
+
 func (r *Repository) checkSpace(ctx context.Context) error {
 	t, err := r.read(ctx, "schema", "DESCRIBE SPACE "+r.c.cfg.Space+";")
 	if err != nil {
@@ -71,6 +80,7 @@ func (r *Repository) checkSpace(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (r *Repository) checkDefinitions(ctx context.Context) error {
 	for _, name := range definitionNames() {
 		kind, fields := definition(name)
@@ -102,6 +112,7 @@ func (r *Repository) checkDefinitions(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (r *Repository) checkTTL(ctx context.Context, kind, name string) error {
 	t, err := r.read(ctx, "schema", "SHOW CREATE "+kind+" "+name+";")
 	if err != nil {
@@ -120,6 +131,8 @@ func (r *Repository) checkTTL(ctx context.Context, kind, name string) error {
 	}
 	return nil
 }
+
+// CheckSchema verifies the Space, definitions, TTL settings and indexes.
 func (r *Repository) CheckSchema(ctx context.Context) error {
 	if err := r.check(ctx); err != nil {
 		return err
@@ -159,11 +172,13 @@ func (r *Repository) CheckSchema(ctx context.Context) error {
 	return nil
 }
 
+// SchemaAuthorization is the explicit consent needed to create the schema.
 type SchemaAuthorization struct {
 	Space                       string
 	CreateInEmptyDedicatedSpace bool
 }
 
+// InitializeSchema creates the schema in an existing, empty, dedicated Space.
 func InitializeSchema(ctx context.Context, cfg Config, a SchemaAuthorization) error {
 	if a.Space != cfg.Space || !a.CreateInEmptyDedicatedSpace {
 		return fmt.Errorf("%w: explicit schema authorization required", ErrInvalid)
@@ -174,9 +189,10 @@ func InitializeSchema(ctx context.Context, cfg Config, a SchemaAuthorization) er
 	if err != nil {
 		return err
 	}
-	defer r.Close(context.Background())
+	defer func() { _ = r.Close(context.Background()) }()
 	return r.initializeEmptySchema(ctx)
 }
+
 func (r *Repository) initializeEmptySchema(ctx context.Context) error {
 	if err := r.checkSpace(ctx); err != nil {
 		return err
@@ -210,6 +226,7 @@ func (r *Repository) initializeEmptySchema(ctx context.Context) error {
 	}
 	return r.waitReady(ctx, r.CheckSchema)
 }
+
 func (r *Repository) waitReady(ctx context.Context, check func(context.Context) error) error {
 	bounded, cancel := context.WithTimeout(ctx, r.c.cfg.ReadyTimeout)
 	defer cancel()

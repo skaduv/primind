@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// ErrAuthorization reports a run profile that lacks its isolated-resource authorization.
 var ErrAuthorization = errors.New("isolated resource and load authorization is missing")
 
 // RunProfile is safety metadata, not a credential/configuration file. A completed
@@ -51,31 +52,44 @@ type RunProfile struct {
 	BusinessTargetStatus    string            `json:"business_target_status"`
 }
 
+// Validate checks the profile's authorization and bounds before any real run.
 func (p RunProfile) Validate(performance bool) error {
 	if p.Status != "AUTHORIZED" || p.AuthorizationRef == "" || !p.AllowWrite || !p.AllowCleanup {
 		return ErrAuthorization
 	}
-	if !schemaName.MatchString(p.RunID) || len(p.RunID) > 40 || !schemaName.MatchString(p.Space) || p.Version != "3.8.0" || p.SDK != "v3.8.0" || len(p.SourceCommit) != 40 {
+	if !schemaName.MatchString(p.RunID) || len(p.RunID) > 40 || !schemaName.MatchString(p.Space) ||
+		p.Version != "3.8.0" || p.SDK != "v3.8.0" || len(p.SourceCommit) != 40 {
 		return fmt.Errorf("%w: version/run/space/source", ErrInvalid)
 	}
-	if p.Instances != 1 || p.Connections < 4 || p.Connections > 32 || p.MaxConcurrency < 2 || p.MaxConcurrency >= p.Connections-1 || p.C1ConnectionBudget < 3*p.Connections || p.C1Rounds < 3 || p.C1Rounds > 20 {
+	if p.Instances != 1 || p.Connections < 4 || p.Connections > 32 || p.MaxConcurrency < 2 ||
+		p.MaxConcurrency >= p.Connections-1 || p.C1ConnectionBudget < 3*p.Connections || p.C1Rounds < 3 ||
+		p.C1Rounds > 20 {
 		return fmt.Errorf("%w: instance/connection/concurrency/C1 budget", ErrInvalid)
 	}
-	if p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 7200 || p.DrainSeconds < 1 || p.DrainSeconds > 300 || p.StatementBytes < 1024 || p.StatementBytes > 4<<20 {
+	if p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 7200 || p.DrainSeconds < 1 || p.DrainSeconds > 300 ||
+		p.StatementBytes < 1024 || p.StatementBytes > 4<<20 {
 		return ErrBudget
 	}
 	if !performance {
 		return nil
 	}
-	for _, key := range []string{"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index", "partitions", "replicas", "background_load", "window", "resource_sampler"} {
+	for _, key := range []string{
+		"cpu", "memory_limit", "disk_type", "disk_available", "network", "schema", "index",
+		"partitions", "replicas", "background_load", "window", "resource_sampler",
+	} {
 		if p.Environment[key] == "" {
 			return fmt.Errorf("%w: environment %s", ErrAuthorization, key)
 		}
 	}
-	if p.Calls < 2 || p.Calls > 1000 || p.GroupPairs < 1 || p.GroupPairs > 200 || p.Seed < 0 || p.MaxSoakCalls < p.MinCalls || p.MaxSoakCalls > 1000000 || p.MaxPhysicalRecords < (20*p.GroupPairs+2)*p.Calls || p.MaxPhysicalRecords > 1000000 || p.Rounds < 3 || p.Rounds > 10 || p.SoakSeconds < 1 || p.SoakSeconds >= p.MaxDurationSeconds || p.MinBatches < 10 || p.MinCalls <= p.MaxConcurrency || p.MinCalls > p.Calls {
+	if p.Calls < 2 || p.Calls > 1000 || p.GroupPairs < 1 || p.GroupPairs > 200 || p.Seed < 0 ||
+		p.MaxSoakCalls < p.MinCalls || p.MaxSoakCalls > 1000000 || p.MaxPhysicalRecords < (20*p.GroupPairs+2)*p.Calls ||
+		p.MaxPhysicalRecords > 1000000 || p.Rounds < 3 || p.Rounds > 10 || p.SoakSeconds < 1 ||
+		p.SoakSeconds >= p.MaxDurationSeconds || p.MinBatches < 10 || p.MinCalls <= p.MaxConcurrency ||
+		p.MinCalls > p.Calls {
 		return ErrBudget
 	}
-	if len(p.BatchSizes) < 1 || len(p.BatchSizes) > 4 || len(p.Concurrency) < 2 || len(p.Concurrency) > 4 || p.Concurrency[0] != 1 {
+	if len(p.BatchSizes) < 1 || len(p.BatchSizes) > 4 || len(p.Concurrency) < 2 || len(p.Concurrency) > 4 ||
+		p.Concurrency[0] != 1 {
 		return ErrBudget
 	}
 	for _, b := range p.BatchSizes {
@@ -99,12 +113,15 @@ func (p RunProfile) Validate(performance bool) error {
 	if !hasConcurrent {
 		return ErrBudget
 	}
-	if p.ResourceSamplePath == "" || p.MaxCPUPercent <= 0 || p.MaxCPUPercent > 100 || p.MaxMemoryBytes == 0 || p.MaxDiskIOBytesPerSecond <= 0 || p.MinFreeDiskBytes == 0 || p.MaxServiceLatencyMS <= 0 || p.MaxServiceErrorRate < 0 || p.MaxServiceErrorRate > 1 {
+	if p.ResourceSamplePath == "" || p.MaxCPUPercent <= 0 || p.MaxCPUPercent > 100 || p.MaxMemoryBytes == 0 ||
+		p.MaxDiskIOBytesPerSecond <= 0 || p.MinFreeDiskBytes == 0 || p.MaxServiceLatencyMS <= 0 ||
+		p.MaxServiceErrorRate < 0 || p.MaxServiceErrorRate > 1 {
 		return ErrAuthorization
 	}
 	return nil
 }
 
+// ResourceSample is one host/service resource observation used as a stop condition.
 type ResourceSample struct {
 	DiskReadBytesPerSecond  float64   `json:"disk_read_bytes_per_second"`
 	DiskWriteBytesPerSecond float64   `json:"disk_write_bytes_per_second"`
@@ -118,15 +135,21 @@ type ResourceSample struct {
 	Sessions                int       `json:"sessions"`
 }
 
+// CheckResource rejects stale samples and samples beyond the profile's thresholds.
 func (p RunProfile) CheckResource(s ResourceSample, now time.Time) error {
-	if s.DiskReadBytesPerSecond < 0 || s.DiskWriteBytesPerSecond < 0 || s.CPUPercent < 0 || s.CPUPercent > 100 || s.ServiceLatencyMS < 0 || s.ServiceErrorRate < 0 || s.ServiceErrorRate > 1 || s.Connections < 0 || s.Sessions < 0 {
+	if s.DiskReadBytesPerSecond < 0 || s.DiskWriteBytesPerSecond < 0 || s.CPUPercent < 0 || s.CPUPercent > 100 ||
+		s.ServiceLatencyMS < 0 || s.ServiceErrorRate < 0 || s.ServiceErrorRate > 1 || s.Connections < 0 ||
+		s.Sessions < 0 {
 		return ErrInvalid
 	}
 	age := now.Sub(s.At)
 	if age < 0 || age > 10*time.Second {
 		return fmt.Errorf("%w: stale resource sample", ErrAuthorization)
 	}
-	if s.DiskReadBytesPerSecond+s.DiskWriteBytesPerSecond > p.MaxDiskIOBytesPerSecond || s.CPUPercent > p.MaxCPUPercent || s.MemoryBytes > p.MaxMemoryBytes || s.FreeDiskBytes < p.MinFreeDiskBytes || s.ServiceLatencyMS > p.MaxServiceLatencyMS || s.ServiceErrorRate > p.MaxServiceErrorRate || s.Connections > p.Connections || s.Sessions > p.Connections {
+	if s.DiskReadBytesPerSecond+s.DiskWriteBytesPerSecond > p.MaxDiskIOBytesPerSecond ||
+		s.CPUPercent > p.MaxCPUPercent || s.MemoryBytes > p.MaxMemoryBytes || s.FreeDiskBytes < p.MinFreeDiskBytes ||
+		s.ServiceLatencyMS > p.MaxServiceLatencyMS || s.ServiceErrorRate > p.MaxServiceErrorRate ||
+		s.Connections > p.Connections || s.Sessions > p.Connections {
 		return fmt.Errorf("%w: resource stop threshold", ErrBudget)
 	}
 	return nil

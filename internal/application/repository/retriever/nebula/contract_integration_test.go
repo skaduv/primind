@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	adapter "github.com/primind/primind/internal/application/repository/retriever/nebula"
-	"github.com/primind/primind/internal/types"
-	"github.com/primind/primind/internal/types/interfaces"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	adapter "github.com/primind/primind/internal/application/repository/retriever/nebula"
+	"github.com/primind/primind/internal/types"
+	"github.com/primind/primind/internal/types/interfaces"
 )
 
 func readJSONFile(path string, target any) error {
@@ -23,7 +24,7 @@ func readJSONFile(path string, target any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || st.Size() > 16<<20 {
 		return fmt.Errorf("bounded JSON file required")
@@ -37,19 +38,21 @@ func readJSONFile(path string, target any) error {
 	}
 	return strictDecode(data, target)
 }
+
 func writeEvidence(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = f.Write(append(b, '\n'))
 	return err
 }
+
 func loadRun(t *testing.T, performance bool) (adapter.RunProfile, adapter.Config, string) {
 	t.Helper()
 	var p adapter.RunProfile
@@ -92,6 +95,7 @@ func loadRun(t *testing.T, performance bool) (adapter.RunProfile, adapter.Config
 	cfg.StatementBytes = p.StatementBytes
 	return p, cfg, out
 }
+
 func mappedNS(run string, n types.NameSpace) types.NameSpace {
 	k := n.Knowledge
 	if k != "" {
@@ -99,6 +103,7 @@ func mappedNS(run string, n types.NameSpace) types.NameSpace {
 	}
 	return types.NameSpace{KnowledgeBase: run + "-" + n.KnowledgeBase, Knowledge: k}
 }
+
 func mappedCall(run string, c fixtureCall) fixtureCall {
 	// JSON copy preserves the accepted fixed input and modifies only scoped IDs.
 	b, _ := json.Marshal(c)
@@ -114,6 +119,7 @@ func mappedCall(run string, c fixtureCall) fixtureCall {
 	}
 	return out
 }
+
 func mappedState(run string, s fixtureState) fixtureState {
 	b, _ := json.Marshal(s)
 	var out fixtureState
@@ -136,6 +142,7 @@ func mappedState(run string, s fixtureState) fixtureState {
 	}
 	return out
 }
+
 func graphState(g *types.GraphData, kb string) (fixtureState, error) {
 	s := fixtureState{Entities: []entityKey{}, Relations: []relationKey{}, Nodes: []fixtureNode{}}
 	if g == nil {
@@ -181,6 +188,7 @@ func graphState(g *types.GraphData, kb string) (fixtureState, error) {
 	s.Connected = len(connected)
 	return s, nil
 }
+
 func waitCheck(ctx context.Context, cfg adapter.Config, check func(context.Context) error) error {
 	bounded, cancel := context.WithTimeout(ctx, cfg.ReadyTimeout)
 	defer cancel()
@@ -211,6 +219,7 @@ func TestVisibilityWaitBoundsTheActualProbe(t *testing.T) {
 		t.Fatalf("probe deadline not enforced: %v", err)
 	}
 }
+
 func snapshotAll(ctx context.Context, r *adapter.Repository, run string) (fixtureState, error) {
 	all := fixtureState{Entities: []entityKey{}, Relations: []relationKey{}, Nodes: []fixtureNode{}}
 	for _, kb := range []string{"kb-a", "kb-b"} {
@@ -229,12 +238,13 @@ func snapshotAll(ctx context.Context, r *adapter.Repository, run string) (fixtur
 	}
 	return all, nil
 }
+
 func TestNebulaRealContract(t *testing.T) {
 	p, cfg, out := loadRun(t, false)
 	in, golden := loadFixtures(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.MaxDurationSeconds)*time.Second)
 	defer cancel()
-	if err := os.MkdirAll(out, 0700); err != nil {
+	if err := os.MkdirAll(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var manifestCalls []adapter.GraphCall
@@ -250,7 +260,10 @@ func TestNebulaRealContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p.CreateEmptySchema {
-		if err := adapter.InitializeSchema(ctx, cfg, adapter.SchemaAuthorization{Space: p.Space, CreateInEmptyDedicatedSpace: true}); err != nil {
+		if err := adapter.InitializeSchema(ctx, cfg, adapter.SchemaAuthorization{
+			Space:                       p.Space,
+			CreateInEmptyDedicatedSpace: true,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -283,7 +296,11 @@ func TestNebulaRealContract(t *testing.T) {
 		return err
 	}
 	t.Cleanup(func() {
-		if err := writeEvidence(filepath.Join(out, "contract-checks.json"), map[string]any{"checks": results, "metrics": r.Metrics(), "remaining_status": "consult residue evidence; no automatic cleanup after failure"}); err != nil {
+		if err := writeEvidence(filepath.Join(out, "contract-checks.json"), map[string]any{
+			"checks":           results,
+			"metrics":          r.Metrics(),
+			"remaining_status": "consult residue evidence; no automatic cleanup after failure",
+		}); err != nil {
 			t.Error(err)
 		}
 		if err := writeEvidence(filepath.Join(out, "expected-actual.json"), observations); err != nil {
@@ -368,7 +385,8 @@ func TestNebulaRealContract(t *testing.T) {
 			if err := compareObserved(q.ID, state, mappedState(p.RunID, q.Expected)); err != nil {
 				return err
 			}
-			if q.First != nil && (len(got.Node) == 0 || got.Node[0].Name != q.First.Name || got.Node[0].KnowledgeID != p.RunID+"-"+q.First.Doc) {
+			if q.First != nil && (len(got.Node) == 0 || got.Node[0].Name != q.First.Name ||
+				got.Node[0].KnowledgeID != p.RunID+"-"+q.First.Doc) {
 				return fmt.Errorf("raw seed first mismatch")
 			}
 			return nil
@@ -383,7 +401,10 @@ func TestNebulaRealContract(t *testing.T) {
 		if diagErr != nil {
 			t.Fatal(diagErr)
 		}
-		if err := writeEvidence(filepath.Join(out, q.ID+"-query.json"), map[string]any{"diagnostics": diag, "elapsed_ns": int64(time.Since(queryStart))}); err != nil {
+		if err := writeEvidence(filepath.Join(out, q.ID+"-query.json"), map[string]any{
+			"diagnostics": diag,
+			"elapsed_ns":  int64(time.Since(queryStart)),
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -550,6 +571,7 @@ func TestNebulaRealContract(t *testing.T) {
 	}
 	results["manifest-no-residue"] = "PASS"
 }
+
 func runC1(ctx context.Context, out string, round int) (runErr error) {
 	binary, err := os.Executable()
 	if err != nil {
@@ -584,7 +606,7 @@ func runC1(ctx context.Context, out string, round int) (runErr error) {
 		cmd := exec.CommandContext(childCtx, binary, "-test.run=^TestNebulaC1Worker$", "-test.v")
 		cmd.Env = append(os.Environ(), "PRIMIND_NG_C1_WORKER="+strconv.Itoa(i), "PRIMIND_NG_C1_BARRIER="+prefix)
 		commands[i] = cmd
-		log, err := os.OpenFile(prefix+fmt.Sprintf("-%d.log", i), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		log, err := os.OpenFile(prefix+fmt.Sprintf("-%d.log", i), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
@@ -678,6 +700,7 @@ func TestNebulaC1Worker(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestRunMappingPreservesFixedSemantics(t *testing.T) {
 	in, out := loadFixtures(t)
 	c := mappedCall("run01", in.Cases[0])

@@ -3,9 +3,10 @@ package nebula
 import (
 	"context"
 	"fmt"
-	"github.com/primind/primind/internal/types"
 	"sort"
 	"strings"
+
+	"github.com/primind/primind/internal/types"
 )
 
 // Manifest is prepared before writes. It contains no credentials; names/IDs may
@@ -16,13 +17,20 @@ type Manifest struct {
 	Vertices     []ManifestVertex
 	Edges        []ManifestEdge
 }
-type ManifestVertex struct{ Tag, ID string }
-type ManifestEdge struct{ Type, Source, Target string }
-type GraphCall struct {
-	Namespace types.NameSpace
-	Graphs    []*types.GraphData
-}
 
+type (
+	// ManifestVertex is one vertex a run will write.
+	ManifestVertex struct{ Tag, ID string }
+	// ManifestEdge is one edge a run will write.
+	ManifestEdge struct{ Type, Source, Target string }
+	// GraphCall is one AddGraph call of a run.
+	GraphCall struct {
+		Namespace types.NameSpace
+		Graphs    []*types.GraphData
+	}
+)
+
+// BuildManifest lists every vertex and edge the calls will write under run.
 func BuildManifest(cfg Config, run string, calls []GraphCall) (Manifest, error) {
 	if !schemaName.MatchString(run) {
 		return Manifest{}, ErrInvalid
@@ -117,6 +125,7 @@ func BuildManifest(cfg Config, run string, calls []GraphCall) (Manifest, error) 
 	return m, nil
 }
 
+// Residue lists manifest records still present after cleanup.
 type Residue struct{ Vertices, Edges []string }
 
 // ProbeManifest checks explicit identities, including edges whose vertices have
@@ -146,7 +155,10 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 		if !allowed || !safeVID(e.Source) || !safeVID(e.Target) {
 			return out, ErrInvalid
 		}
-		groups[e.Type] = append(groups[e.Type], record{e.Source + "->" + e.Target, literal(e.Source) + "->" + literal(e.Target)})
+		groups[e.Type] = append(groups[e.Type], record{
+			e.Source + "->" + e.Target,
+			literal(e.Source) + "->" + literal(e.Target),
+		})
 	}
 	if len(m.Vertices)+len(m.Edges) > r.c.cfg.SnapshotRecords*4 {
 		return out, ErrBudget
@@ -195,12 +207,13 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 	}
 	return out, nil
 }
+
 func safeVID(id string) bool {
 	if !strings.HasPrefix(id, "ng1_") {
 		return false
 	}
 	for _, r := range id {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
 			return false
 		}
 	}

@@ -1,3 +1,4 @@
+// Package nebula implements the NebulaGraph knowledge-graph repository.
 package nebula
 
 import (
@@ -7,11 +8,15 @@ import (
 	"strings"
 )
 
-type record struct{ ID, Value string }
-type batch struct {
-	Kind, Statement string
-	IDs             []string
-}
+type (
+	record struct{ ID, Value string }
+	batch  struct {
+		Kind, Statement string
+		IDs             []string
+	}
+)
+
+// BatchResult reports the outcome of one write statement without its text.
 type BatchResult struct {
 	StatementDigest string   `json:"statement_digest"`
 	Index           int      `json:"index"`
@@ -19,6 +24,8 @@ type BatchResult struct {
 	IdentityDigests []string `json:"identity_digests"`
 	State           string   `json:"state"`
 }
+
+// OperationError is returned when a multi-batch operation stops early; it lists every batch's state.
 type OperationError struct {
 	Operation string
 	Batches   []BatchResult
@@ -60,6 +67,7 @@ func splitBatches(cfg Config, kind, prefix, suffix string, records []record) ([]
 	flush()
 	return result, nil
 }
+
 func planBytes(cfg Config, plan []batch) error {
 	n := 0
 	for _, b := range plan {
@@ -70,6 +78,7 @@ func planBytes(cfg Config, plan []batch) error {
 	}
 	return nil
 }
+
 func receipts(plan []batch) []BatchResult {
 	out := make([]BatchResult, len(plan))
 	for i, b := range plan {
@@ -81,6 +90,7 @@ func receipts(plan []batch) []BatchResult {
 	}
 	return out
 }
+
 func (r *Repository) runPlan(ctx context.Context, op string, plan []batch) error {
 	if err := r.check(ctx); err != nil {
 		return err

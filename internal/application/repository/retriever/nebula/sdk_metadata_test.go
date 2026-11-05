@@ -17,7 +17,10 @@ func metadataResult(t *testing.T, columns []string, values ...*nv.Value) *ng.Res
 	for i, column := range columns {
 		names[i] = []byte(column)
 	}
-	rs, err := ng.GenResultSet(&gr.ExecutionResponse{ErrorCode: nv.ErrorCode_SUCCEEDED, Data: &nv.DataSet{ColumnNames: names, Rows: []*nv.Row{{Values: values}}}})
+	rs, err := ng.GenResultSet(&gr.ExecutionResponse{
+		ErrorCode: nv.ErrorCode_SUCCEEDED,
+		Data:      &nv.DataSet{ColumnNames: names, Rows: []*nv.Row{{Values: values}}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,8 +32,19 @@ func metadataResult(t *testing.T, columns []string, values ...*nv.Value) *ng.Res
 func TestSDKMetadataEmptyValues(t *testing.T) {
 	str := func(s string) *nv.Value { return &nv.Value{SVal: []byte(s)} }
 	num := int64(10)
-	spaceColumns := []string{"ID", "Name", "Partition Number", "Replica Factor", "Charset", "Collate", "Vid Type", "Comment"}
-	spaceValues := []*nv.Value{{IVal: &num}, str("primind_ng_contract"), {IVal: &num}, {IVal: &num}, str("utf8"), str("utf8_bin"), str("FIXED_STRING(1024)"), {}}
+	spaceColumns := []string{
+		"ID", "Name", "Partition Number", "Replica Factor", "Charset", "Collate", "Vid Type",
+		"Comment",
+	}
+	spaceValues := []*nv.Value{
+		{IVal: &num},
+		str("primind_ng_contract"),
+		{IVal: &num},
+		{IVal: &num},
+		str("utf8"),
+		str("utf8_bin"), str("FIXED_STRING(1024)"),
+		{},
+	}
 	t.Run("space absent comment", func(t *testing.T) {
 		got, err := decodeSDKTable(metadataResult(t, spaceColumns, spaceValues...), DefaultConfig())
 		want := []string{"10", "primind_ng_contract", "10", "10", "utf8", "utf8_bin", "FIXED_STRING(1024)", ""}
@@ -39,7 +53,8 @@ func TestSDKMetadataEmptyValues(t *testing.T) {
 		}
 	})
 	t.Run("definition absent default and comment", func(t *testing.T) {
-		got, err := decodeSDKTable(metadataResult(t, []string{"Field", "Type", "Null", "Default", "Comment"}, str("kb"), str("string"), str("NO"), &nv.Value{}, &nv.Value{}), DefaultConfig())
+		got, err := decodeSDKTable(metadataResult(t, []string{"Field", "Type", "Null", "Default", "Comment"}, str("kb"),
+			str("string"), str("NO"), &nv.Value{}, &nv.Value{}), DefaultConfig())
 		if err != nil || len(got.Rows) != 1 || !reflect.DeepEqual(got.Rows[0], []string{"kb", "string", "NO", "", ""}) {
 			t.Fatalf("metadata mismatch: table=%+v err=%v", got, err)
 		}
@@ -84,7 +99,8 @@ func TestSDKMetadataIndexColumns(t *testing.T) {
 	list := func(values ...*nv.Value) *nv.Value { return &nv.Value{LVal: &nv.NList{Values: values}} }
 	for _, owner := range []string{"By Tag", "By Edge"} {
 		t.Run(owner, func(t *testing.T) {
-			got, err := decodeSDKTable(metadataResult(t, []string{"Index Name", owner, "Columns"}, str("primind_entity_scope"), str("primind_entity"), list(str("kb"), str("doc"))), DefaultConfig())
+			got, err := decodeSDKTable(metadataResult(t, []string{"Index Name", owner, "Columns"},
+				str("primind_entity_scope"), str("primind_entity"), list(str("kb"), str("doc"))), DefaultConfig())
 			if err != nil || len(got.Rows) != 1 || got.Rows[0][2] != `["kb","doc"]` {
 				t.Fatalf("metadata mismatch: table=%+v err=%v", got, err)
 			}
@@ -99,7 +115,8 @@ func TestSDKMetadataIndexColumns(t *testing.T) {
 		{"escaping", list(str("名\"\\\n")), `["名\"\\\n"]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"), str("t"), tc.value), DefaultConfig())
+			got, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"),
+				str("t"), tc.value), DefaultConfig())
 			if err != nil || len(got.Rows) != 1 || got.Rows[0][2] != tc.want {
 				t.Fatalf("metadata mismatch: table=%+v err=%v", got, err)
 			}
@@ -115,7 +132,8 @@ func TestSDKMetadataIndexColumns(t *testing.T) {
 		{"empty element", list(&nv.Value{})},
 	} {
 		t.Run("reject "+tc.name, func(t *testing.T) {
-			_, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"), str("t"), tc.value), DefaultConfig())
+			_, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"), str("t"),
+				tc.value), DefaultConfig())
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -131,7 +149,8 @@ func TestSDKMetadataIndexColumns(t *testing.T) {
 		t.Run(fmt.Sprintf("budget %d", budget), func(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.ReadBytes = budget
-			_, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"), str("t"), list(str("kb"), str("doc"))), cfg)
+			_, err := decodeSDKTable(metadataResult(t, []string{"Index Name", "By Tag", "Columns"}, str("i"), str("t"),
+				list(str("kb"), str("doc"))), cfg)
 			if !errors.Is(err, ErrBudget) {
 				t.Fatalf("unexpected error: %v", err)
 			}
