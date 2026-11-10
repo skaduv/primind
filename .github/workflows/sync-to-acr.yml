@@ -3,6 +3,13 @@ name: Sync images to Aliyun ACR
 # 把 GHCR 上的自研镜像（main 系列）同步到阿里云 ACR 个人版（ioply 命名空间），
 # 供国内服务器就近拉取。ACR 侧使用语义化版本 tag（如 v0.0.1），
 # 触发时通过 version 输入指定；sandbox 变体在版本后加 -cube / -desktop 后缀。
+#
+# 注意：GHCR 镜像是 buildx 构建的多架构索引，带 provenance 证明清单
+# （application/vnd.oci.empty.v1+json），ACR 个人版不认识该类型、整索引复制会被拒。
+# 因此按平台分别复制 amd64 / arm64 单架构镜像，再用 crane index append
+# 重新拼成多架构索引。各平台镜像的 digest 与 GHCR 保持一致，
+# 仅索引 digest 因去掉证明清单而不同。
+#
 # ACR 命名空间开启了自动创建仓库，首次推送即建仓（私有）。
 # 需要仓库 Secrets：ACR_USERNAME、ACR_PASSWORD（ACR 访问凭证密码）。
 
@@ -31,39 +38,46 @@ jobs:
         run: |
           echo "${{ secrets.ACR_PASSWORD }}" | crane auth login "$ACR_REGISTRY" -u "${{ secrets.ACR_USERNAME }}" --password-stdin
 
-      - name: Copy images GHCR -> ACR (multi-arch preserved)
+      - name: Copy images GHCR -> ACR (per-platform, rebuild index)
         env:
           VER: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          copy() {
-            echo "== ghcr.io/skaduv/$1:$2 -> $ACR_NAMESPACE/$1:$3"
-            crane copy "ghcr.io/skaduv/$1:$2" "$ACR_REGISTRY/$ACR_NAMESPACE/$1:$3"
+          DST="$ACR_REGISTRY/$ACR_NAMESPACE"
+          sync_image() {
+            # $1=镜像名 $2=GHCR 源 tag $3=ACR 目标 tag
+            echo "== $1:$2 -> $1:$3"
+            crane copy --platform linux/amd64 "ghcr.io/skaduv/$1:$2" "$DST/$1:$3-amd64"
+            crane copy --platform linux/arm64 "ghcr.io/skaduv/$1:$2" "$DST/$1:$3-arm64"
+            crane index append -m "$DST/$1:$3-amd64" -m "$DST/$1:$3-arm64" -t "$DST/$1:$3"
           }
-          copy primind-app       main              "$VER"
-          copy primind-ui        main              "$VER"
-          copy primind-docreader main              "$VER"
-          copy primind-sandbox   main              "$VER"
-          copy primind-sandbox   main-cube         "$VER-cube"
-          copy primind-sandbox   main-desktop      "$VER-desktop"
-          copy primind-sandbox   main-desktop-cube "$VER-desktop-cube"
+          sync_image primind-ui        main              "$VER"
+          sync_image primind-app       main              "$VER"
+          sync_image primind-docreader main              "$VER"
+          sync_image primind-sandbox   main              "$VER"
+          sync_image primind-sandbox   main-cube         "$VER-cube"
+          sync_image primind-sandbox   main-desktop      "$VER-desktop"
+          sync_image primind-sandbox   main-desktop-cube "$VER-desktop-cube"
 
-      - name: Verify digests match
+      - name: Verify per-platform digests match
         env:
           VER: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          DST="$ACR_REGISTRY/$ACR_NAMESPACE"
           check() {
-            a=$(crane digest "ghcr.io/skaduv/$1:$2")
-            b=$(crane digest "$ACR_REGISTRY/$ACR_NAMESPACE/$1:$3")
-            if [ "$a" = "$b" ]; then
-              echo "OK $1:$3 $a"
-            else
-              echo "MISMATCH $1 ghcr:$2=$a acr:$3=$b"; exit 1
-            fi
+            for plat in linux/amd64 linux/arm64; do
+              a=$(crane digest --platform "$plat" "ghcr.io/skaduv/$1:$2")
+              b=$(crane digest --platform "$plat" "$DST/$1:$3")
+              if [ "$a" = "$b" ]; then
+                echo "OK $1:$3 ($plat) $a"
+              else
+                echo "MISMATCH $1 ($plat) ghcr:$2=$a acr:$3=$b"; exit 1
+              fi
+            done
           }
-          check primind-app       main              "$VER"
           check primind-ui        main              "$VER"
+          check primind-app       main              "$VER"
           check primind-docreader main              "$VER"
           check primind-sandbox   main              "$VER"
           check primind-sandbox   main-cube         "$VER-cube"
