@@ -1,0 +1,20 @@
+# cargo audit 配置（CI 在 third_party/anydoc-go 目录运行 `cargo audit` 时读取）
+#
+# 以下 4 条公告都针对 zip 8.x 的 `ZipArchive::extract` / `ZipStreamReader::extract`，
+# 即把压缩包解压到磁盘时的符号链接越界、权限经符号链接生效、保留 SUID/SGID、
+# 符号链接条目导致进程中止等问题，修复版本为 zip >= 9.0.0。
+#
+# anydoc 0.2.4（目前最新版）把 zip 固定在 8.6.0。核对其源码：只用
+# `ZipArchive::new` 在内存中打开 Office/EPUB 等文档，并用 `by_name` 读取部件，
+# 从不调用 extract，也不向磁盘写文件，因此不受这些问题影响。
+#
+# 待 anydoc 发布依赖 zip >= 9 的版本后，升级并删除这里的忽略项。
+# 新增于 2026-11-10。
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0367", # SUID/SGID 位在解压时被保留
+    "RUSTSEC-2026-0368", # extract 创建指向目标目录外的符号链接
+    "RUSTSEC-2026-0369", # extract 经符号链接设置 Unix 权限
+    "RUSTSEC-2026-0429", # extract 遇到大尺寸符号链接条目时进程中止
+]
