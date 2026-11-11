@@ -433,6 +433,7 @@ func (s *knowledgeService) CloneChunk(ctx context.Context, src, dst *types.Knowl
 		}
 	}
 	s.bindChunkResources(ctx, dst.TenantID, dst.ID, targetChunks)
+	s.enqueueTransferredGraphExtract(ctx, dst, targetKB, targetChunks)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 	// Route CopyIndices via the source KB's bound store. This function does
@@ -1432,8 +1433,44 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 	if err := s.repo.UpdateKnowledgeForTransfer(ctx, &before, knowledge); err != nil {
 		return err
 	}
+	s.enqueueTransferredGraphExtract(ctx, knowledge, targetKB, oldChunks)
 
 	return nil
+}
+
+// enqueueTransferredGraphExtract builds the graph under the target KB for
+// chunks that reached it without graph data: a reuse_vectors move (the source
+// namespace is deleted, graph data is not relocated) or a KB clone (chunks are
+// copied, graph data is not). It returns the number of tasks actually
+// enqueued. No pending slot is seeded: the knowledge is already completed, and
+// a finished task's slot release is clamped at zero. NewChunkExtractTask
+// enqueues nothing when the graph backend is disabled.
+func (s *knowledgeService) enqueueTransferredGraphExtract(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	targetKB *types.KnowledgeBase,
+	chunks []*types.Chunk,
+) int {
+	if s.task == nil || targetKB == nil {
+		return 0
+	}
+	overrides, _ := knowledge.ProcessOverrides()
+	if !ResolveProcessConfig(targetKB, overrides).GraphEnabled {
+		return 0
+	}
+	attempt := s.tracker().LatestAttempt(ctx, knowledge.ID)
+	enqueued := 0
+	for i, chunk := range selectGraphChunks(chunks) {
+		ok, err := NewChunkExtractTask(ctx, s.task, knowledge.TenantID, chunk.ID,
+			targetKB.SummaryModelID, knowledge.ID, attempt, i)
+		if err != nil {
+			logger.Errorf(ctx, "move: failed to enqueue graph extract for chunk %s: %v", chunk.ID, err)
+		}
+		if ok {
+			enqueued++
+		}
+	}
+	return enqueued
 }
 
 // moveKnowledgeReparse moves knowledge to target KB and re-parses it with target KB's configuration.
@@ -1618,4 +1655,17 @@ func (s *knowledgeService) getOrCreateTagInTarget(
 	tagIDMapping[srcTagID] = newTag.ID
 	logger.Infof(ctx, "Created tag %s (ID: %s) in target KB %s", newTag.Name, newTag.ID, dstKnowledgeBaseID)
 	return newTag.ID
+}
+
+// cloneExtractConfig copies a KB's graph extraction settings for a cloned KB,
+// so later edits to one KB's tags or examples do not alias the other's.
+func cloneExtractConfig(cfg *types.ExtractConfig) *types.ExtractConfig {
+	if cfg == nil {
+		return nil
+	}
+	out := *cfg
+	out.Tags = slices.Clone(cfg.Tags)
+	out.Nodes = slices.Clone(cfg.Nodes)
+	out.Relations = slices.Clone(cfg.Relations)
+	return &out
 }

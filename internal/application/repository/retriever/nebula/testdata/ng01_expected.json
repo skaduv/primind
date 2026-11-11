@@ -1,0 +1,2038 @@
+{
+  "schema_version": 1,
+  "real_database_status": "NOT_RUN",
+  "baseline": {
+    "entity_keys": [
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "主泵A"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "调节阀B"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "主泵A-备用"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "孤立标签"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "泵\"Q\\X\n第二行"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a2",
+        "name": "主泵A"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a2",
+        "name": "储罐C"
+      },
+      {
+        "knowledge_base": "kb-b",
+        "knowledge": "doc-b1",
+        "name": "主泵A"
+      },
+      {
+        "knowledge_base": "kb-b",
+        "knowledge": "doc-b1",
+        "name": "调节阀B"
+      }
+    ],
+    "relation_keys": [
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "主泵A",
+        "node2": "调节阀B",
+        "type": "连接"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "主泵A",
+        "node2": "调节阀B",
+        "type": "供液"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "调节阀B",
+        "node2": "主泵A",
+        "type": "反馈"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "主泵A",
+        "node2": "主泵A",
+        "type": "自检"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "主泵A-备用",
+        "node2": "调节阀B",
+        "type": "旁路"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "node1": "泵\"Q\\X\n第二行",
+        "node2": "调节阀B",
+        "type": "标记\"型\\X"
+      },
+      {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a2",
+        "node1": "主泵A",
+        "node2": "储罐C",
+        "type": "连接"
+      },
+      {
+        "knowledge_base": "kb-b",
+        "knowledge": "doc-b1",
+        "node1": "主泵A",
+        "node2": "调节阀B",
+        "type": "连接"
+      }
+    ],
+    "nodes": [
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1",
+          "name": "主泵A"
+        },
+        "chunks": [
+          "c-a1-01",
+          "c-a1-02"
+        ],
+        "attributes": [
+          "型号:PX-1"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1",
+          "name": "调节阀B"
+        },
+        "chunks": [
+          "c-a1-01"
+        ],
+        "attributes": []
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1",
+          "name": "主泵A-备用"
+        },
+        "chunks": [
+          "c-a1-03"
+        ],
+        "attributes": [
+          "备用"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1",
+          "name": "孤立标签"
+        },
+        "chunks": [
+          "c-a1-04"
+        ],
+        "attributes": [
+          "独立"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1",
+          "name": "泵\"Q\\X\n第二行"
+        },
+        "chunks": [
+          "c-a1-special"
+        ],
+        "attributes": [
+          "说明:\"引号\"\\路径\n结束"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2",
+          "name": "主泵A"
+        },
+        "chunks": [
+          "c-a2-01"
+        ],
+        "attributes": [
+          "型号:PX-2"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2",
+          "name": "储罐C"
+        },
+        "chunks": [
+          "c-a2-01"
+        ],
+        "attributes": []
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1",
+          "name": "主泵A"
+        },
+        "chunks": [
+          "c-b1-01"
+        ],
+        "attributes": [
+          "型号:PX-3"
+        ]
+      },
+      {
+        "entity_key": {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1",
+          "name": "调节阀B"
+        },
+        "chunks": [
+          "c-b1-01"
+        ],
+        "attributes": []
+      }
+    ],
+    "connected_entity_count": 8
+  },
+  "checks": [
+    {
+      "id": "Q1",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "主泵A"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "主泵A",
+            "type": "自检"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          }
+        ],
+        "connected_entity_count": 3
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1",
+        "name": "主泵A"
+      },
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q2",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "泵A"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "主泵A",
+            "type": "自检"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          }
+        ],
+        "connected_entity_count": 3
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q3",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "调节阀B"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "泵\"Q\\X\n第二行"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "泵\"Q\\X\n第二行",
+            "node2": "调节阀B",
+            "type": "标记\"型\\X"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "泵\"Q\\X\n第二行"
+            },
+            "chunks": [
+              "c-a1-special"
+            ],
+            "attributes": [
+              "说明:\"引号\"\\路径\n结束"
+            ]
+          }
+        ],
+        "connected_entity_count": 4
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q4",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "泵\"Q\\X\n第二行"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "泵\"Q\\X\n第二行"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "泵\"Q\\X\n第二行",
+            "node2": "调节阀B",
+            "type": "标记\"型\\X"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "泵\"Q\\X\n第二行"
+            },
+            "chunks": [
+              "c-a1-special"
+            ],
+            "attributes": [
+              "说明:\"引号\"\\路径\n结束"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 2
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q5",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "孤立标签"
+      ],
+      "expected": {
+        "entity_keys": [],
+        "relation_keys": [],
+        "nodes": [],
+        "connected_entity_count": 0
+      },
+      "expected_empty": true,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q6",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "不存在"
+      ],
+      "expected": {
+        "entity_keys": [],
+        "relation_keys": [],
+        "nodes": [],
+        "connected_entity_count": 0
+      },
+      "expected_empty": true,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q7",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a2"
+      },
+      "query_names": [
+        "主泵A"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "储罐C"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "node1": "主泵A",
+            "node2": "储罐C",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": [
+              "型号:PX-2"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "储罐C"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 2
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a1-01",
+        "c-a1-02",
+        "c-a1-03",
+        "c-a1-04",
+        "c-a1-special",
+        "c-a1-05",
+        "c-a1-06",
+        "c-b1-01"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q8",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-b",
+        "knowledge": "doc-b1"
+      },
+      "query_names": [
+        "主泵A"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "调节阀B"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": [
+              "型号:PX-3"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 2
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        },
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a1-01",
+        "c-a1-02",
+        "c-a1-03",
+        "c-a1-04",
+        "c-a1-special",
+        "c-a1-05",
+        "c-a1-06",
+        "c-a2-01"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q9",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": ""
+      },
+      "query_names": [
+        "主泵A"
+      ],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "储罐C"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "主泵A",
+            "type": "自检"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "node1": "主泵A",
+            "node2": "储罐C",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": [
+              "型号:PX-2"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "储罐C"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 5
+      },
+      "expected_empty": false,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "Q10",
+      "operation": "SearchNode",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": {
+        "knowledge_base": "kb-a",
+        "knowledge": "doc-a1"
+      },
+      "query_names": [
+        "主泵a"
+      ],
+      "expected": {
+        "entity_keys": [],
+        "relation_keys": [],
+        "nodes": [],
+        "connected_entity_count": 0
+      },
+      "expected_empty": true,
+      "require_non_nil": true,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a2-01",
+        "c-b1-01",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "S1",
+      "operation": "InspectSources",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": null,
+      "query_names": [],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          }
+        ],
+        "relation_keys": [],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          }
+        ],
+        "connected_entity_count": 0
+      },
+      "expected_empty": false,
+      "require_non_nil": false,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [],
+      "forbidden_chunks": [],
+      "delete_namespaces": [],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "R1",
+      "operation": "RepeatBaseline",
+      "precondition": "baseline",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": null,
+      "query_names": [],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "孤立标签"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "泵\"Q\\X\n第二行"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "储罐C"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "调节阀B"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "主泵A",
+            "type": "自检"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "泵\"Q\\X\n第二行",
+            "node2": "调节阀B",
+            "type": "标记\"型\\X"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "node1": "主泵A",
+            "node2": "储罐C",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "孤立标签"
+            },
+            "chunks": [
+              "c-a1-04"
+            ],
+            "attributes": [
+              "独立"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "泵\"Q\\X\n第二行"
+            },
+            "chunks": [
+              "c-a1-special"
+            ],
+            "attributes": [
+              "说明:\"引号\"\\路径\n结束"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": [
+              "型号:PX-2"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "储罐C"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": [
+              "型号:PX-3"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 8
+      },
+      "expected_empty": false,
+      "require_non_nil": false,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [],
+      "forbidden_chunks": [
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [],
+      "preserved_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        },
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "C1",
+      "operation": "AppendConcurrently",
+      "precondition": "R1",
+      "input_refs": [
+        "A1-concurrent-05",
+        "A1-concurrent-06"
+      ],
+      "namespace": null,
+      "query_names": [],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "调节阀B"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "主泵A-备用"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "孤立标签"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "name": "泵\"Q\\X\n第二行"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "储罐C"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "调节阀B"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "供液"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "调节阀B",
+            "node2": "主泵A",
+            "type": "反馈"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A",
+            "node2": "主泵A",
+            "type": "自检"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "主泵A-备用",
+            "node2": "调节阀B",
+            "type": "旁路"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a1",
+            "node1": "泵\"Q\\X\n第二行",
+            "node2": "调节阀B",
+            "type": "标记\"型\\X"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "node1": "主泵A",
+            "node2": "储罐C",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a1-01",
+              "c-a1-02",
+              "c-a1-05",
+              "c-a1-06"
+            ],
+            "attributes": [
+              "型号:PX-1"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-a1-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "主泵A-备用"
+            },
+            "chunks": [
+              "c-a1-03"
+            ],
+            "attributes": [
+              "备用"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "孤立标签"
+            },
+            "chunks": [
+              "c-a1-04"
+            ],
+            "attributes": [
+              "独立"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a1",
+              "name": "泵\"Q\\X\n第二行"
+            },
+            "chunks": [
+              "c-a1-special"
+            ],
+            "attributes": [
+              "说明:\"引号\"\\路径\n结束"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": [
+              "型号:PX-2"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "储罐C"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": [
+              "型号:PX-3"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 8
+      },
+      "expected_empty": false,
+      "require_non_nil": false,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [],
+      "forbidden_chunks": [],
+      "delete_namespaces": [],
+      "preserved_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "empty_query_ids": [],
+      "requires_no_source_residue": false
+    },
+    {
+      "id": "D1",
+      "operation": "DelGraph",
+      "precondition": "C1",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": null,
+      "query_names": [],
+      "expected": {
+        "entity_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "name": "储罐C"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "主泵A"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "name": "调节阀B"
+          }
+        ],
+        "relation_keys": [
+          {
+            "knowledge_base": "kb-a",
+            "knowledge": "doc-a2",
+            "node1": "主泵A",
+            "node2": "储罐C",
+            "type": "连接"
+          },
+          {
+            "knowledge_base": "kb-b",
+            "knowledge": "doc-b1",
+            "node1": "主泵A",
+            "node2": "调节阀B",
+            "type": "连接"
+          }
+        ],
+        "nodes": [
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": [
+              "型号:PX-2"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-a",
+              "knowledge": "doc-a2",
+              "name": "储罐C"
+            },
+            "chunks": [
+              "c-a2-01"
+            ],
+            "attributes": []
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "主泵A"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": [
+              "型号:PX-3"
+            ]
+          },
+          {
+            "entity_key": {
+              "knowledge_base": "kb-b",
+              "knowledge": "doc-b1",
+              "name": "调节阀B"
+            },
+            "chunks": [
+              "c-b1-01"
+            ],
+            "attributes": []
+          }
+        ],
+        "connected_entity_count": 4
+      },
+      "expected_empty": false,
+      "require_non_nil": false,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        }
+      ],
+      "forbidden_chunks": [
+        "c-a1-01",
+        "c-a1-02",
+        "c-a1-03",
+        "c-a1-04",
+        "c-a1-special",
+        "c-a1-05",
+        "c-a1-06"
+      ],
+      "delete_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        },
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        }
+      ],
+      "preserved_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "empty_query_ids": [
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6"
+      ],
+      "requires_no_source_residue": true
+    },
+    {
+      "id": "D2",
+      "operation": "DelGraph",
+      "precondition": "D1",
+      "input_refs": [
+        "A1-base",
+        "A1-more-source",
+        "A2",
+        "B1"
+      ],
+      "namespace": null,
+      "query_names": [],
+      "expected": {
+        "entity_keys": [],
+        "relation_keys": [],
+        "nodes": [],
+        "connected_entity_count": 0
+      },
+      "expected_empty": true,
+      "require_non_nil": false,
+      "first_entity_key": null,
+      "neighbor_order": "unspecified",
+      "forbidden_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a1"
+        },
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "forbidden_chunks": [],
+      "delete_namespaces": [
+        {
+          "knowledge_base": "kb-a",
+          "knowledge": "doc-a2"
+        },
+        {
+          "knowledge_base": "kb-b",
+          "knowledge": "doc-b1"
+        }
+      ],
+      "preserved_namespaces": [],
+      "empty_query_ids": [],
+      "requires_no_source_residue": true
+    }
+  ]
+}

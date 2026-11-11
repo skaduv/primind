@@ -1343,6 +1343,10 @@ func (s *knowledgeBaseService) CopyKnowledgeBase(ctx context.Context,
 			FAQConfig:             faqConfig,
 			ProfileConfig:         profileConfig,
 			VectorStoreID:         sourceKB.VectorStoreID,
+			// Graph extraction settings travel with the copy so cloned chunks
+			// are re-extracted under the new KB.
+			IndexingStrategy: sourceKB.IndexingStrategy,
+			ExtractConfig:    cloneExtractConfig(sourceKB.ExtractConfig),
 		}
 		// The clone is owned by the caller, not the original creator —
 		// otherwise a Contributor copying someone else's KB would still

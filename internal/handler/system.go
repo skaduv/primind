@@ -328,7 +328,7 @@ func (h *SystemHandler) GetSystemInfo(c *gin.Context) {
 	// Get vector store engine from config or RETRIEVE_DRIVER
 	vectorStoreEngine := h.getVectorStoreEngine()
 
-	// Get graph database engine from NEO4J_ENABLE
+	// Get graph database engine from the resolved GRAPH_BACKEND
 	graphDatabaseEngine := h.getGraphDatabaseEngine()
 
 	// Get MinIO enabled status
@@ -577,10 +577,15 @@ func (h *SystemHandler) getVectorStoreEngine() string {
 
 // getGraphDatabaseEngine returns the graph database engine name
 func (h *SystemHandler) getGraphDatabaseEngine() string {
-	if h.neo4jDriver == nil {
-		return "Not Enabled"
+	switch types.GraphBackend() {
+	case types.GraphBackendNebula:
+		return "NebulaGraph"
+	case types.GraphBackendNeo4j:
+		if h.neo4jDriver != nil {
+			return "Neo4j"
+		}
 	}
-	return "Neo4j"
+	return "Not Enabled"
 }
 
 // supportsRetrieverType checks if a driver supports a specific retriever type
