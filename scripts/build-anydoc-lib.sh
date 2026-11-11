@@ -116,5 +116,26 @@ dest="$crate_dir/lib/$lib_dir"
 mkdir -p "$dest"
 cp "$crate_dir/target/$target/release/$lib_name" "$dest/$lib_name"
 
+# Go 1.26.11+ refuses cgo archives that carry LLVM LTO/bitcode sections
+# ("disallowed LTO section \".llvmbc\" in #cgo LDFLAGS"). Rust release builds
+# (lto = "thin") leave embedded bitcode in the staticlib's objects. The native
+# code is already compiled, so drop those sections; linking is unaffected.
+case "$target" in
+  *linux*)
+    objcopy_bin=${OBJCOPY:-objcopy}
+    if ! command -v "$objcopy_bin" >/dev/null 2>&1; then
+      echo "error: $objcopy_bin not found; it is needed to strip LTO sections for Go 1.26.11+." >&2
+      exit 1
+    fi
+    "$objcopy_bin" --wildcard \
+      --remove-section=.llvmbc \
+      --remove-section=.llvmcmd \
+      --remove-section='.llvm.lto*' \
+      --remove-section='.gnu.lto_*' \
+      "$dest/$lib_name"
+    echo "Stripped LTO sections from $dest/$lib_name"
+    ;;
+esac
+
 echo "Wrote $dest/$lib_name"
 echo "Build Primind with the archive: go build -tags anydoc ./cmd/server"
