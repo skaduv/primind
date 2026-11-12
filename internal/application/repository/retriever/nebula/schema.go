@@ -43,8 +43,13 @@ func SchemaDDL() []string {
 		kind, _ := definition(name)
 		out = append(out, "CREATE "+kind+" INDEX "+name+"_scope ON "+name+"(kb(128),doc(128));")
 	}
-	return out
+	return append(out, entityKeyIndexDDL)
 }
+
+// entityKeyIndexDDL indexes the normalised name within a KB for seed lookup.
+// 256 bytes is NebulaGraph's maximum string index length; longer keys still
+// match exactly because the engine re-checks the full stored value.
+const entityKeyIndexDDL = "CREATE TAG INDEX " + entityKeyIndex + " ON " + entityTag + "(kb(128),name_key(256));"
 
 func fieldIndex(t wireTable, name string) int {
 	for i, n := range t.Columns {
@@ -67,7 +72,7 @@ func normalizedDDL(s string) string {
 }
 
 func (r *Repository) checkSpace(ctx context.Context) error {
-	t, err := r.read(ctx, "schema", "DESCRIBE SPACE "+r.c.cfg.Space+";")
+	t, err := r.read(ctx, "schema", "DESCRIBE SPACE "+r.c.cfg.Space+";", nil)
 	if err != nil {
 		return err
 	}
@@ -84,7 +89,7 @@ func (r *Repository) checkSpace(ctx context.Context) error {
 func (r *Repository) checkDefinitions(ctx context.Context) error {
 	for _, name := range definitionNames() {
 		kind, fields := definition(name)
-		t, err := r.read(ctx, "schema", "DESCRIBE "+kind+" "+name+";")
+		t, err := r.read(ctx, "schema", "DESCRIBE "+kind+" "+name+";", nil)
 		if err != nil {
 			return err
 		}
@@ -114,7 +119,7 @@ func (r *Repository) checkDefinitions(ctx context.Context) error {
 }
 
 func (r *Repository) checkTTL(ctx context.Context, kind, name string) error {
-	t, err := r.read(ctx, "schema", "SHOW CREATE "+kind+" "+name+";")
+	t, err := r.read(ctx, "schema", "SHOW CREATE "+kind+" "+name+";", nil)
 	if err != nil {
 		return err
 	}
@@ -147,7 +152,7 @@ func (r *Repository) CheckSchema(ctx context.Context) error {
 	}
 	for _, name := range definitionNames() {
 		kind, _ := definition(name)
-		ix, err := r.read(ctx, "schema", "SHOW CREATE "+kind+" INDEX "+name+"_scope;")
+		ix, err := r.read(ctx, "schema", "SHOW CREATE "+kind+" INDEX "+name+"_scope;", nil)
 		if err != nil {
 			return err
 		}
@@ -161,15 +166,33 @@ func (r *Repository) CheckSchema(ctx context.Context) error {
 		if !strings.Contains(normalizedDDL(ddl), "on"+name+"(kb(128),doc(128))") {
 			return fmt.Errorf("%w: scope index", ErrSchema)
 		}
-		query := lookup(r.c.cfg, name, structNamespaceProbe())
+		query, params := lookup(r.c.cfg, name, structNamespaceProbe())
 		if kind == "EDGE" {
-			query = edgeLookup(r.c.cfg, name, structNamespaceProbe())
+			query, params = edgeLookup(r.c.cfg, name, structNamespaceProbe())
 		}
-		if _, err := r.read(ctx, "schema", query); err != nil {
+		if _, err := r.read(ctx, "schema", query, params); err != nil {
 			return err
 		}
 	}
-	return nil
+	return r.checkKeyIndex(ctx)
+}
+
+func (r *Repository) checkKeyIndex(ctx context.Context) error {
+	ix, err := r.read(ctx, "schema", "SHOW CREATE TAG INDEX "+entityKeyIndex+";", nil)
+	if err != nil {
+		return err
+	}
+	if len(ix.Rows) != 1 {
+		return ErrSchema
+	}
+	ddl, ok := cell(ix.Rows[0], fieldIndex(ix, "Create Tag Index"))
+	if !ok || !strings.Contains(normalizedDDL(ddl), "on"+entityTag+"(kb(128),name_key(256))") {
+		return fmt.Errorf("%w: name_key index", ErrSchema)
+	}
+	probe := structNamespaceProbe()
+	_, err = r.read(ctx, "schema", "LOOKUP ON "+entityTag+" WHERE "+entityTag+".kb == $kb AND "+entityTag+
+		".name_key == $q YIELD id(vertex) AS vid | LIMIT 1;", map[string]string{"kb": probe.KnowledgeBase, "q": "x"})
+	return err
 }
 
 // SchemaAuthorization is the explicit consent needed to create the schema.
@@ -198,7 +221,7 @@ func (r *Repository) initializeEmptySchema(ctx context.Context) error {
 		return err
 	}
 	for _, stmt := range []string{"SHOW TAGS;", "SHOW EDGES;"} {
-		t, err := r.read(ctx, "schema", stmt)
+		t, err := r.read(ctx, "schema", stmt, nil)
 		if err != nil {
 			return err
 		}

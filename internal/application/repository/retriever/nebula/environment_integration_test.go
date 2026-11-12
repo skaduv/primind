@@ -95,7 +95,7 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 	}
 	defer d.Close()
 	read := func(stmt string) wireTable {
-		r := d.Execute(ctx, stmt)
+		r := d.Execute(ctx, stmt, nil)
 		if r.Err != nil {
 			t.Fatalf("read-only inventory %q: %v", stmt, r.Err)
 		}
@@ -120,7 +120,7 @@ func TestNebulaFunctionalEnvironment(t *testing.T) {
 		t.Fatal("Space metadata missing")
 	}
 	vid, ok := cell(space.Rows[0], fieldIndex(space, "Vid Type"))
-	if !ok || strings.ToUpper(vid) != "FIXED_STRING(1024)" {
+	if !ok || strings.ToUpper(vid) != fmt.Sprintf("FIXED_STRING(%d)", cfg.VIDBytes) {
 		t.Fatal("Space VID incompatible")
 	}
 	read("SHOW CREATE SPACE " + cfg.Space + ";")

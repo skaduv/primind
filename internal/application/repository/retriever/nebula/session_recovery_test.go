@@ -230,7 +230,7 @@ func TestSessionRecoveryThriftKeepsOrdinaryServerErrors(t *testing.T) {
 			r := testRepo(cfg, d)
 			t.Cleanup(func() { _ = r.Close(context.Background()) })
 			for i := 0; i < 4; i++ {
-				out := d.Execute(context.Background(), "synthetic")
+				out := d.Execute(context.Background(), "synthetic", nil)
 				var e *executionError
 				if !out.Sent || !errors.As(out.Err, &e) || e.code != int(code) {
 					t.Fatalf("ordinary failure changed: %+v", out)

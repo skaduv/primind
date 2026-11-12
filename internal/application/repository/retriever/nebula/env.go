@@ -78,12 +78,13 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (EnvConfig, error) {
 		}
 	}
 	for k, dst := range map[string]*time.Duration{
-		"NEBULA_ACQUIRE_TIMEOUT":   &cfg.AcquireTimeout,
-		"NEBULA_SOCKET_TIMEOUT":    &cfg.SocketTimeout,
-		"NEBULA_OPERATION_TIMEOUT": &cfg.OperationTimeout,
-		"NEBULA_CLOSE_TIMEOUT":     &cfg.CloseTimeout,
-		"NEBULA_READY_TIMEOUT":     &cfg.ReadyTimeout,
-		"NEBULA_POLL_INTERVAL":     &cfg.PollInterval,
+		"NEBULA_ACQUIRE_TIMEOUT":     &cfg.AcquireTimeout,
+		"NEBULA_SOCKET_TIMEOUT":      &cfg.SocketTimeout,
+		"NEBULA_OPERATION_TIMEOUT":   &cfg.OperationTimeout,
+		"NEBULA_CLOSE_TIMEOUT":       &cfg.CloseTimeout,
+		"NEBULA_READY_TIMEOUT":       &cfg.ReadyTimeout,
+		"NEBULA_POLL_INTERVAL":       &cfg.PollInterval,
+		"NEBULA_SEARCH_SCAN_TIMEOUT": &cfg.SearchScanTimeout,
 	} {
 		if v := get(k); v != "" {
 			d, err := time.ParseDuration(v)

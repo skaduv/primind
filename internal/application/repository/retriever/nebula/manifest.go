@@ -145,7 +145,7 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 		if _, ok := tagFields[v.Tag]; !ok || !safeVID(v.ID) {
 			return out, ErrInvalid
 		}
-		groups[v.Tag] = append(groups[v.Tag], record{v.ID, literal(v.ID)})
+		groups[v.Tag] = append(groups[v.Tag], record{ID: v.ID, Value: literal(v.ID)})
 	}
 	for _, e := range m.Edges {
 		allowed := false
@@ -156,8 +156,8 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 			return out, ErrInvalid
 		}
 		groups[e.Type] = append(groups[e.Type], record{
-			e.Source + "->" + e.Target,
-			literal(e.Source) + "->" + literal(e.Target),
+			ID:    e.Source + "->" + e.Target,
+			Value: literal(e.Source) + "->" + literal(e.Target),
 		})
 	}
 	if len(m.Vertices)+len(m.Edges) > r.c.cfg.SnapshotRecords*4 {
@@ -174,7 +174,7 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 			return out, err
 		}
 		for _, b := range plan {
-			tb, err := r.read(ctx, b.Kind, b.Statement)
+			tb, err := r.read(ctx, b.Kind, b.Statement, b.Params)
 			if err != nil {
 				return out, err
 			}
@@ -206,16 +206,4 @@ func (r *Repository) ProbeManifest(ctx context.Context, m Manifest) (Residue, er
 		}
 	}
 	return out, nil
-}
-
-func safeVID(id string) bool {
-	if !strings.HasPrefix(id, "ng1_") {
-		return false
-	}
-	for _, r := range id {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' {
-			return false
-		}
-	}
-	return true
 }

@@ -22,7 +22,7 @@ type protocolSession struct {
 	calls, releases atomic.Int32
 }
 
-func (s *protocolSession) Execute(context.Context, string) (*ng.ResultSet, error) {
+func (s *protocolSession) Execute(context.Context, string, map[string]string) (*ng.ResultSet, error) {
 	s.calls.Add(1)
 	return s.result, s.err
 }
@@ -37,7 +37,7 @@ func TestSDKLeaseReturnAndServerFailure(t *testing.T) {
 			session := &protocolSession{result: rs}
 			d := &sdkDriver{cfg: testConfig(), sessions: make(chan sdkSession, 1)}
 			d.sessions <- session
-			out := d.Execute(context.Background(), "synthetic")
+			out := d.Execute(context.Background(), "synthetic", nil)
 			if !out.Sent || (code == nv.ErrorCode_SUCCEEDED) != (out.Err == nil) {
 				t.Fatal("SDK server status swallowed")
 			}
@@ -49,7 +49,7 @@ func TestSDKLeaseReturnAndServerFailure(t *testing.T) {
 	session := &protocolSession{err: errors.New("transport response lost")}
 	d := &sdkDriver{cfg: testConfig(), sessions: make(chan sdkSession, 1)}
 	d.sessions <- session
-	out := d.Execute(context.Background(), "synthetic")
+	out := d.Execute(context.Background(), "synthetic", nil)
 	if !out.Sent || out.Err == nil || session.releases.Load() != 1 || len(d.sessions) != 1 {
 		t.Fatal("broken lease not released")
 	}
@@ -58,7 +58,7 @@ func TestSDKLeaseReturnAndServerFailure(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	out = d.Execute(ctx, "synthetic")
+	out = d.Execute(ctx, "synthetic", nil)
 	if out.Sent || !errors.Is(out.Err, context.Canceled) {
 		t.Fatal("waiting lease cancellation")
 	}
@@ -140,11 +140,11 @@ func TestSnapshotRejectsMissingLinksAndForeignNamespace(t *testing.T) {
 				if len(out.Table.Rows) > 0 && strings.HasPrefix(s, "LOOKUP ON primind_entity ") {
 					switch corruption {
 					case "namespace":
-						out.Table.Rows[0][1] = encoded("foreign-kb")
+						out.Table.Rows[0][1] = "foreign-kb"
 					case "identity":
-						out.Table.Rows[0][0] = "ng1_fake"
+						out.Table.Rows[0][0] = "ng2_fake"
 					case "attribute":
-						out.Table.Rows[0][4] = encoded("{")
+						out.Table.Rows[0][5] = "{"
 					}
 				}
 				return out
@@ -196,6 +196,13 @@ func schemaWire(cfg Config) *testWire {
 				name + "_scope",
 				"CREATE EDGE INDEX " + name + "_scope ON " + name + "(kb(128),doc(128))",
 			}}}
+		case s == "SHOW CREATE TAG INDEX "+entityKeyIndex+";":
+			t = wireTable{Columns: []string{"Tag Index Name", "Create Tag Index"}, Rows: [][]string{{
+				entityKeyIndex,
+				"CREATE TAG INDEX " + entityKeyIndex + " ON " + entityTag + "(kb(128), name_key(256))",
+			}}}
+		case strings.HasPrefix(s, "LOOKUP ON "+entityTag+" ") && strings.Contains(s, ".name_key == "):
+			t.Columns = []string{"vid"}
 		case strings.HasPrefix(s, "SHOW CREATE TAG INDEX "):
 			tag := strings.TrimSuffix(strings.TrimPrefix(s, "SHOW CREATE TAG INDEX "), "_scope;")
 			t = wireTable{Columns: []string{"Tag Index Name", "Create Tag Index"}, Rows: [][]string{{

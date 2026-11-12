@@ -41,10 +41,11 @@ func TestConfigFromEnvOverridesEveryBudget(t *testing.T) {
 		"NEBULA_CONNECTIONS": "8", "NEBULA_WRITES": "3", "NEBULA_WAITERS": "16",
 		"NEBULA_PENDING_BYTES": "4194304", "NEBULA_PLAN_BYTES": "16777216", "NEBULA_BATCH_RECORDS": "50",
 		"NEBULA_STATEMENT_BYTES": "32768", "NEBULA_OPERATION_BYTES": "4194304", "NEBULA_SNAPSHOT_RECORDS": "500",
-		"NEBULA_READ_BYTES": "1048576", "NEBULA_VID_BYTES": "512",
+		"NEBULA_READ_BYTES": "1048576", "NEBULA_VID_BYTES": "64",
 		"NEBULA_ACQUIRE_TIMEOUT": "2s", "NEBULA_SOCKET_TIMEOUT": "3s", "NEBULA_OPERATION_TIMEOUT": "10s",
 		"NEBULA_CLOSE_TIMEOUT": "6s", "NEBULA_READY_TIMEOUT": "7s", "NEBULA_POLL_INTERVAL": "50ms",
-		"NEBULA_AUTO_SCHEMA": "false", "NEBULA_TLS": "true", "NEBULA_TLS_SERVER_NAME": "graphd",
+		"NEBULA_SEARCH_SCAN_TIMEOUT": "750ms",
+		"NEBULA_AUTO_SCHEMA":         "false", "NEBULA_TLS": "true", "NEBULA_TLS_SERVER_NAME": "graphd",
 	} {
 		env[k] = v
 	}
@@ -56,7 +57,7 @@ func TestConfigFromEnvOverridesEveryBudget(t *testing.T) {
 		cfg.Connections, cfg.Writes, cfg.Waiters, cfg.PendingBytes, cfg.PlanBytes, cfg.BatchRecords,
 		cfg.StatementBytes, cfg.OperationBytes, cfg.SnapshotRecords, cfg.ReadBytes, cfg.VIDBytes,
 	}
-	want := []int{8, 3, 16, 4 << 20, 16 << 20, 50, 32 << 10, 4 << 20, 500, 1 << 20, 512}
+	want := []int{8, 3, 16, 4 << 20, 16 << 20, 50, 32 << 10, 4 << 20, 500, 1 << 20, 64}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("int field %d = %d, want %d", i, got[i], want[i])
@@ -64,11 +65,11 @@ func TestConfigFromEnvOverridesEveryBudget(t *testing.T) {
 	}
 	gotD := []time.Duration{
 		cfg.AcquireTimeout, cfg.SocketTimeout, cfg.OperationTimeout, cfg.CloseTimeout,
-		cfg.ReadyTimeout, cfg.PollInterval,
+		cfg.ReadyTimeout, cfg.PollInterval, cfg.SearchScanTimeout,
 	}
 	wantD := []time.Duration{
 		2 * time.Second, 3 * time.Second, 10 * time.Second, 6 * time.Second, 7 * time.Second,
-		50 * time.Millisecond,
+		50 * time.Millisecond, 750 * time.Millisecond,
 	}
 	for i := range wantD {
 		if gotD[i] != wantD[i] {

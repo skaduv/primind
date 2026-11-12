@@ -29,13 +29,13 @@ func TestCoordinatorInvalidSessionsDoNotPoisonPool(t *testing.T) {
 			}
 			defer d.Close()
 			for i := 0; i < 2; i++ {
-				out := d.Execute(context.Background(), "synthetic")
+				out := d.Execute(context.Background(), "synthetic", nil)
 				if out.Err == nil || !out.Sent || created != 0 {
 					t.Fatal("original invalid-session request must return its error without automatic replay")
 				}
 			}
 			for i := 0; i < 2; i++ {
-				out := d.Execute(context.Background(), "next-independent-call")
+				out := d.Execute(context.Background(), "next-independent-call", nil)
 				if out.Err != nil {
 					t.Errorf("new call reused invalid session: %v", out.Err)
 				}
