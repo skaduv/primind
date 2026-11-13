@@ -244,7 +244,7 @@ func TestLocalRealKilledSessionRecovery(t *testing.T) {
 	defer cancel()
 	listSessions := func() map[string]bool {
 		t.Helper()
-		table, err := killer.read(ctx, "diag", "SHOW SESSIONS | YIELD $-.SessionId AS SessionId;")
+		table, err := killer.read(ctx, "diag", "SHOW SESSIONS | YIELD $-.SessionId AS SessionId;", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -276,7 +276,7 @@ func TestLocalRealKilledSessionRecovery(t *testing.T) {
 		if before[id] {
 			continue
 		}
-		if _, err := killer.read(ctx, "diag", "KILL SESSION "+id+";"); err != nil {
+		if _, err := killer.read(ctx, "diag", "KILL SESSION "+id+";", nil); err != nil {
 			t.Fatalf("KILL SESSION %s: %v", id, err)
 		}
 		killed++

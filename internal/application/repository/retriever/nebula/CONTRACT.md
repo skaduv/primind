@@ -135,29 +135,37 @@ go test -mod=readonly -p 1 ./internal/application/repository/retriever/nebula -r
 
 ### 5.1 Schema 与身份
 
-SchemaDDL 返回可审查的 12 条非破坏性 DDL：三 Tag、三 Edge、六个 namespace 索引。Space 必须由资源登记预建。InitializeSchema 仅在显式授权且 SHOW TAGS/EDGES 为空的专用 Space 创建结构；不 CREATE/DROP/CLEAR Space，不 ALTER 已有结构，不自动为既有数据 REBUILD 索引。半途失败保留现场，重新运行前由资源负责人核实结构。
+SchemaDDL 返回可审查的 13 条非破坏性 DDL：三 Tag、三 Edge、六个 namespace 索引，以及实体名称键索引 primind_entity_key(kb(128),name_key(256))。Space 必须由资源登记预建。InitializeSchema 仅在显式授权且 SHOW TAGS/EDGES 为空的专用 Space 创建结构；不 CREATE/DROP/CLEAR Space，不 ALTER 已有结构，不自动为既有数据 REBUILD 索引。半途失败保留现场，重新运行前由资源负责人核实结构。
 
-- primind_entity：kb、doc、name、attrs，均 STRING NOT NULL。
+- primind_entity：kb、doc、name、name_key、attrs，均 STRING NOT NULL；name_key 仅用于检索，计算分四步：NFKC → 小写 → 按空白切段（strings.Fields）→ 重新连接：相邻两段交界处一侧是汉字、另一侧是 a–z/0–9 时直接相连，其余交界用一个空格。汉字指 U+3400–U+4DBF、U+4E00–U+9FFF、U+20000–U+3FFFF 及 U+3007，字符类别按固定码位判断，不依赖标准库 Unicode 表。因此匹配对汉字与拉丁字母/数字之间的空白不敏感（`苏州 rotor精工` 与 `苏州rotor精工`、`HX-200 电驱平台` 与 `HX-200电驱平台` 等价），首尾空白忽略、连续空白视为一个；但**不忽略**汉字之间（`张 三`≠`张三`）、拉丁词之间（`space x`≠`spacex`）、标点或其他文字（带重音字母、假名、韩文等）与汉字之间（`c++ 语言`≠`c++语言`）的空白。该算法属于存储格式：读取时严格校验存储的 name_key 等于按 name 重算的值，修改算法即需迁移，按旧规则写入的受影响记录会使 Snapshot 与 DelGraph 返回 ErrInvalid。
 - primind_relation：kb、doc、node1、node2、kind，均 STRING NOT NULL。
 - primind_source：kb、doc、name、chunk，均 STRING NOT NULL。
 - primind_from：关系记录 → 源实体；primind_to：关系记录 → 目标实体；primind_owner：来源记录 → 实体。三者均含 kb/doc STRING NOT NULL，rank=0；不是业务关系类型。
 - 每个 Tag/Edge 都有对应 *_scope 索引，字段 kb(128), doc(128)；TTL 必须关闭。
 
-VID 为 ng1_ + base64url(JSON 字符串数组)，数组为 [role, KB, doc, ...]。entity 追加 name；relation 追加 node1/node2/type；source 追加 name/chunk。编码可逆，不截断、不依赖哈希碰撞概率。KB/doc 按完整原值区分，禁止标签化替换字符；单个 KB/doc 限 96 UTF-8 字节（base64url 不超过索引 128 字节）。所有用户属性使用规范 base64url，attrs 内部先 JSON 编码，因此引号、反斜杠、真实换行、NUL 均不会进入 nGQL 语法。读取时严格解码并复核 ID、namespace、关系方向和 rank。
+存储布局 v2（明文属性 + 哈希 VID）：VID 为 ng2_ + base64url(SHA-256(JSON 字符串数组) 的前 20 字节)，数组为 [role, KB, doc, ...]；entity 追加 name，relation 追加 node1/node2/type，source 追加 name/chunk。VID 固定 31 字节，与名称长度无关，同样内容得到同样 VID；不可逆，记录的全部信息从明文属性读取。160 位摘要下偶然碰撞可忽略，但碰撞在读取时无法检出（INSERT IF NOT EXISTS 保留先写入的记录）。单个 KB/doc 限 96 UTF-8 字节。VID 只能以字面量出现（Nebula 3.8 不支持 VID 位置参数）；凡是从库里读回、将再次拼进语句的 VID，必须先通过 safeVID（前缀 ng2_、长度恰为 31、字符集 [A-Za-z0-9_-]）。
 
-VIDBytes=1024 是容纳可逆组合身份的工程起点，不是已测最优值。[官方 VID 文档](https://docs.nebula-graph.io/3.8.0/1.introduction/3.vid/) 提醒过大的 FIXED_STRING 会增加内存和磁盘开销、影响性能；本方案须把较长 VID 的物理放大计入 P6/P7，不能以无哈希碰撞推导性能更优。目标 Space 仍须真实核验。
+所有属性（kb、doc、name、name_key、attrs、chunk、关系类型）以明文 UTF-8 存储，写入与按值读取全部通过 ExecuteWithParameter 参数传值，不拼接进 nGQL，因此引号、反斜杠、换行、NUL 不会改变语法；Studio/Console 可直接浏览。读取时严格复核：UTF-8、namespace 等于查询范围、name_key 等于由 name 重算的值、由明文属性重算的身份必须等于 VID，关系方向和 rank 同样核对。entity 的 attrs 不参与 VID 计算，其内容被改动无法检出（JSON 损坏除外）。name_key 的算法（NFKC + 小写 + 合并空白）属于存储格式：修改算法会使全部已有记录复核失败，等同于格式变更，必须迁移。旧格式 Space（base64 属性，或 ng1_ 可逆 VID / FIXED_STRING(1024)）与本 Schema 不兼容，CheckSchema 会拒绝，需新建 Space 后迁移数据。
+
+VIDBytes=32 容纳 31 字节的哈希 VID，必须与 Space 的 FIXED_STRING 长度完全一致。相对旧的 FIXED_STRING(1024)，未压缩的 key 约缩小 30 倍；磁盘上的差距受底层压缩影响会小得多，实际的磁盘与内存差距尚未实测。
 
 先实体，再来源/关系记录，再内部边；多个 GraphData 顺序处理，实体 IF NOT EXISTS 保留 on-create 属性。来源每个 Chunk 一条稳定记录，重复输入幂等。没有跨批事务；关系或来源缺少内部连边时 Snapshot/Search 返回错误，不能把半图当完整图。首次创建时的属性竞争、写入可见性、跨进程来源完整性尚未真实验证。
 
 ### 5.2 查询与删除语义
 
-SearchNode 实现现有接口；KB 必填，doc 可空，未知但有效 KB 允许无命中。返回非 nil 空 GraphData；孤立节点不成为检索命中。候选以精确名优先，然后 Unicode 字符数、名称、doc、ID 排序；最多 200 个 seed，按最早 seed 分配关系并去重，再最多 2000 条业务关系。返回 ID/KnowledgeID/SourceID/TargetID，首个节点是首条命中的 seed。邻居顺序不作为业务契约。
+SearchNode 实现现有接口；KB 必填，doc 可空，未知但有效 KB 允许无命中。返回非 nil 空 GraphData；孤立节点不成为检索命中。检索在 Nebula 内完成：
 
-Search 提供额外 SearchDiagnostics（范围节点/关系数、候选/选中 seed、返回关系数及两个截断标志）；原 SearchNode 不改 DTO，截断累计在 Metrics.SearchTruncations。Snapshot 走完整限定范围检查，不受 200/2000 显示上限影响；缺内部边、额外孤边、错误来源、跨 namespace、重复身份、解码错误和预算溢出均返回 error，不返回部分成功。
+1. 候选：匹配在 Nebula 内求值，只返回命中的行（vid、doc、name、name_key）。(a) 精确：name_key IN [...] 走 name_key 索引，保证整名命中不会被 (b) 的截断挤掉；(b) 包含：范围内实体经管道 `| YIELD … WHERE $-.name_key CONTAINS $q0 OR …` 在库内过滤。包含匹配没有索引可用，是库内逐行扫描，耗时随范围内实体数线性增长，受 SearchScanTimeout（默认 2 秒）约束；超时后该 namespace 记为大范围 10 分钟，期间 (b) 改为 name_key 索引的前缀匹配，此时不支持名称中间的子串，诊断中 IndexOnly=true。前缀匹配的语句是 `name_key >= $loN AND name_key < $hiN` 走 primind_entity_key 的索引区间扫描，管道里再按完整查询键做 `$-.name_key STARTS WITH $qN`，然后照常 ORDER BY name_key、doc、vid 再 LIMIT。NebulaGraph 3.8 不会把索引上的 STARTS WITH 变成范围扫描（会读完整个 KB 的索引项），所以区间条件不能省；STARTS WITH 留在管道里保证结果与按前缀匹配严格相同。区间由 prefixRange 计算：字符串按 UTF-8 字节序比较（已实测），下界为查询键在码位边界上截到 256 字节以内的前缀，上界为下界最后一个码位加一（跳过 U+D800–U+DFFF；U+10FFFF 去掉后向前进位；全为 U+10FFFF 时没有上界，只用下界），并保证上界也不超过 256 字节（索引长度），因此区间可能比查询键宽，但不依赖引擎对超长边界的处理。上下界都以参数传入。过滤的其他错误直接返回，不降级。每条语句先 ORDER BY 再 LIMIT SnapshotRecords+1，命中超过 SnapshotRecords 时截断并置 CandidateTruncated，不报错；库内排序按名称字节长度，与下一步按字符数的最终排序只在截断时保留哪些行上有差别。每个候选用 (KB, doc, name) 重算 VID 并核对 name_key。匹配对大小写、全半角、空白不敏感（与 Neo4j 大小写敏感的 CONTAINS 不同，黄金 Q10 在本适配器有显式覆盖）。
+2. 排序：精确名优先，然后 Unicode 字符数、名称、doc、ID；按 64 个一组反向 GO 找出有关系的 seed，最多 200 个。
+3. 关系：按 seed 顺序分配并去重，最多 2000 条；一次 GO 读出两条端点边及关系（$^）与端点实体（$$）属性，一次反向 GO 读出来源。所有返回记录逐条复核，任一不一致返回 ErrInvalid，不返回半图。
+
+返回 ID/KnowledgeID/SourceID/TargetID，首个节点是首条命中的 seed。邻居顺序不作为业务契约。
+
+Search 提供额外 SearchDiagnostics（候选/有关系/选中 seed、返回关系数、按流程顺序的三个截断标志 CandidateTruncated / SeedTruncated / RelationTruncated、IndexOnly 是否退回前缀匹配）；原 SearchNode 不改 DTO，截断累计在 Metrics.SearchTruncations。Snapshot 走完整限定范围检查，不受 200/2000 显示上限影响；缺内部边、额外孤边、错误来源、跨 namespace、重复身份、解码错误和预算溢出均返回 error，不返回部分成功。
 
 范围快照不是数据库事务快照。与正在写入/删除的数据并行时可以报不完整；调用方不得据此宣称原子发布。LOOKUP 的 LIMIT 限制返回量，不等于已经证明后端扫描成本有界；实际索引计划、超级节点开销及真实吞吐仍需 PROFILE/P6/P7。ReadBytes 是解码检查预算，不是 Thrift 在分配响应之前的网络帧/RSS 硬限制。
 
-DelGraph 拒绝空 KB 或空 doc，避免误作整 KB 删除。所有 namespace 先校验和读取、完整构造删除计划，再执行内部边删除、带边顶点删除。内部边 namespace 索引使顶点已删后的孤边也能被再次定位；无全库兜底。ProbeManifest 按预先记录的所有顶点/边身份 FETCH，配合 namespace 快照验证保留对象与无残留；不能仅以普通问答为空判定删除成功。图内写删竞争、索引可见性、真实故障恢复仍未验收。
+DelGraph 拒绝空 KB 或空 doc，避免误作整 KB 删除。所有 namespace 先校验和读取、完整构造删除计划，再执行内部边删除、带边顶点删除。内部边 namespace 索引使顶点已删后的孤边也能被再次定位；无全库兜底。VID 不可逆，边上的 kb/doc 标记不能单独作为归属依据，删除前逐条核对端点：两个端点都在本 namespace 已读出的顶点中，是本 namespace 的边；端点不在其中且按 VID 在三个 Tag 上都查不到，是孤边，可以删除；端点不在其中但查到且 kb/doc 属于其他 namespace，是被错标的他人的边，整个删除返回 ErrInvalid，不删除任何记录。额外查询只针对不在本 namespace 顶点集合内的端点，健康数据下为零次。ProbeManifest 按预先记录的所有顶点/边身份 FETCH，配合 namespace 快照验证保留对象与无残留；不能仅以普通问答为空判定删除成功。图内写删竞争、索引可见性、真实故障恢复仍未验收。
 
 ## 6. NG-01B 执行预算与生命周期（最终本地实现）
 
@@ -171,7 +179,8 @@ DelGraph 拒绝空 KB 或空 doc，避免误作整 KB 删除。所有 namespace 
 | PendingBytes / byte | 8 MiB | ≥ StatementBytes，≤64 MiB；等待执行的完整语句字节预算 |
 | SnapshotRecords / 条 | 10000 | 1—100000；快照顶点+内部边超过预算报错；输入准备亦有记录数预算 |
 | ReadBytes / byte | 16 MiB | 256 byte—128 MiB；SDK 响应与各解码阶段检查，不能取代服务端响应限制 |
-| VIDBytes / byte | 1024 | 128—4096，必须与实际 Space 的 FIXED_STRING 长度完全一致 |
+| VIDBytes / byte | 32 | 31—256，必须与实际 Space 的 FIXED_STRING 长度完全一致 |
+| SearchScanTimeout | 2s | 库内包含过滤的时间预算，超出后退回前缀匹配；阶段 3 压测后保持 2 秒（单线程过滤中位数 40 万实体 1.73 s、50 万实体 2.43 s，6 万实体约 0.15 s；本机 NebulaGraph 3.8.0 单节点实测） |
 | AcquireTimeout / duration | 5 s | 正值，≤5 min；许可和计划内存等待可取消 |
 | SocketTimeout / duration | 5 s | 正值，≤5 min；每个真实 RPC 的绝对 deadline；TCP/TLS 拨号也受限 |
 | OperationTimeout / duration | 30 s | 正值，≤5 min；跨批总 deadline，不因逐批成功而刷新 |

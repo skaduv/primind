@@ -34,7 +34,7 @@ func (e *executionError) Unwrap() error { return e.cause }
 // removes an old connection without closing it; retaining socket ownership here
 // avoids relying on that path for a physical connection bound. There is no retry.
 type sdkSession interface {
-	Execute(context.Context, string) (*ng.ResultSet, error)
+	Execute(ctx context.Context, stmt string, params map[string]string) (*ng.ResultSet, error)
 	Release()
 }
 type sdkDriver struct {
@@ -70,7 +70,7 @@ func resultCode(rs *ng.ResultSet) int {
 	return int(rs.GetErrorCode())
 }
 
-func (d *sdkDriver) Execute(ctx context.Context, stmt string) wireOutcome {
+func (d *sdkDriver) Execute(ctx context.Context, stmt string, params map[string]string) wireOutcome {
 	var s sdkSession
 	select {
 	case <-ctx.Done():
@@ -101,7 +101,7 @@ func (d *sdkDriver) Execute(ctx context.Context, stmt string) wireOutcome {
 	if err := ctx.Err(); err != nil {
 		return wireOutcome{Err: err}
 	}
-	rs, err := s.Execute(ctx, stmt)
+	rs, err := s.Execute(ctx, stmt, params)
 	if err != nil {
 		broken = true
 		return wireOutcome{Sent: true, Err: &executionError{cause: err}}
@@ -265,7 +265,7 @@ func newWireSessionOnConn(ctx context.Context, cfg Config, conn net.Conn) (sdkSe
 	}
 	s.id = auth.GetSessionID()
 	s.authenticated = true
-	rs, err := s.Execute(ctx, "USE "+cfg.Space+";")
+	rs, err := s.Execute(ctx, "USE "+cfg.Space+";", nil)
 	if err != nil {
 		return fail(&executionError{cause: err})
 	}
@@ -276,11 +276,15 @@ func newWireSessionOnConn(ctx context.Context, cfg Config, conn net.Conn) (sdkSe
 	return s, nil
 }
 
-func (s *wireSession) Execute(ctx context.Context, stmt string) (*ng.ResultSet, error) {
+func (s *wireSession) Execute(ctx context.Context, stmt string, params map[string]string) (*ng.ResultSet, error) {
+	values := make(map[string]*nv.Value, len(params))
+	for k, v := range params {
+		values[k] = &nv.Value{SVal: []byte(v)}
+	}
 	var response *gr.ExecutionResponse
 	err := s.rpcCall(ctx, func() error {
 		var e error
-		response, e = s.rpc.ExecuteWithParameter(s.id, []byte(stmt), map[string]*nv.Value{})
+		response, e = s.rpc.ExecuteWithParameter(s.id, []byte(stmt), values)
 		return e
 	})
 	if err != nil {

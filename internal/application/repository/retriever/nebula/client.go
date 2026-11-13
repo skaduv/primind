@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/primind/primind/internal/types"
 )
 
 // Errors returned by the client when work is refused or a budget is exceeded.
@@ -46,18 +48,22 @@ type Config struct {
 	AcquireTimeout   time.Duration
 	SocketTimeout    time.Duration
 	OperationTimeout time.Duration
-	CloseTimeout     time.Duration
-	ReadyTimeout     time.Duration
-	PollInterval     time.Duration
+	// SearchScanTimeout bounds the in-store substring filter over a
+	// namespace's entity names; past it search falls back to prefix matching.
+	SearchScanTimeout time.Duration
+	CloseTimeout      time.Duration
+	ReadyTimeout      time.Duration
+	PollInterval      time.Duration
 }
 
 // DefaultConfig returns engineering starting limits; endpoint, Space and credentials must be filled in.
 func DefaultConfig() Config {
 	return Config{
 		Connections: 4, Writes: 2, Waiters: 32, PendingBytes: 8 << 20, PlanBytes: 32 << 20, BatchRecords: 100,
-		StatementBytes: 64 << 10, OperationBytes: 8 << 20, SnapshotRecords: 10000, ReadBytes: 16 << 20, VIDBytes: 1024,
+		StatementBytes: 64 << 10, OperationBytes: 8 << 20, SnapshotRecords: 10000, ReadBytes: 16 << 20, VIDBytes: 32,
 		AcquireTimeout: 5 * time.Second, SocketTimeout: 5 * time.Second, OperationTimeout: 30 * time.Second,
-		CloseTimeout: 30 * time.Second, ReadyTimeout: 20 * time.Second, PollInterval: 100 * time.Millisecond,
+		SearchScanTimeout: 2 * time.Second,
+		CloseTimeout:      30 * time.Second, ReadyTimeout: 20 * time.Second, PollInterval: 100 * time.Millisecond,
 	}
 }
 func (Config) String() string { return "NebulaGraph configuration (credentials redacted)" }
@@ -78,12 +84,12 @@ func (c Config) validate() error {
 	if c.BatchRecords < 1 || c.BatchRecords > 10000 || c.StatementBytes < 256 || c.StatementBytes > 4<<20 ||
 		c.OperationBytes < c.StatementBytes || c.OperationBytes > 64<<20 || c.PendingBytes < c.StatementBytes ||
 		c.PendingBytes > 64<<20 || c.SnapshotRecords < 1 || c.SnapshotRecords > 100000 || c.ReadBytes < 256 ||
-		c.ReadBytes > 128<<20 || c.VIDBytes < 128 || c.VIDBytes > 4096 {
+		c.ReadBytes > 128<<20 || c.VIDBytes < vidLength || c.VIDBytes > 256 {
 		return fmt.Errorf("%w: byte/record/VID limits", ErrInvalid)
 	}
 	for _, d := range []time.Duration{
 		c.AcquireTimeout, c.SocketTimeout, c.OperationTimeout, c.CloseTimeout,
-		c.ReadyTimeout, c.PollInterval,
+		c.ReadyTimeout, c.PollInterval, c.SearchScanTimeout,
 	} {
 		if d <= 0 || d > 5*time.Minute {
 			return fmt.Errorf("%w: positive bounded timeout required", ErrInvalid)
@@ -123,7 +129,7 @@ type wireOutcome struct {
 	Err   error
 }
 type wireDriver interface {
-	Execute(context.Context, string) wireOutcome
+	Execute(ctx context.Context, stmt string, params map[string]string) wireOutcome
 	Close()
 	RetryCount() uint64
 }
@@ -173,6 +179,10 @@ type client struct {
 	finalizing                       bool
 	active, writes, waiting, pending int
 	metrics                          Metrics
+	// largeScopes remembers namespaces whose substring filter ran out of
+	// SearchScanTimeout, so search goes straight to the name_key index
+	// instead of paying for the same slow scan on every query.
+	largeScopes map[types.NameSpace]time.Time
 }
 
 func newClient(c Config, d wireDriver) *client {
@@ -266,8 +276,17 @@ func (c *client) close(ctx context.Context) error {
 	}
 }
 
+// deadlinePassed reports whether ctx has a deadline that is already over. The
+// socket deadline of an RPC is taken from ctx, and it can fail the call a
+// moment before ctx's own timer marks ctx done; whoever classifies a failure
+// as a timeout has to check the clock as well as ctx.Err.
+func deadlinePassed(ctx context.Context) bool {
+	d, ok := ctx.Deadline()
+	return ok && !time.Now().Before(d)
+}
+
 func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
-	release, wait, err := c.admit(ctx, write, len(b.Statement))
+	release, wait, err := c.admit(ctx, write, b.size())
 	if err != nil {
 		return wireOutcome{Err: err}
 	}
@@ -276,15 +295,17 @@ func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 		return wireOutcome{Err: err}
 	}
 	start := time.Now()
-	out := c.driver.Execute(ctx, b.Statement)
-	if ctx.Err() != nil {
-		out.Err = ctx.Err()
+	out := c.driver.Execute(ctx, b.Statement, b.Params)
+	if err := ctx.Err(); err != nil {
+		out.Err = err
+	} else if out.Err != nil && deadlinePassed(ctx) {
+		out.Err = context.DeadlineExceeded
 	}
 	m := Metric{
-		Kind: b.Kind, Records: len(b.IDs), Bytes: len(b.Statement), WaitNS: int64(wait),
+		Kind: b.Kind, Records: len(b.IDs), Bytes: b.size(), WaitNS: int64(wait),
 		RPCNS: int64(time.Since(start)), Failed: out.Err != nil,
 	}
-	m.StatementDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(b.Statement)))
+	m.StatementDigest = b.digest()
 	m.ResultRows = len(out.Table.Rows)
 	var sdkErr *executionError
 	if errors.As(out.Err, &sdkErr) {

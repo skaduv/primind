@@ -25,7 +25,7 @@ func (r *Repository) InspectService(ctx context.Context) ([]ServiceEvidence, err
 	defer cancel()
 	var out []ServiceEvidence
 	for _, role := range []string{"GRAPH", "META", "STORAGE"} {
-		t, err := r.read(ctx, "version", "SHOW HOSTS "+role+";")
+		t, err := r.read(ctx, "version", "SHOW HOSTS "+role+";", nil)
 		if err != nil {
 			return out, err
 		}
@@ -56,11 +56,11 @@ func (r *Repository) ScopePlans(ctx context.Context, ns types.NameSpace) (map[st
 	}
 	out := map[string]json.RawMessage{}
 	for _, tag := range definitionNames() {
-		query := lookup(r.c.cfg, tag, ns)
+		query, params := lookup(r.c.cfg, tag, ns)
 		if kind, _ := definition(tag); kind == "EDGE" {
-			query = edgeLookup(r.c.cfg, tag, ns)
+			query, params = edgeLookup(r.c.cfg, tag, ns)
 		}
-		t, err := r.read(ctx, "profile", "PROFILE "+query)
+		t, err := r.read(ctx, "profile", "PROFILE "+query, params)
 		if err != nil {
 			return nil, err
 		}

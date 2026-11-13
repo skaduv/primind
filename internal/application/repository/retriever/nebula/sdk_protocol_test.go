@@ -105,7 +105,7 @@ func TestGeneratedSDKProtocolFramesAndHalfInitialization(t *testing.T) {
 			}
 			d := &sdkDriver{cfg: cfg, sessions: make(chan sdkSession, 1)}
 			d.sessions <- s
-			out := d.Execute(context.Background(), "RETURN \"literal\";")
+			out := d.Execute(context.Background(), "RETURN \"literal\";", nil)
 			if (mode == "success") != (out.Err == nil) || !out.Sent {
 				t.Fatalf("protocol status lost: %v", out.Err)
 			}

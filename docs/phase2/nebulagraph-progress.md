@@ -46,6 +46,8 @@
 | 应用隔离 | PostgreSQL 库 `primind_ng`，Redis DB 2 前缀 `ng:`，MinIO bucket `primind-ng`，端口 8082；配置写在未跟踪的 `.env.local` |
 | 共用主机 | OS 会话同时在本机运行（OpenSearch/PG/Redis 共用），性能数据含这部分背景负载 |
 
+> **存储格式 v2（2026-11）**：上表是 v1 时期的记录。v2 起属性改存明文、VID 改为 `ng2_` 内容哈希，图空间须为 `vid_type=FIXED_STRING(32)`；`FIXED_STRING(1024)` 的旧空间会在启动时被拒绝（`ErrSchema`），不能原地升级，需新建空间并重新抽图。`NEBULA_AUTO_SCHEMA=true` 仍只在空 Space 建 Schema。详见 `internal/application/repository/retriever/nebula/CONTRACT.md`。
+
 ### Windows 本机跑 Go 测试的注意事项
 
 - `sqlite-vec` 的 cgo 需要 `sqlite3.h`：把 `go-sqlite3@v1.14.24/sqlite3-binding.h` 复制为某目录下的 `sqlite3.h`，设 `CGO_CFLAGS="-I<该目录> -Wno-deprecated-declarations"`。
