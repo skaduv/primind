@@ -50,6 +50,9 @@ func realLongNamePrefix(ctx context.Context, t *testing.T, cfg Config, r *Reposi
 		{"prefix past 256 bytes, only b", kb, []string{b}},
 	} {
 		for _, repo := range []*Repository{prefix, r} {
+			if repo == prefix {
+				forceIndexOnly(prefix, ns)
+			}
 			got, d, err := repo.Search(ctx, ns, []string{c.query})
 			if err != nil || d.IndexOnly != (repo == prefix) {
 				t.Fatalf("%s: %v %+v", c.name, err, d)

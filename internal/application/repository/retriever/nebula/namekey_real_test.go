@@ -64,6 +64,9 @@ func realNameKeyWhitespace(ctx context.Context, t *testing.T, cfg Config, r *Rep
 				t.Fatalf("%q: exact %q, contains %q", stored, exact, contains)
 			}
 			for _, repo := range []*Repository{r, prefix} {
+				if repo == prefix {
+					forceIndexOnly(prefix, ns)
+				}
 				g, d, err := repo.Search(ctx, ns, []string{query})
 				if err != nil || len(g.Relation) != 1 || g.Relation[0].Node1 != stored ||
 					d.IndexOnly != (repo == prefix) {

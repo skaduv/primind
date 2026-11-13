@@ -778,7 +778,8 @@ func (s *searchRun) candidates(ctx context.Context) ([]seedCandidate, error) {
 		scanCtx, cancel := context.WithTimeout(ctx, cfg.SearchScanTimeout)
 		found, more, sent, err := s.seedRows(scanCtx, "seed_filter", filter, params,
 			append(append([]string(nil), candidateColumns...), "len"), limit)
-		expired := scanCtx.Err() != nil && ctx.Err() == nil
+		// The scan's budget is over, the caller's is not.
+		expired := (scanCtx.Err() != nil || deadlinePassed(scanCtx)) && ctx.Err() == nil && !deadlinePassed(ctx)
 		cancel()
 		switch {
 		case err == nil:

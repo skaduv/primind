@@ -276,6 +276,15 @@ func (c *client) close(ctx context.Context) error {
 	}
 }
 
+// deadlinePassed reports whether ctx has a deadline that is already over. The
+// socket deadline of an RPC is taken from ctx, and it can fail the call a
+// moment before ctx's own timer marks ctx done; whoever classifies a failure
+// as a timeout has to check the clock as well as ctx.Err.
+func deadlinePassed(ctx context.Context) bool {
+	d, ok := ctx.Deadline()
+	return ok && !time.Now().Before(d)
+}
+
 func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 	release, wait, err := c.admit(ctx, write, b.size())
 	if err != nil {
@@ -287,8 +296,10 @@ func (c *client) execute(ctx context.Context, b batch, write bool) wireOutcome {
 	}
 	start := time.Now()
 	out := c.driver.Execute(ctx, b.Statement, b.Params)
-	if ctx.Err() != nil {
-		out.Err = ctx.Err()
+	if err := ctx.Err(); err != nil {
+		out.Err = err
+	} else if out.Err != nil && deadlinePassed(ctx) {
+		out.Err = context.DeadlineExceeded
 	}
 	m := Metric{
 		Kind: b.Kind, Records: len(b.IDs), Bytes: b.size(), WaitNS: int64(wait),

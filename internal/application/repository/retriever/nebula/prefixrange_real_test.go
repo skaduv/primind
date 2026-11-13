@@ -151,6 +151,7 @@ func realPrefixRange(ctx context.Context, t *testing.T, cfg Config, r *Repositor
 	// Through the adapter, index-only path: seeds are exactly the names
 	// starting with the query.
 	for _, p := range prefixes {
+		forceIndexOnly(prefix, scopes[0])
 		g, d, err := prefix.Search(ctx, scopes[0], []string{p})
 		if err != nil || !d.IndexOnly {
 			t.Fatalf("search %q: %v %+v", p, err, d)
