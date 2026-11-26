@@ -51,14 +51,28 @@ function isIncompleteAngleCitationTail(tail: string): boolean {
 }
 
 /**
- * An unfinished `[ref` / `【ref` citation marker at the very end of the text:
- * `[ref` itself, or `[ref` followed by whitespace with no closing bracket
- * yet (`[ref id="c`). `[reference]` and Markdown links such as
- * `[ref](url)` are prose: the former never matches, the latter is complete.
+ * A strict prefix of a bracketed citation marker, i.e. what `[ref id="c12"]`
+ * or `【ref id="c12"】` looks like before its closing bracket arrives:
+ * `[ref`, `[ref `, `[ref id`, `[ref id="`, `[ref id="c1`, `[ref id="c12"/`.
+ * It follows the same grammar as RESIDUAL_REF_RE (and the backend rule table)
+ * so only text that can still become a marker is hidden.
+ */
+const BRACKET_REF_PREFIX_RE = new RegExp(
+  '^[\\[【]\\s*ref(?:\\s+(?:i(?:d(?:\\s*(?:=\\s*(?:["“”\']?' +
+    '(?:[cwdb](?:[1-9][0-9]*(?:["“”\']?\\s*\\/?\\s*)?)?)?)?)?)?)?)?)?$',
+  'i',
+)
+
+/**
+ * An unfinished `[ref` / `【ref` citation marker at the very end of the text
+ * (`[ref id="c`). The tail must still be a prefix of a valid marker: prose
+ * such as `[ref 1：…`, code such as `[ref for ref in refs` or any tail that
+ * runs on past a line break is kept, so a finished message that happens to
+ * contain an unclosed `[ref ` never loses the text after it. `[reference]`
+ * never matches and Markdown links such as `[ref](url)` are complete.
  */
 function isIncompleteBracketCitationTail(tail: string): boolean {
-  if (tail.includes(']') || tail.includes('】')) return false
-  return /^[\[【]\s*ref(?:\s[\s\S]*)?$/i.test(tail)
+  return BRACKET_REF_PREFIX_RE.test(tail)
 }
 
 /**

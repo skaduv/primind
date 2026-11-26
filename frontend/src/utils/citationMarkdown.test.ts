@@ -88,6 +88,39 @@ test('stripIncompleteCitationTag keeps ordinary trailing brackets', () => {
   assert.equal(stripIncompleteCitationTag('Source <kb doc="a" />'), 'Source <kb doc="a" />')
 })
 
+test('stripIncompleteCitationTag hides every prefix of a bracket marker', () => {
+  const marker = '[ref id="c12"/]'
+  for (let end = '[ref'.length; end < marker.length; end++) {
+    const partial = marker.slice(0, end)
+    assert.equal(stripIncompleteCitationTag('值' + partial), '值', partial)
+  }
+  for (const partial of ["【ref id='w3'", '[REF ID=C1', '[ref id = “c2”', '[ref id=b7 /']) {
+    assert.equal(stripIncompleteCitationTag('值' + partial), '值', partial)
+  }
+})
+
+test('stripIncompleteCitationTag keeps an unclosed [ref that cannot become a marker', () => {
+  for (const text of [
+    '参考资料 [ref 1：车辆管理办法\n\n第二段正文很长，包含结论。',
+    '```python\nx = [ref for ref in refs\n```\n后文',
+    '见 [ref id="note',
+    '见 [ref id="c0',
+    '见 [ref id="c2" 等',
+    '见 [ref id="c2"\n下一行',
+  ]) {
+    assert.equal(stripIncompleteCitationTag(text), text, text)
+  }
+})
+
+test('renderChatMarkdown keeps the text after an unclosed [ref in a finished message (C4)', () => {
+  const text = '参考资料 [ref 1：车辆管理办法\n\n第二段正文，包含结论。'
+  for (const streaming of [false, true]) {
+    const html = stripFade(renderChatMarkdown(text, { ...options, streaming }))
+    assert.match(html, /\[ref 1：车辆管理办法/)
+    assert.match(html, /第二段正文，包含结论。/)
+  }
+})
+
 test('stripIncompleteCitationTag hides whichever unfinished tail comes first', () => {
   assert.equal(stripIncompleteCitationTag('a <kb doc="x" [ref id="c'), 'a ')
   assert.equal(stripIncompleteCitationTag('a [ref id="c1"] <kb doc="x'), 'a [ref id="c1"] ')
