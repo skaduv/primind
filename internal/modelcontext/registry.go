@@ -214,6 +214,18 @@ func (r *Registry) OrphanResourceHandles(decoded string) []string {
 	return r.resources.OrphanHandles(decoded)
 }
 
+// CitationVariantStats reports how many non-canonical citations this registry
+// rewrote or dropped while decoding model output, keyed by the rule-table
+// variant names in citations.go. Nil means the model kept to the protocol.
+// Answer paths log it when they finish so citation-format drift can be
+// tracked per model (BF-01 spec 4.4).
+func (r *Registry) CitationVariantStats() map[string]int {
+	if r == nil || r.sources == nil {
+		return nil
+	}
+	return r.sources.VariantStats()
+}
+
 func (r *Registry) RegisterChunk(ref ChunkReference) string {
 	if r == nil || r.sources == nil {
 		return ""

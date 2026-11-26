@@ -13,6 +13,7 @@ import {
   restoreCitationHtmlPlaceholders,
   restoreCitationTags,
   stripIncompleteCitationTag,
+  stripResidualRefMarkers,
   type CitationKnowledgeRef,
 } from './citationMarkdown.ts'
 
@@ -467,7 +468,12 @@ export function renderChatMarkdown(rawMarkdown: unknown, options: RenderChatMark
     streamingSafeText,
     Boolean(options.streaming),
   )
-  const citationSafeText = stripIncompleteCitationTag(imageContextSafeText)
+  // A private <ref id=…/> / [ref id=…] marker that survived the backend must
+  // never reach the reader. Nothing can turn it back into a card here, so it
+  // is dropped before the <kb>/<web> pipeline and before the unfinished-tail
+  // guard below gets to see it.
+  const residualSafeText = stripResidualRefMarkers(imageContextSafeText)
+  const citationSafeText = stripIncompleteCitationTag(residualSafeText)
   const { text: tagSafe, tags } = preserveCitationTags(citationSafeText)
   const normalizedImageMarkdown = normalizeFullwidthMarkdownImageParentheses(tagSafe)
   // Skill-generated file names routinely contain spaces and parentheses, which

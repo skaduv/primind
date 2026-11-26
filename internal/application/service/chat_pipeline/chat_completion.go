@@ -3,6 +3,7 @@ package chatpipeline
 import (
 	"context"
 
+	"github.com/primind/primind/internal/common"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 )
@@ -68,6 +69,8 @@ func (p *PluginChatCompletion) OnEvent(
 		return ErrModelCall.WithError(err)
 	}
 	modelContext.DecodeResponse(chatResponse)
+	common.LogCitationVariants(ctx, modelContext.CitationVariantStats(),
+		chatManage.ChatModelID, chatManage.SessionID, chatManage.MessageID)
 	if orphans := modelContext.OrphanResourceHandles(chatResponse.Content); len(orphans) > 0 {
 		pipelineWarn(ctx, "Completion", "orphan_resource_handles", map[string]interface{}{
 			"session_id": chatManage.SessionID,

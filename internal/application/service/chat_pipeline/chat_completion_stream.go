@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/primind/primind/internal/common"
 	"github.com/primind/primind/internal/event"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
@@ -152,6 +153,8 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 		// and the cancellation path must call this, otherwise a resource
 		// reference in flight at teardown is silently dropped (and never
 		// persisted, since the assistant message is saved from these events).
+		// It is also the answer's last decode step: only after it runs are the
+		// citation-variant counts complete, so they are logged here (BF-01 4.4).
 		flushDecoders := func() {
 			thinkingTail := thinkingDecoder.Flush()
 			if thinkingTail != "" {
@@ -171,6 +174,8 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					Data:      event.AgentFinalAnswerData{Content: answerTail},
 				})
 			}
+			common.LogCitationVariants(ctx, modelContext.CitationVariantStats(),
+				chatManage.ChatModelID, chatManage.SessionID, chatManage.MessageID)
 		}
 
 		for {

@@ -9,26 +9,98 @@ const ATTRIBUTE_REGEX = /([\w-]+)\s*=\s*"([^"]*)"/g
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
+ * A citation id as the backend accepts it: a chunk, web, document or
+ * knowledge-base handle (c/w/d/b) with digits and no leading zero. Anything
+ * else inside `ref id=` is ordinary text and stays untouched.
+ */
+const REF_HANDLE = '[cwdb][1-9][0-9]*'
+
+/**
+ * A private citation marker that reached the browser unexpanded:
+ * `<ref id="c2"/>`, `[ref id="c2"]` or `【ref id="c2"】`, with the same
+ * leniency for quotes and an optional `/` as the backend rule table.
+ */
+export const RESIDUAL_REF_RE = new RegExp(
+  `<ref\\s+id\\s*=\\s*["']?${REF_HANDLE}["']?\\s*/?>` +
+    `|[\\[【]\\s*ref\\s+id\\s*=\\s*["“”']?${REF_HANDLE}["“”']?\\s*/?\\s*[\\]】]`,
+  'gi',
+)
+const RESIDUAL_REF_HINT_RE = /ref\s+id\s*=/i
+
+/**
+ * Remove citation markers the backend did not expand, so a handle such as
+ * `c2` is never shown to the reader (BF-01 G2). They arrive with older
+ * answers stored before the fix and with a spelling no rule covers yet. No
+ * card can be built from them — the `cN` → document mapping lived only in
+ * the original request — so only the marker is removed and every other
+ * character is kept, which leaves messages without markers byte-identical.
+ */
+export function stripResidualRefMarkers(content: string): string {
+  if (!content || !RESIDUAL_REF_HINT_RE.test(content)) return content
+  return content.replace(RESIDUAL_REF_RE, '')
+}
+
+/** An unfinished `<kb` / `<web` citation tag at the very end of the text. */
+function isIncompleteAngleCitationTail(tail: string): boolean {
+  if (tail.includes('>')) return false
+  return (
+    tail === '<' ||
+    /^<k(?:b(?:\s[\s\S]*)?)?$/i.test(tail) ||
+    /^<w(?:e(?:b(?:\s[\s\S]*)?)?)?$/i.test(tail)
+  )
+}
+
+/**
+ * A strict prefix of a bracketed citation marker, i.e. what `[ref id="c12"]`
+ * or `【ref id="c12"】` looks like before its closing bracket arrives:
+ * `[ref`, `[ref `, `[ref id`, `[ref id="`, `[ref id="c1`, `[ref id="c12"/`.
+ * It follows the same grammar as RESIDUAL_REF_RE (and the backend rule table)
+ * so only text that can still become a marker is hidden.
+ */
+const BRACKET_REF_PREFIX_RE = new RegExp(
+  '^[\\[【]\\s*ref(?:\\s+(?:i(?:d(?:\\s*(?:=\\s*(?:["“”\']?' +
+    '(?:[cwdb](?:[1-9][0-9]*(?:["“”\']?\\s*\\/?\\s*)?)?)?)?)?)?)?)?)?$',
+  'i',
+)
+
+/**
+ * An unfinished `[ref` / `【ref` citation marker at the very end of the text
+ * (`[ref id="c`). The tail must still be a prefix of a valid marker: prose
+ * such as `[ref 1：…`, code such as `[ref for ref in refs` or any tail that
+ * runs on past a line break is kept, so a finished message that happens to
+ * contain an unclosed `[ref ` never loses the text after it. `[reference]`
+ * never matches and Markdown links such as `[ref](url)` are complete.
+ */
+function isIncompleteBracketCitationTail(tail: string): boolean {
+  return BRACKET_REF_PREFIX_RE.test(tail)
+}
+
+/**
  * Hide a citation tag while the typewriter has only emitted part of it.
  *
  * Without this guard, Markdown renders the leading `<` as ordinary text until
  * the closing `>` arrives. Only the unfinished tail is removed; a complete tag
- * continues through the normal citation pipeline.
+ * continues through the normal citation pipeline. The same applies to a
+ * bracketed citation (`[ref id="c2"]`) the model may write instead: its
+ * unfinished tail must not flash as text while the closing bracket is still
+ * streaming in.
  */
 export function stripIncompleteCitationTag(content: string): string {
   if (!content) return content
 
-  const start = content.lastIndexOf('<')
-  if (start < 0) return content
+  let cut = -1
 
-  const tail = content.slice(start)
-  if (tail.includes('>')) return content
+  const angleStart = content.lastIndexOf('<')
+  if (angleStart >= 0 && isIncompleteAngleCitationTail(content.slice(angleStart))) {
+    cut = angleStart
+  }
 
-  const isCitationPrefix = tail === '<'
-    || /^<k(?:b(?:\s[\s\S]*)?)?$/i.test(tail)
-    || /^<w(?:e(?:b(?:\s[\s\S]*)?)?)?$/i.test(tail)
+  const bracketStart = Math.max(content.lastIndexOf('['), content.lastIndexOf('【'))
+  if (bracketStart >= 0 && isIncompleteBracketCitationTail(content.slice(bracketStart))) {
+    if (cut < 0 || bracketStart < cut) cut = bracketStart
+  }
 
-  return isCitationPrefix ? content.slice(0, start) : content
+  return cut < 0 ? content : content.slice(0, cut)
 }
 
 export type CitationKnowledgeRef = {
@@ -335,6 +407,10 @@ export function stripCitationTagsForMarkdown(
   content: string,
 ): { text: string; sources: string[] } {
   if (!content) return { text: '', sources: [] }
+
+  // A private <ref id=…/> marker left over in an older answer has no meaning
+  // outside the chat either; it must not be saved into a knowledge document.
+  content = stripResidualRefMarkers(content)
 
   const sources: string[] = []
   const seen = new Set<string>()
