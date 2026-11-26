@@ -1403,7 +1403,14 @@ func (h *OrganizationHandler) ShareAgent(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, service.ErrAgentNotConfigured) {
-			c.Error(apperrors.NewValidationError("Agent is not fully configured. Please set the chat model, and set the rerank model if the knowledge_search tool is enabled in agent settings."))
+			// Status and message stay as they were for older clients (C1);
+			// details.issues lets a new client name what is missing.
+			notConfigured := apperrors.NewValidationError("Agent is not fully configured. Please set the chat model, and set the rerank model if the knowledge_search tool is enabled in agent settings.")
+			var notReady *service.AgentNotReadyError
+			if errors.As(err, &notReady) && len(notReady.Issues) > 0 {
+				notConfigured = notConfigured.WithDetails(gin.H{"issues": notReady.Issues})
+			}
+			c.Error(notConfigured)
 			return
 		}
 		if errors.Is(err, service.ErrBuiltinAgentNotShareable) {

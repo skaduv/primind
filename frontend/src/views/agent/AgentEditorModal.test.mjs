@@ -185,3 +185,35 @@ test('retrieval strategy settings are hidden in agent mode, where search_knowled
   const modeWatch = source.match(/watch\(isAgentMode, \(isAgent\) => \{([\s\S]*?)^\}\);/m)?.[1] ?? ''
   assert.match(modeWatch, /isAgent && \([^)]*currentSection\.value === 'retrieval'/)
 })
+
+// Sharing reads the saved configuration, so the share panel needs to know
+// whether the editor holds unsaved edits, and needs a save that keeps the
+// window open ("保存并共享").
+test('the share panel is told about unsaved edits and can save without closing', () => {
+  assert.match(
+    source,
+    /<AgentShareSettings :agent-id="editorAgent\.id" :agent="editorAgent" :is-dirty="\(\) => modalShell\.isDirty\(\)"\s*:save-draft="saveDraft" @configure="handleShareConfigure" \/>/,
+  )
+  assert.match(source, /const handleSave = \(\) => saveAgentForm\(true\);/)
+  assert.match(source, /const saveDraft = \(\) => saveAgentForm\(false\);/)
+})
+
+test('saving before a share keeps the editor open and marks the form saved', () => {
+  const branch = source.match(
+    /const saved: any = await updateAgent\(formData\.value\.id, payload\);([\s\S]*?)return true;/,
+  )?.[1]
+  assert.ok(branch, 'expected the save-without-close branch')
+  assert.doesNotMatch(branch, /handleClose\(\)/)
+  assert.match(branch, /emit\('success'\);/)
+  assert.match(branch, /modalShell\.markClean\(\);/)
+  assert.match(branch, /notifyAgentSaveWarnings\(saved\?\.warnings\);/)
+  // The regular save still warns about an already shared agent.
+  assert.match(source, /handleClose\(\);\s*notifyAllowedToolsWarnings\(updated\?\.allowed_tools_warnings\);\s*notifyAgentSaveWarnings\(updated\?\.warnings\);/)
+})
+
+test('a refused share sends the editor to the model section and the missing field', () => {
+  assert.match(
+    source,
+    /const handleShareConfigure = \(issues: AgentReadinessIssue\[\]\) => \{\s*const field = firstReadinessHighlightField\(issues\);\s*if \(field\) applyInitialFieldHighlight\(field\);\s*\};/,
+  )
+})

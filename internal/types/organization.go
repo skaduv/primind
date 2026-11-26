@@ -269,6 +269,12 @@ type SharedAgentInfo struct {
 	// its provider list or credentials. Receivers must not compare the agent's
 	// provider ID with their own workspace resources.
 	WebSearchReady bool `json:"web_search_ready"`
+	// Ready is false when the agent's saved configuration cannot serve
+	// receivers (no chat model, or no rerank model where knowledge search
+	// runs); Issues says what is missing. It is computed from stored data
+	// only, so a model deleted since is not detected here.
+	Ready  bool                  `json:"ready"`
+	Issues []AgentReadinessIssue `json:"issues,omitempty"`
 	// DisabledByMe: current tenant has hidden this shared agent from their conversation dropdown (per-user preference)
 	DisabledByMe bool `json:"disabled_by_me"`
 }

@@ -240,6 +240,9 @@
                     <t-tag v-if="!agent.isMine && agent.disabled_by_me" theme="default" size="small"
                       class="disabled-badge">{{
                         $t('agent.disabled') }}</t-tag>
+                    <!-- 已保存的配置不完整（后端判定）：接收方无法使用，不能在对话中选择 -->
+                    <t-tag v-if="!agent.isMine && agent.ready === false" theme="danger" size="small"
+                      class="disabled-badge not-ready-badge">{{ $t('organization.share.sharedNotReady') }}</t-tag>
                     <t-tooltip
                       :content="agent.config?.agent_mode === 'smart-reasoning' ? $t('agent.mode.agent') : $t('agent.mode.normal')"
                       placement="top">
@@ -547,6 +550,8 @@
                   <div class="feature-badges">
                     <t-tag v-if="shared.disabled_by_me" theme="default" size="small" class="disabled-badge">{{
                       $t('agent.disabled') }}</t-tag>
+                    <t-tag v-if="shared.ready === false" theme="danger" size="small" class="disabled-badge not-ready-badge">{{
+                      shared.is_mine ? $t('organization.share.mineNotReady') : $t('organization.share.sharedNotReady') }}</t-tag>
                     <t-tooltip
                       :content="shared.agent?.config?.agent_mode === 'smart-reasoning' ? $t('agent.mode.agent') : $t('agent.mode.normal')"
                       placement="top">
@@ -671,6 +676,8 @@
             </button>
           </div>
           <div class="shared-detail-drawer-body">
+            <t-alert v-if="currentSharedAgentNotReady" theme="warning" class="shared-detail-not-ready"
+              :message="$t('organization.share.sharedNotReady')" />
             <div class="shared-detail-row">
               <span class="shared-detail-label">{{ $t('agent.editor.name') }}</span>
               <span class="shared-detail-value">{{ currentSharedAgent.agent?.name }}</span>
@@ -716,7 +723,8 @@
             </template>
           </div>
           <div class="shared-detail-drawer-footer">
-            <t-button theme="primary" block @click="handleUseSharedAgentInChat(currentSharedAgent)">
+            <t-button theme="primary" block :disabled="currentSharedAgentNotReady"
+              @click="handleUseSharedAgentInChat(currentSharedAgent)">
               {{ $t('agent.detail.useInChat') }}
             </t-button>
           </div>
@@ -749,6 +757,7 @@ import { useI18n } from 'vue-i18n'
 import { createSessions } from '@/api/chat/index'
 import { useOrganizationStore } from '@/stores/organization'
 import { setSharedAgentDisabledByMe, listOrganizationSharedAgents } from '@/api/organization'
+import { isSharedAgentNotReady } from '@/utils/agent-share-readiness'
 import { useSettingsStore } from '@/stores/settings'
 import { useMenuStore } from '@/stores/menu'
 import type { SharedAgentInfo, OrganizationSharedAgentItem } from '@/api/organization'
@@ -794,7 +803,7 @@ interface AgentWithUI extends CustomAgent {
 /** Merged agent for "all" tab: my agents (isMine: true) or shared
  *  (isMine: false, org_name, source_tenant_id, share_id, permission, disabled_by_me?).
  *  `permission` drives the「可编辑 / 仅查看」分组，仅在 shared 分支携带。 */
-type DisplayAgent = (AgentWithUI & { isMine: true }) | (CustomAgent & { isMine: false; org_name: string; source_tenant_id: number; share_id: string; permission?: string; showMore?: boolean; disabled_by_me?: boolean })
+type DisplayAgent = (AgentWithUI & { isMine: true }) | (CustomAgent & { isMine: false; org_name: string; source_tenant_id: number; share_id: string; permission?: string; showMore?: boolean; disabled_by_me?: boolean; ready?: boolean })
 
 const flatAgentSortAccessors: ResourceSortAccessors<any> = {
   getName: item => item?.name,
@@ -908,6 +917,7 @@ const favoritesAgentList = computed<DisplayAgent[]>(() => {
         source_tenant_id: s.source_tenant_id,
         share_id: s.share_id,
         disabled_by_me: s.disabled_by_me,
+        ready: s.ready,
         showMore: false,
       } as DisplayAgent
     })
@@ -929,6 +939,7 @@ const recentsAgentList = computed<DisplayAgent[]>(() => {
         source_tenant_id: s.source_tenant_id,
         share_id: s.share_id,
         disabled_by_me: s.disabled_by_me,
+        ready: s.ready,
         showMore: false,
       } as DisplayAgent
     })
@@ -977,6 +988,7 @@ const unsearchedFilteredAgents = computed<DisplayAgent[]>(() => {
       share_id: shared.share_id,
       permission: shared.permission,
       disabled_by_me: shared.disabled_by_me,
+      ready: shared.ready,
       showMore: false
     } as DisplayAgent)
   })
@@ -1013,6 +1025,8 @@ const loading = ref(false)
 const confirmDelete = useConfirmDelete()
 const sharedDetailVisible = ref(false)
 const currentSharedAgent = ref<SharedAgentInfo | null>(null)
+// 后端判定已保存的配置不完整：接收方无从检查对方空间的模型，以后端结论为准
+const currentSharedAgentNotReady = computed(() => isSharedAgentNotReady(currentSharedAgent.value))
 const sharedAgentUsesKb = computed(() => {
   const c = currentSharedAgent.value?.agent?.config
   if (!c) return false
@@ -1243,6 +1257,10 @@ function closeSharedAgentDetail() {
 /** 在对话中使用共享智能体：创建新会话并跳转 */
 async function handleUseSharedAgentInChat(shared: SharedAgentInfo) {
   if (!shared.agent?.id) return
+  if (isSharedAgentNotReady(shared)) {
+    MessagePlugin.warning(t('organization.share.sharedNotReady'))
+    return
+  }
   closeSharedAgentDetail()
   const settingsStore = useSettingsStore()
   const menuStore = useMenuStore()
@@ -1874,6 +1892,17 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
   border-top: 1px solid var(--td-component-stroke);
   flex-shrink: 0;
   background: var(--td-bg-color-container);
+}
+
+/* 配置不完整：详情抽屉里的提示，以及卡片上的标签（句子较长，允许换行） */
+.shared-detail-not-ready {
+  margin-bottom: 12px;
+}
+
+.not-ready-badge {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
 }
 
 .shared-detail-drawer-enter-active,

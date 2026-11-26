@@ -44,6 +44,10 @@ type customAgentService struct {
 	tagRepo        interfaces.KnowledgeTagRepository
 	knowledgeRepo  interfaces.KnowledgeRepository
 	agentShareRepo interfaces.AgentShareRepository
+	// modelRepo backs CheckAgentReadiness for the warning returned when a
+	// shared agent is saved with a configuration receivers cannot use. nil
+	// limits that check to missing IDs.
+	modelRepo interfaces.ModelRepository
 }
 
 // NewCustomAgentService creates a new custom agent service
@@ -56,6 +60,7 @@ func NewCustomAgentService(
 	tagRepo interfaces.KnowledgeTagRepository,
 	knowledgeRepo interfaces.KnowledgeRepository,
 	agentShareRepo interfaces.AgentShareRepository,
+	modelRepo interfaces.ModelRepository,
 ) interfaces.CustomAgentService {
 	return &customAgentService{
 		repo:           repo,
@@ -66,6 +71,7 @@ func NewCustomAgentService(
 		tagRepo:        tagRepo,
 		knowledgeRepo:  knowledgeRepo,
 		agentShareRepo: agentShareRepo,
+		modelRepo:      modelRepo,
 	}
 }
 
@@ -330,6 +336,33 @@ func (s *customAgentService) UpdateAgent(
 
 	logger.Infof(ctx, "Custom agent updated successfully, ID: %s", agent.ID)
 	return existingAgent, nil
+}
+
+// SharedAgentReadinessIssues re-checks an agent that this workspace has
+// shared, right after it was saved. Editing a shared agent is not blocked
+// (C3: a workflow may depend on the save), but the editor is told when the
+// saved configuration leaves receivers unable to use the agent. It returns nil
+// for an agent nobody shares, and for built-in agents, whose shares are never
+// resolved for receivers. A failed share lookup is logged and treated as
+// "not shared": the save already succeeded and must not fail here.
+func (s *customAgentService) SharedAgentReadinessIssues(
+	ctx context.Context, agent *types.CustomAgent,
+) []types.AgentReadinessIssue {
+	if agent == nil || s.agentShareRepo == nil || agent.IsBuiltin || types.IsBuiltinAgentID(agent.ID) {
+		return nil
+	}
+	shares, err := s.agentShareRepo.ListByAgent(ctx, agent.ID)
+	if err != nil {
+		logger.Warnf(ctx, "Agent readiness: listing shares of agent %s failed: %v", agent.ID, err)
+		return nil
+	}
+	// Same criterion as checkSharedAgentKBScope: a share this workspace made.
+	for _, share := range shares {
+		if share != nil && share.SourceTenantID == agent.TenantID {
+			return CheckAgentReadiness(ctx, agent, s.modelRepo)
+		}
+	}
+	return nil
 }
 
 // checkSharedAgentKBScope keeps an edit from widening a shared agent's KB

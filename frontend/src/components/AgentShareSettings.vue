@@ -23,6 +23,14 @@
       <p class="share-panel-desc">{{ $t('organization.share.agentShareDesc') }}</p>
       <t-alert v-if="sharesSkillSecrets" theme="warning" class="share-panel-alert"
         :message="$t('agent.shareScope.skillSecretsWarning')" />
+      <!-- 共享被拒且后端说明了缺项：留在面板里，直到共享成功或换了智能体 -->
+      <t-alert v-if="refusedIssues.length" theme="error" class="share-panel-alert"
+        :message="$t('organization.share.notReadyToShare', { items: refusedIssueSummary })">
+        <template v-if="canGoConfigure" #operation>
+          <t-button size="small" variant="text" theme="danger" class="share-panel-alert-action"
+            @click="goConfigure">{{ $t('organization.share.goConfigure') }}</t-button>
+        </template>
+      </t-alert>
     </div>
 
     <div class="share-panel-list-wrap">
@@ -56,13 +64,26 @@
                       :loading="loadingOrgs" />
                   </div>
                 </div>
+                <!-- 有未保存的修改：共享的是已保存的配置，先确认；当前选择保持不变 -->
+                <t-alert v-if="confirmingUnsaved" theme="warning" class="share-unsaved-alert"
+                  :message="$t('organization.share.unsavedBeforeShare')" />
                 <div class="invite-popup-footer">
-                  <t-button variant="outline" :disabled="submitting" @click="addPopupVisible = false">
-                    {{ $t('common.cancel') }}
-                  </t-button>
-                  <t-button theme="primary" :loading="submitting" :disabled="!selectedOrgId" @click="handleShare">
-                    {{ $t('knowledgeEditor.share.addShare') }}
-                  </t-button>
+                  <template v-if="confirmingUnsaved">
+                    <t-button variant="outline" :disabled="submitting" @click="cancelShareWithUnsaved">
+                      {{ $t('common.cancel') }}
+                    </t-button>
+                    <t-button theme="primary" :loading="submitting" @click="saveAndShare">
+                      {{ $t('organization.share.saveAndShare') }}
+                    </t-button>
+                  </template>
+                  <template v-else>
+                    <t-button variant="outline" :disabled="submitting" @click="addPopupVisible = false">
+                      {{ $t('common.cancel') }}
+                    </t-button>
+                    <t-button theme="primary" :loading="submitting" :disabled="!selectedOrgId" @click="handleShare">
+                      {{ $t('knowledgeEditor.share.addShare') }}
+                    </t-button>
+                  </template>
                 </div>
               </div>
             </template>
@@ -125,12 +146,18 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useOrganizationStore } from '@/stores/organization'
 import { listAgentShares } from '@/api/organization'
-import type { AgentShareResponse } from '@/api/organization'
+import type { AgentShareResponse, AgentReadinessIssue } from '@/api/organization'
 import type { CustomAgent } from '@/api/agent'
 import SpaceAvatar from '@/components/SpaceAvatar.vue'
 import ShareToSpaceOrgSelect from '@/components/ShareToSpaceOrgSelect.vue'
+import { formatLocalizedList } from '@/utils/format-list'
+import {
+  agentReadinessIssueLabels,
+  hasReadinessHighlightField,
+  shareRefusalIssues,
+} from '@/utils/agent-share-readiness'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const orgStore = useOrganizationStore()
 
 function getOrgForShare(organizationId: string) {
@@ -140,9 +167,18 @@ function getOrgForShare(organizationId: string) {
 interface Props {
   agentId: string
   agent?: CustomAgent | null
+  /** 编辑窗口里是否有未保存的修改。共享接口读取的是已保存的配置，所以有修改时先确认。 */
+  isDirty?: () => boolean
+  /** 保存编辑窗口里的修改但不关闭窗口；返回是否保存成功。 */
+  saveDraft?: () => Promise<boolean>
 }
 
 const props = defineProps<Props>()
+
+const emit = defineEmits<{
+  /** 共享被拒并带有缺项：由编辑窗口切到「模型配置」并定位到对应字段。 */
+  (e: 'configure', issues: AgentReadinessIssue[]): void
+}>()
 
 // Members run this agent's skills in this workspace's sandbox, with the
 // environment values its admins configured for them, and can have the model
@@ -170,6 +206,19 @@ const addPopupVisible = ref(false)
 const searchQuery = ref('')
 const selectedOrgId = ref('')
 const shares = ref<(AgentShareResponse & { organization_name?: string })[]>([])
+// 点「共享」时编辑窗口还有未保存的修改：弹层内改为确认（保存并共享 / 取消）。
+// 记下是针对哪个共享空间做的确认，换了选择就自动回到普通的共享按钮。
+const confirmingOrgId = ref<string | null>(null)
+const confirmingUnsaved = computed(() =>
+  confirmingOrgId.value !== null && confirmingOrgId.value === selectedOrgId.value
+)
+// 最近一次共享被拒时后端给出的缺项
+const refusedIssues = ref<AgentReadinessIssue[]>([])
+
+const refusedIssueLabels = computed(() => agentReadinessIssueLabels((key) => t(key), refusedIssues.value))
+const refusedIssueSummary = computed(() => formatLocalizedList(refusedIssueLabels.value, locale.value))
+// 只有缺项能对应到编辑窗口里的字段时才给"去设置"入口
+const canGoConfigure = computed(() => hasReadinessHighlightField(refusedIssues.value))
 
 const availableOrganizations = computed(() => {
   const sharedOrgIds = new Set(shares.value.map(s => s.organization_id))
@@ -234,6 +283,45 @@ async function loadShares() {
 
 async function handleShare() {
   if (!selectedOrgId.value) return
+  // 有未保存的修改：共享出去的是已保存的配置。先确认，选择保持不变，不发请求。
+  if (props.isDirty?.()) {
+    confirmingOrgId.value = selectedOrgId.value
+    return
+  }
+  await shareSelected()
+}
+
+// 确认框里的「取消」：回到普通的共享按钮，选择保持不变
+function cancelShareWithUnsaved() {
+  confirmingOrgId.value = null
+}
+
+// 「保存并共享」：先保存，成功后再发共享请求；保存失败就停在这里。
+async function saveAndShare() {
+  if (!props.saveDraft) {
+    confirmingOrgId.value = null
+    return
+  }
+  submitting.value = true
+  try {
+    const saved = await props.saveDraft()
+    confirmingOrgId.value = null
+    if (!saved) return
+    await shareSelected()
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : t('organization.share.shareFailed')
+    MessagePlugin.error(message)
+  } finally {
+    submitting.value = false
+  }
+}
+
+function goConfigure() {
+  emit('configure', refusedIssues.value)
+}
+
+async function shareSelected() {
+  if (!selectedOrgId.value) return
   submitting.value = true
   try {
     const result = await orgStore.shareAgent(props.agentId, {
@@ -244,10 +332,19 @@ async function handleShare() {
       MessagePlugin.success(t('organization.share.shareSuccess'))
       selectedOrgId.value = ''
       addPopupVisible.value = false
+      refusedIssues.value = []
       await loadShares()
-    } else {
-      MessagePlugin.error(result.message || t('organization.share.shareFailed'))
+      return
     }
+    const issues = shareRefusalIssues(result)
+    if (issues.length > 0) {
+      // 后端说明了缺什么：按缺项提示并给出"去设置"，不再显示笼统的英文提示
+      refusedIssues.value = issues
+      addPopupVisible.value = false
+      return
+    }
+    refusedIssues.value = []
+    MessagePlugin.error(result.message || t('organization.share.shareFailed'))
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : t('organization.share.shareFailed')
     MessagePlugin.error(message)
@@ -276,6 +373,8 @@ async function handleUnshare(share: AgentShareResponse) {
 }
 
 watch(() => props.agentId, async (newId) => {
+  confirmingOrgId.value = null
+  refusedIssues.value = []
   if (newId) await Promise.all([loadOrganizations(), loadShares()])
 }, { immediate: true })
 
@@ -288,6 +387,10 @@ defineExpose({ loadShares })
 
 <style scoped lang="less">
 @import '@/components/share-to-space-panel.less';
+
+.share-unsaved-alert {
+  margin-bottom: 8px;
+}
 </style>
 
 <style lang="less">
