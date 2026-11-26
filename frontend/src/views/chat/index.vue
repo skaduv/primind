@@ -123,10 +123,12 @@
                                     @rewind="handleRewind">
                                 </usermsg>
                             </div>
-                            <div v-if="session.role == 'assistant' && shouldRenderAssistantMessage(session)"
+                            <!-- A failed or interrupted turn stays visible even with no answer to
+                                 render: the status notice is the whole bubble then (BF-03). -->
+                            <div v-if="session.role == 'assistant' && (shouldRenderAssistantMessage(session) || isFailedOrInterruptedTurn(session))"
                                 class="message-row"
                                 :data-message-id="session.id || undefined">
-                                <botmsg :content="session.content" :session="session" :session-id="session_id"
+                                <botmsg v-if="shouldRenderAssistantMessage(session)" :content="session.content" :session="session" :session-id="session_id"
                                     :user-query="getUserQuery(index)" @scroll-bottom="scrollToBottom"
                                     :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode"
                                     :follow-up-loading="Boolean(session.suggestionLoading && !session.suggestionSet?.questions?.length)"
@@ -136,6 +138,10 @@
                                     @rewind="handleRewind"
                                     @render-complete-change="(ready) => handleAnswerRenderComplete(session, ready)">
                                 </botmsg>
+                                <!-- A turn that failed or was interrupted shows why and offers to ask again (BF-03). -->
+                                <TurnStatusNotice v-if="isFailedOrInterruptedTurn(session)" :session="session"
+                                    :disabled="isReplying || composerLocked"
+                                    @retry="handleRetryTurn(session, index)" />
                                 <FollowUpSuggestions v-if="session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
                                     :suggestion-set="session.suggestionSet"
                                     :loading="session.suggestionLoading"
@@ -225,6 +231,7 @@ import { clearCitationChunkCache } from '@/utils/citationChunkCache';
 import ChatReferencesDrawer from '@/components/ChatReferencesDrawer.vue';
 import ChatAttachmentPreviewDrawer from '@/components/ChatAttachmentPreviewDrawer.vue';
 import FollowUpSuggestions from '@/components/chat/FollowUpSuggestions.vue';
+import TurnStatusNotice from './components/TurnStatusNotice.vue';
 import MessageTimestamp from '@/components/chat/MessageTimestamp.vue';
 import ChatQuestionMinimap from '@/components/chat/ChatQuestionMinimap.vue';
 import { shouldShowConversationTimestamp } from '@/utils/messageTimestamp';
@@ -246,6 +253,7 @@ import SandboxSidePanel from '@/components/chat/SandboxSidePanel.vue';
 import BrowserTaskPreview from './components/BrowserTaskPreview.vue';
 import { collectSessionArtifacts, markSessionArtifactDeleted } from '@/utils/sessionArtifacts';
 import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
+import { isFailedOrInterruptedTurn, isGeneratingTurn } from '@/utils/messageTurnStatus';
 const referencesDrawer = provideChatReferencesDrawer();
 provideChatAttachmentPreviewDrawer();
 const sandboxPanel = provideChatSandboxPanel();
@@ -275,7 +283,7 @@ const { t } = useI18n();
 const { firstQuery, firstMentionedItems, firstModelId, firstImageFiles, firstAttachmentFiles, firstQuestionOrigin } = storeToRefs(usemenuStore);
 // Capture before the initial send consumes firstQuery; the child focuses after mounting.
 const focusComposerOnMount = Boolean(firstQuery.value);
-const { onChunk, error, isStreaming, startStream, stopStream, lastStreamRequest } = useStream();
+const { onChunk, error, isStreaming, startStream, stopStream, lastStreamRequest, resumeFailure } = useStream();
 /** Snapshot of the in-flight HTTP request for attaching to the next assistant message. */
 const pendingStreamDebug = ref(null);
 
@@ -794,6 +802,27 @@ const getUserQuery = (index) => {
     return '';
 };
 
+// "重新提问" on a failed or interrupted turn: send the question that produced
+// it again (BF-03 §4.7). The agent / knowledge base currently selected apply,
+// as if the user typed the question anew; uploads are not repeated.
+const handleRetryTurn = (session, index) => {
+    if (composerLocked.value || isReplying.value) return;
+    // The question of the failed turn, not merely the nearest user row: a
+    // steer fork puts injected user messages between the two.
+    let question = null;
+    for (let i = index - 1; i >= 0; i--) {
+        const row = messagesList[i];
+        if (!row || row.role !== 'user') continue;
+        if (!question) question = row;
+        if (session.request_id && row.request_id === session.request_id) {
+            question = row;
+            break;
+        }
+    }
+    if (!question || !String(question.content || '').trim()) return;
+    sendMsg(question.content, '', question.mentioned_items || [], [], [], {});
+};
+
 watch([() => route.params], async (newvalue) => {
     isFirstEnter.value = true;
     if (newvalue[0].chatid) {
@@ -923,6 +952,7 @@ const {
     processStreamChunk,
     prepareForNewOutgoingMessage,
     markInFlightAssistantStopped,
+    markTurnInterrupted,
 } = useChatStreamHandler({
     messagesList,
     loading,
@@ -950,8 +980,10 @@ const {
         // that absorbed a mid-run message ends with the injected user bubble
         // in some orderings, and keying off that row would skip the resume
         // entirely, leaving a running agent with no visible output.
+        // Only a turn the backend still considers generating counts (BF-03):
+        // a failed or interrupted message already carries its terminal state.
         const lastMessage = findLastMessage(
-            (message) => message.role === 'assistant' && !message.is_completed
+            (message) => message.role === 'assistant' && isGeneratingTurn(message)
         );
         const locallyRunning = isReplying.value || isImRecovering.value;
         // History reload can finish after sendMsg already marked this session
@@ -1615,6 +1647,24 @@ watch(error, (newError) => {
     if (isAttachingImStream.value) {
         isAttachingImStream.value = false;
         recoverIncompleteMessage();
+        return;
+    }
+    // continue-stream answered 404 for a message we tried to resume (BF-03):
+    // the backend has no stream for it — the turn already ended, or it was
+    // abandoned and just got marked interrupted. Either way there is nothing
+    // to resume and nothing wrong with the connection: end the "replying"
+    // state, show the turn as interrupted with a way to ask again, and stay
+    // quiet instead of toasting "stream failed" on every open.
+    if (resumeFailure.value?.kind === 'not_found') {
+        const resumeId = currentAssistantMessageId.value;
+        const target = messagesList.find((m) => m.role === 'assistant' && (
+            m.id === resumeId || m.assistant_message_id === resumeId || m.request_id === resumeId
+        )) || messagesList.find((m) => m.role === 'assistant' && isGeneratingTurn(m));
+        markTurnInterrupted(target);
+        isReplying.value = false;
+        loading.value = false;
+        // 清空当前 assistant message ID
+        currentAssistantMessageId.value = '';
         return;
     }
     MessagePlugin.error(newError);

@@ -638,6 +638,11 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		"stage": data.Stage,
 		"error": data.Error,
 	}
+	// The turn's error code travels with the event so the client can show a
+	// precise explanation without waiting for a history reload (BF-03).
+	if data.ErrorCode != "" {
+		metadata["code"] = data.ErrorCode
+	}
 
 	// Append error event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{

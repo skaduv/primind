@@ -1,0 +1,65 @@
+// BF-03 §4.7: the chat view must not turn an ended turn into a stuck
+// "preparing an answer…" plus a "stream failed" toast on every open.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+
+const source = readFileSync(new URL('./index.vue', import.meta.url), 'utf8')
+const stream = readFileSync(new URL('../../api/chat/streame.ts', import.meta.url), 'utf8')
+const notice = readFileSync(new URL('./components/TurnStatusNotice.vue', import.meta.url), 'utf8')
+
+function slice(startMarker, endMarker) {
+  const start = source.indexOf(startMarker)
+  assert.notEqual(start, -1, startMarker)
+  const end = source.indexOf(endMarker, start)
+  assert.notEqual(end, -1, endMarker)
+  return source.slice(start, end)
+}
+
+test('a failed or interrupted assistant turn shows its state and a retry button', () => {
+  const template = slice('<div v-if="session.role == \'assistant\' && (shouldRenderAssistantMessage', '<FollowUpSuggestions')
+  // The bubble is hidden for an answer with nothing to render, but a failed or
+  // interrupted turn must still show its state.
+  assert.match(template, /shouldRenderAssistantMessage\(session\) \|\| isFailedOrInterruptedTurn\(session\)/)
+  assert.match(template, /<botmsg v-if="shouldRenderAssistantMessage\(session\)"/)
+  assert.match(template, /<TurnStatusNotice v-if="isFailedOrInterruptedTurn\(session\)" :session="session"/)
+  assert.match(template, /@retry="handleRetryTurn\(session, index\)"/)
+  assert.match(source, /import TurnStatusNotice from '\.\/components\/TurnStatusNotice\.vue'/)
+  assert.match(notice, /chat\.turnStatus\.\$\{status\}/)
+  assert.match(notice, /chat\.turnError\.\$\{code\}/)
+  assert.match(notice, /turnErrorMessage\(props\.session\)/, 'falls back to the explanation the backend stored')
+})
+
+test('a resume 404 ends "replying" quietly instead of toasting "stream failed"', () => {
+  const watcher = slice('watch(error, (newError) => {', 'onChunk((data) => {')
+  const im = watcher.indexOf('if (isAttachingImStream.value)')
+  const resume = watcher.indexOf("if (resumeFailure.value?.kind === 'not_found')")
+  const toast = watcher.indexOf('MessagePlugin.error(newError)')
+  assert.ok(im >= 0 && resume > im && toast > resume, 'IM recovery first, quiet resume second, toast last')
+  const quiet = watcher.slice(resume, toast)
+  assert.match(quiet, /markTurnInterrupted\(target\)/)
+  assert.match(quiet, /isReplying\.value = false/)
+  assert.match(quiet, /loading\.value = false/)
+  assert.doesNotMatch(quiet, /MessagePlugin\./, 'no error toast for a turn that simply ended')
+})
+
+test('"ask again" resends the question of the failed turn with its mentions', () => {
+  const retry = slice('const handleRetryTurn = (session, index) => {', 'watch([() => route.params]')
+  assert.match(retry, /row\.request_id === session\.request_id/)
+  assert.match(retry, /sendMsg\(question\.content, '', question\.mentioned_items \|\| \[\], \[\], \[\], \{\}\)/)
+  assert.match(retry, /if \(composerLocked\.value \|\| isReplying\.value\) return/)
+})
+
+test('the stream layer only reports a quiet resume failure for continue-stream', () => {
+  assert.match(stream, /const resuming = params\.method === 'GET' && \/continue-stream\/\.test\(params\.url\)/)
+  assert.match(stream, /if \(resuming && res\.status === 404\)/)
+  assert.match(stream, /resumeFailure\.value = \{ kind: 'not_found', status: await readResumeStatus\(res\) \}/)
+  assert.match(stream, /resumeFailure\.value = null;/, 'reset on every start')
+  assert.match(source, /lastStreamRequest, resumeFailure \} = useStream\(\)/)
+})
+
+test('history with a failed turn never starts a resume for it', () => {
+  const hook = slice('onAfterMsgList: async () =>', 'onAgentQuery:')
+  assert.match(hook, /isGeneratingTurn\(message\)/)
+  assert.doesNotMatch(hook, /!message\.is_completed/)
+})

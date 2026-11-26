@@ -41,9 +41,12 @@ test('resume and stop address the persisted assistant id, not a fork id', () => 
 
   // An injected user row can be the last entry in the list. Keying the resume
   // off the tail row would then skip continue-stream and the still-running
-  // agent would produce nothing visible.
-  assert.match(hook, /findLastMessage\(\s*\(message\) => message\.role === 'assistant' && !message\.is_completed\s*\)/)
+  // agent would produce nothing visible. Only a turn the backend still
+  // considers generating counts (BF-03): a failed or interrupted message is
+  // already `is_completed` and must never be resumed.
+  assert.match(hook, /findLastMessage\(\s*\(message\) => message\.role === 'assistant' && isGeneratingTurn\(message\)\s*\)/)
   assert.doesNotMatch(hook, /messagesList\[messagesList\.length - 1\]/)
+  assert.match(source, /import \{ isFailedOrInterruptedTurn, isGeneratingTurn \} from '@\/utils\/messageTurnStatus'/)
 })
 
 // Stopping means stopping. Firing off the queued messages as a fresh run is

@@ -317,16 +317,27 @@ func (h *Handler) setupStreamHandler(
 }
 
 // setupStopEventHandler registers a stop event handler
+//
+// A stop is one of the ways a turn ends, so it writes the terminal state
+// (`stopped`) like every other ending (BF-03 §4.2). The write goes through
+// completeAssistantMessage, which keeps the partial content and never
+// relabels a turn that already reached another terminal state.
 func (h *Handler) setupStopEventHandler(
 	eventBus *event.EventBus,
-	sessionID string,
 	sessionTenantID uint64,
-	assistantMessage *types.Message,
-	cancel context.CancelFunc,
+	streamCtx *sseStreamContext,
 ) {
+	if streamCtx == nil || streamCtx.assistantMessage == nil {
+		return
+	}
+	sessionID := streamCtx.assistantMessage.SessionID
+	assistantMessage := streamCtx.assistantMessage
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
-		cancel()
+		if streamCtx.cancel != nil {
+			streamCtx.cancel()
+		}
+		streamCtx.endTurn()
 		// Preserve whatever has been streamed so far; do not overwrite Content.
 		// Use session's tenant for message update (ctx may have effectiveTenantID when using shared agent).
 		// Use WithoutCancel so the GORM UPDATE survives the upcoming ctx.Done triggered by cancel()/client disconnect.
@@ -334,7 +345,11 @@ func (h *Handler) setupStopEventHandler(
 			context.WithoutCancel(ctx),
 			types.TenantIDContextKey, sessionTenantID,
 		)
-		h.completeAssistantMessage(updateCtx, assistantMessage, "", "") // empty query: stopped conversations are not indexed
+		if err := h.completeAssistantMessage(updateCtx, assistantMessage, "", "", types.MessageStatusStopped); err != nil { // empty query: stopped conversations are not indexed
+			// The full persist failed; at least end the turn so it is not
+			// left generating (BF-03 §4.2).
+			h.finalizeTurn(updateCtx, streamCtx, turnOutcome{status: types.MessageStatusStopped})
+		}
 		return nil
 	})
 }

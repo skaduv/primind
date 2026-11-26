@@ -23,6 +23,12 @@ func (s *completionEventRecorder) AppendEvent(_ context.Context, _, _ string, e 
 	return nil
 }
 
+// ClearLiveRun is a no-op here: finalizeTurn (BF-03) drops the marker after a
+// terminal write and these tests have no live run to drop.
+func (s *completionEventRecorder) ClearLiveRun(context.Context, string, string) error {
+	return nil
+}
+
 type completionHistory struct{ previous []types.MessageArtifact }
 
 func (s completionHistory) KnownArtifacts(context.Context, string) ([]types.MessageArtifact, error) {

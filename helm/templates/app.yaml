@@ -33,6 +33,10 @@ spec:
     spec:
       {{- include "primind.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ include "primind.serviceAccountName" . }}
+      # On SIGTERM the app drains HTTP for its shutdown timeout (30s) and then
+      # ends the assistant turns still generating in this pod (BF-03 §4.5).
+      # Give it a margin on top so the pod is not killed mid-write.
+      terminationGracePeriodSeconds: {{ .Values.app.terminationGracePeriodSeconds | default 45 }}
       {{- with .Values.app.podSecurityContext | default .Values.global.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

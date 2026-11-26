@@ -153,7 +153,7 @@ func (c *Client) processAgentSSEStream(reader io.Reader, callback AgentEventCall
 				// follows it with `complete` or EOF. Deliver it to the callback
 				// first, then terminate the SDK call with an error.
 				if streamResponse.ResponseType == AgentResponseTypeError && streamResponse.Done {
-					return NewSSEStreamError(streamResponse.Content)
+					return NewSSEStreamErrorWithCode(streamResponse.Content, streamErrorCode(streamResponse.Data))
 				}
 			}
 			dataBuffer = ""

@@ -49,9 +49,40 @@ type Message struct {
 	KnowledgeReferences []*SearchResult `json:"knowledge_references"`
 	AgentSteps          []AgentStep     `json:"agent_steps,omitempty"` // Agent execution steps (only for assistant messages)
 	IsCompleted         bool            `json:"is_completed"`
-	Channel             string          `json:"channel,omitempty"` // Source channel: "web", "api", "im", etc.
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
+	// Status is the assistant turn's lifecycle state: "generating",
+	// "completed", "failed", "stopped" or "interrupted". Empty on rows that
+	// predate the field; read it through EffectiveStatus (BF-03).
+	Status       string    `json:"status"`
+	ErrorCode    string    `json:"error_code"`        // Machine-readable reason when Status is "failed" or "interrupted"
+	ErrorMessage string    `json:"error_message"`     // Short user-facing explanation when Status is "failed" or "interrupted"
+	Channel      string    `json:"channel,omitempty"` // Source channel: "web", "api", "im", etc.
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Assistant turn lifecycle states (Message.Status).
+const (
+	TurnStatusGenerating  = "generating"
+	TurnStatusCompleted   = "completed"
+	TurnStatusFailed      = "failed"
+	TurnStatusStopped     = "stopped"
+	TurnStatusInterrupted = "interrupted"
+)
+
+// EffectiveStatus is the one way to read an assistant message's turn state:
+// an explicit Status wins; a row from before the field existed is read
+// through IsCompleted ("no longer generating").
+func (m *Message) EffectiveStatus() string {
+	if m == nil {
+		return ""
+	}
+	if m.Status != "" {
+		return m.Status
+	}
+	if m.IsCompleted {
+		return TurnStatusCompleted
+	}
+	return TurnStatusGenerating
 }
 
 // MessageListResponse message list response

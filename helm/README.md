@@ -253,6 +253,7 @@ pre-existing Service name does not automatically transfer its ownership to Helm.
 | `app.strategy.type` | App update strategy: `RollingUpdate` or `Recreate` | `RollingUpdate` |
 | `app.strategy.rollingUpdate.maxSurge` | Extra Pods during rolling updates (integer or percentage); ignored with `Recreate` | `1` |
 | `app.strategy.rollingUpdate.maxUnavailable` | Unavailable Pods during rolling updates (integer or percentage); ignored with `Recreate` | `0` |
+| `app.terminationGracePeriodSeconds` | Seconds a Pod gets to shut down: HTTP drain (30s) plus cleanup, which ends in-flight assistant turns as interrupted. Keep above 30 | `45` |
 | `app.image.repository` | Image repository | `ghcr.io/skaduv/primind-app` |
 | `app.image.tag` | Image tag | `""` (uses appVersion) |
 | `app.resources` | Resource limits | See values.yaml |

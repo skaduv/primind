@@ -19,6 +19,16 @@ type imageCompletionMessages struct {
 	tenant     uint64
 	err        error
 	beforeSave func()
+	// finalized records the conditional terminal write (BF-03), which runs
+	// when the full persist fails.
+	finalized []types.MessageStatus
+}
+
+func (s *imageCompletionMessages) FinalizeMessage(
+	_ context.Context, _, _ string, status types.MessageStatus, _, _ string, _ *string,
+) (bool, error) {
+	s.finalized = append(s.finalized, status)
+	return true, nil
 }
 
 func (s *imageCompletionMessages) UpdateMessage(ctx context.Context, message *types.Message) error {
@@ -123,13 +133,17 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 							Data: event.AgentCompleteData{MessageID: "m", FinalAnswer: answer},
 						}))
 						require.Zero(t, completed)
-						h.completeStreamAssistantMessage(saveCtx, streamCtx, "", "")
+						h.completeStreamAssistantMessage(saveCtx, streamCtx, "", "", types.MessageStatusCompleted)
 					}
 					last := stream.events[len(stream.events)-1]
 					if fail {
 						require.Zero(t, completed)
 						require.Equal(t, types.ResponseTypeError, last.Type)
 						require.Equal(t, "message_persistence", last.Data["stage"])
+						// A turn whose answer could not be saved must still end
+						// (BF-03): the conditional write records the failure.
+						require.Equal(t, []types.MessageStatus{types.MessageStatusFailed}, messages.finalized)
+						require.Equal(t, types.TurnErrorCodePersistFailed, last.Data["code"])
 					} else {
 						require.Equal(t, 1, completed)
 						require.Equal(t, types.ResponseTypeComplete, last.Type)

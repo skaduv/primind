@@ -313,6 +313,81 @@ func (r *messageRepository) DeleteMessagesFrom(
 	return deleted, nil
 }
 
+// FinalizeMessage ends an assistant turn exactly once. The predicate is the
+// whole contract: a row that is still generating gets the terminal state, and
+// a row that already ended (by any path, in any replica) is left alone so a
+// late failure, stop or backstop cannot relabel a finished answer. Returns
+// whether this call ended the turn.
+func (r *messageRepository) FinalizeMessage(
+	ctx context.Context, sessionID, messageID string, status types.MessageStatus,
+	errorCode, errorMessage string, content *string,
+) (bool, error) {
+	if sessionID == "" || messageID == "" {
+		return false, fmt.Errorf("finalize message: session and message id are required")
+	}
+	if status == "" || status == types.MessageStatusGenerating {
+		return false, fmt.Errorf("finalize message %s: %q is not a terminal status", messageID, status)
+	}
+	changes := map[string]interface{}{
+		"status":        status,
+		"error_code":    errorCode,
+		"error_message": errorMessage,
+		"is_completed":  true,
+		"updated_at":    time.Now(),
+	}
+	if content != nil {
+		changes["content"] = *content
+	}
+	result := r.db.WithContext(ctx).Model(&types.Message{}).
+		Where("id = ? AND session_id = ? AND role = 'assistant' AND is_completed = ?"+
+			" AND (status IN (?, ?) OR status IS NULL)",
+			messageID, sessionID, false, "", types.MessageStatusGenerating).
+		Updates(changes)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// generatingAssistantScope is the row set the turn reconciler repairs.
+func (r *messageRepository) generatingAssistantScope(ctx context.Context, cutoff time.Time) *gorm.DB {
+	return r.db.WithContext(ctx).Model(&types.Message{}).
+		Where("role = 'assistant' AND is_completed = ? AND (status IN (?, ?) OR status IS NULL)"+
+			" AND updated_at < ?", false, "", types.MessageStatusGenerating, cutoff)
+}
+
+// ListGeneratingAssistantMessagesBefore pages through assistant turns that
+// never reached a terminal state, oldest first. Only the identity and timing
+// columns come back: the reconciler finalizes by id and never needs content.
+func (r *messageRepository) ListGeneratingAssistantMessagesBefore(
+	ctx context.Context, cutoff time.Time, limit int,
+) ([]*types.Message, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var messages []*types.Message
+	if err := r.generatingAssistantScope(ctx, cutoff).
+		Select("id", "session_id", "request_id", "role", "created_at", "updated_at").
+		Order("updated_at ASC").
+		Limit(limit).
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// CountGeneratingAssistantMessagesBefore counts the rows the reconciler
+// would consider, without loading them.
+func (r *messageRepository) CountGeneratingAssistantMessagesBefore(
+	ctx context.Context, cutoff time.Time,
+) (int64, error) {
+	var count int64
+	if err := r.generatingAssistantScope(ctx, cutoff).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // DeleteMessage deletes a message
 func (r *messageRepository) DeleteMessage(ctx context.Context, sessionID string, messageID string) error {
 	return r.db.WithContext(ctx).Where(

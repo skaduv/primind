@@ -3,6 +3,13 @@ import { markRaw, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ensureRagPipelineHistoryStream } from '@/utils/rag-pipeline-history'
 import { applyMessageCreatedAt, bindServerTurnTimestamps, ensureMessageCreatedAt } from '@/utils/messageTimestamp'
+import {
+  TURN_ERROR_PROCESS_LOST,
+  applyTurnOutcome,
+  effectiveTurnStatus,
+  isGeneratingTurn,
+  isTurnInterruptedEvent,
+} from '@/utils/messageTurnStatus'
 import { expandSteerForksInHistory, forkAfterInjectedUser, steerStepEvents, resetSteerTurnForReplay } from '@/utils/steerStreamFork'
 
 export type ChatMessage = Record<string, unknown>
@@ -99,18 +106,52 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     return undefined
   }
 
-  /** Incomplete assistant for the current turn, even if a later user row is the tail. */
+  /** Incomplete assistant for the current turn, even if a later user row is the tail.
+   *  Only a turn the backend still considers generating counts (BF-03): a
+   *  failed or interrupted message is already `is_completed` with a status. */
   const getTrailingIncompleteAssistant = () => {
     for (let i = messagesList.length - 1; i >= 0; i--) {
       const item = messagesList[i]
-      if (item?.role === 'assistant' && !item.is_completed) return item
+      if (isGeneratingTurn(item)) return item
     }
     return undefined
+  }
+
+  /**
+   * Record how a turn ended, mirroring what the backend persists. A later
+   * `complete` or `stop` never downgrades a failure the stream already
+   * reported (the agent engine announces both after an error).
+   */
+  const recordTurnStatus = (message: ChatMessage, status: string, code = '') => {
+    const current = effectiveTurnStatus(message)
+    if ((current === 'failed' || current === 'interrupted') && (status === 'completed' || status === 'stopped')) {
+      return
+    }
+    message.status = status
+    message.error_code = code
+    if (!code) message.error_message = ''
+  }
+
+  /** The turn was found abandoned: show it as interrupted and offer to ask again. */
+  const markTurnInterrupted = (message: ChatMessage | undefined, errorMessage = '') => {
+    if (!message) return
+    applyTurnOutcome(message, {
+      status: 'interrupted', error_code: TURN_ERROR_PROCESS_LOST, error_message: errorMessage,
+    })
+    if (message.isAgentMode) {
+      if (!message.agentEventStream) message.agentEventStream = []
+      const stream = message.agentEventStream as ChatMessage[]
+      if (!stream.some((e) => e.type === 'stop' || e.type === 'error')) {
+        stream.push({ type: 'stop', timestamp: Date.now(), reason: 'interrupted' })
+      }
+    }
+    emitMessageUpdated(message)
   }
 
   const markAssistantStopped = (message: ChatMessage) => {
     if (!message || message.is_completed) return
     message.is_completed = true
+    message.status = 'stopped'
     if (message.isAgentMode) {
       if (!message.agentEventStream) message.agentEventStream = []
       const stream = message.agentEventStream as ChatMessage[]
@@ -443,7 +484,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (item.id) existingIds.add(item.id)
 
       item.isAgentMode = false
-      const willContinueStream = preserveIncompleteStreamReactive && !item.is_completed
+      const willContinueStream = preserveIncompleteStreamReactive && isGeneratingTurn(item)
       if (willContinueStream) {
         item.agentEventStream = item.agentEventStream || []
         item._eventMap = new Map()
@@ -609,6 +650,8 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
 
     const responseType = data.response_type as string
     const dataPayload = data.data as ChatMessage | undefined
+    // The backend's machine-readable reason on a terminal error frame (BF-03).
+    const streamErrorCode = String((data.data as ChatMessage | undefined)?.code || (data.data as ChatMessage | undefined)?.error_code || '')
 
     switch (responseType) {
       case 'thinking': {
@@ -882,6 +925,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
             const errorMsg = String(data.content || t('chat.processError'))
             message.content = errorMsg
             message.is_completed = true
+            recordTurnStatus(message, 'failed', streamErrorCode)
             isReplying.value = false
             loading.value = false
             fullContent.value = ''
@@ -893,6 +937,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           const errorMsg = String(data.content || t('chat.processError'))
           message.content = errorMsg
           message.is_completed = true
+          recordTurnStatus(message, 'failed', streamErrorCode)
           isReplying.value = false
           loading.value = false
           fullContent.value = ''
@@ -1027,6 +1072,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         loading.value = false
         isReplying.value = false
         message.is_completed = true
+        recordTurnStatus(message, 'completed')
         onReplyComplete?.(String(message.content || ''))
         onTurnComplete?.(message)
         fullContent.value = ''
@@ -1065,6 +1111,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           reason: dataPayload?.reason || 'user_requested',
         })
         message.is_completed = true
+        recordTurnStatus(message, 'stopped')
         loading.value = false
         isReplying.value = false
         fullContent.value = ''
@@ -1089,6 +1136,21 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       assistant_message_id: data.assistant_message_id,
     })
 
+    // continue-stream found this turn abandoned and ended it on the server
+    // (BF-03 §4.3): stop waiting, show it as interrupted, and stay quiet —
+    // there is nothing to resume and nothing the user did wrong.
+    if (isTurnInterruptedEvent(data)) {
+      if (data.id) replaySegments.delete(String(data.id))
+      const interrupted = resolveActiveAssistantMessage(data)
+      markTurnInterrupted(interrupted, String(data.content || ''))
+      loading.value = false
+      isReplying.value = false
+      fullContent.value = ''
+      currentAssistantMessageId.value = ''
+      scrollToBottom()
+      return
+    }
+
     // Persistence can fail after the entire answer has streamed. Surface the
     // failure separately; the generic error path replaces the answer content.
     if (data.response_type === 'error' && (data.data as ChatMessage | undefined)?.stage === 'message_persistence') {
@@ -1097,6 +1159,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (message) {
         message.persistence_error = errorMsg
         message.is_completed = true
+        recordTurnStatus(message, 'failed', 'persist_failed')
         message.thinking = false
         message.artifactsCollecting = false
         emitMessageUpdated(message)
@@ -1241,7 +1304,10 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
         if (item.request_id === data.id) return true
         return item.id === data.id
       })
-      if (stoppedMessage) stoppedMessage.is_completed = true
+      if (stoppedMessage) {
+        stoppedMessage.is_completed = true
+        recordTurnStatus(stoppedMessage, 'stopped')
+      }
       loading.value = false
       isReplying.value = false
       fullContent.value = ''
@@ -1265,6 +1331,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       existingMessage.artifactsCollecting = false
       existingMessage.thinking = false
       existingMessage.is_completed = true
+      recordTurnStatus(existingMessage, 'completed')
       loading.value = false
       isReplying.value = false
       fullContent.value = ''
@@ -1335,5 +1402,6 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     processStreamChunk,
     prepareForNewOutgoingMessage,
     markInFlightAssistantStopped,
+    markTurnInterrupted,
   }
 }

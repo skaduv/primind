@@ -10,12 +10,53 @@ import (
 	"context"
 	"os"
 	"strings"
+	"time"
 
 	"go.uber.org/dig"
 
+	"github.com/primind/primind/internal/application/service"
 	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/types/interfaces"
 )
+
+// runTurnBackfill ends the assistant turns an older build left "generating"
+// (BF-03 §4.6) and prints the numbers the rollout record asks for. It reuses
+// the reconciler's sweep, so a turn another replica is still driving (live-run
+// marker) is skipped rather than interrupted. olderThan must cover the stream
+// TTL when the app is serving: this process cannot see in-flight quick-answer
+// turns, which publish no marker. Deploying the reconciler makes this command
+// redundant; it exists so the repaired count is on record.
+func runTurnBackfill(c *dig.Container, dryRun bool, olderThan time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	err := c.Invoke(func(reconciler *service.TurnReconciler) error {
+		before, err := reconciler.CountStale(ctx, olderThan)
+		if err != nil {
+			return err
+		}
+		logger.Infof(ctx, "[BF-03 backfill] assistant turns still marked generating for more than %s: %d",
+			olderThan, before)
+		if dryRun {
+			logger.Infof(ctx, "[BF-03 backfill] dry run: nothing was changed")
+			return nil
+		}
+		result, err := reconciler.Backfill(ctx, olderThan)
+		if err != nil {
+			return err
+		}
+		after, err := reconciler.CountStale(ctx, olderThan)
+		if err != nil {
+			return err
+		}
+		logger.Infof(ctx,
+			"[BF-03 backfill] done: scanned=%d repaired=%d skipped=%d remaining=%d (skipped and remaining turns are still running)",
+			result.Scanned, result.Repaired, result.Skipped, after)
+		return nil
+	})
+	if err != nil {
+		logger.Fatalf(ctx, "[BF-03 backfill] failed: %v", err)
+	}
+}
 
 // bootstrapEnvVar is the env var that names the email of the user who
 // may be promoted to system administrator when the deployment has no

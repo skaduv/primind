@@ -24,6 +24,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -40,7 +41,21 @@ import (
 	"github.com/primind/primind/internal/types/interfaces"
 )
 
+// One-off repair of assistant turns an older build left "generating" (BF-03
+// §4.6). Run it once after the first deploy that carries the turn reconciler:
+// it prints the before/after counts for the rollout record and exits.
+var (
+	flagBackfillTurns = flag.Bool("backfill-interrupted-turns", false,
+		"End assistant turns left \"generating\" by an older build (BF-03), print the before/after counts, and exit")
+	flagBackfillDryRun = flag.Bool("dry-run", false,
+		"With -backfill-interrupted-turns: only print how many turns would be repaired")
+	flagBackfillOlderThan = flag.Duration("older-than", time.Hour,
+		"With -backfill-interrupted-turns: only turns idle for at least this long; keep it at or above the stream TTL while the app is serving")
+)
+
 func main() {
+	flag.Parse()
+
 	// Set Gin mode
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -61,6 +76,11 @@ func main() {
 	// One-shot bootstrap hooks (e.g. promote env-named user to system
 	// admin). Best-effort: never aborts startup — see bootstrap.go.
 	runStartupBootstrap(c)
+
+	if *flagBackfillTurns {
+		runTurnBackfill(c, *flagBackfillDryRun, *flagBackfillOlderThan)
+		return
+	}
 
 	// Run application
 	err := c.Invoke(func(

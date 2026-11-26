@@ -262,6 +262,29 @@ func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessi
 	return s.messageRepo.UpdateMessageRenderedContent(ctx, sessionID, messageID, renderedContent)
 }
 
+// FinalizeMessage ends the assistant turn behind messageID. See
+// interfaces.MessageRepository.FinalizeMessage for the contract. Unlike the
+// other write paths it is deliberately tenant-agnostic: the row is addressed
+// by (session, message) and the write is conditional, and it must also serve
+// background callers (reconciler, shutdown) whose ctx carries no tenant.
+func (s *messageService) FinalizeMessage(
+	ctx context.Context, sessionID, messageID string, status types.MessageStatus,
+	errorCode, errorMessage string, content *string,
+) (bool, error) {
+	applied, err := s.messageRepo.FinalizeMessage(ctx, sessionID, messageID, status, errorCode, errorMessage, content)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"session_id": sessionID,
+			"message_id": messageID,
+			"status":     status,
+		})
+		return false, err
+	}
+	logger.Infof(ctx, "Finalized assistant turn %s in session %s as %s (applied=%t)",
+		messageID, sessionID, status, applied)
+	return applied, nil
+}
+
 // DeleteMessage removes a message from a session, also cleaning up its Knowledge entry in the chat history KB.
 func (s *messageService) DeleteMessage(ctx context.Context, sessionID string, messageID string) error {
 	logger.Info(ctx, "Start deleting message")
