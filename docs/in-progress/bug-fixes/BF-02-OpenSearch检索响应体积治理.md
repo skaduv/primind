@@ -4,10 +4,10 @@
 | --- | --- |
 | 关联缺陷 | [快速问答多库检索时 OpenSearch 响应超限](../../bug/2026-11-24-快速问答OpenSearch响应超限.md) |
 | 优先级 | P0 |
-| 状态 | 进行中：T0～T5、T8 已在 worktree 分支 `claude/bf-02-opensearch-response-size` 实现，并通过第 6.1 节单元测试和第 6.2 节本机集成测试，未提交、未合并；T4b 待排期，T7 部分完成，生产复测（AC1、AC2）待部署。记录见第 10 节 |
+| 状态 | 进行中：T0～T5、T8 已在 worktree 分支 `claude/bf-02-opensearch-response-size` 实现并提交，已变基到 `main@bb230e1`（含 BF-01），在变基后的代码上重新通过第 6.1 节单元测试和第 6.2 节本机集成测试，尚未推送、未合并；T4b 待排期，T7 部分完成，生产复测（AC1、AC2）待部署。记录见第 10 节 |
 | 基线 | `main@746189f`；现有改动在 `C:/Users/11756/.codex/worktrees/c596/primind` 的 `retrieve.go` 和 `runtime_contract_test.go`（+82 行）。该工作树另有与本任务无关的未提交改动，移植时只取这两个文件 |
 | 日期 | 2026-11-25（北京时间） |
-| 修订 | 2026-11-25：按代码核对结果修订第 1～9、11 节，新增第 12 节（16 MiB 上限的来历） |
+| 修订 | 2026-11-25：按代码核对结果修订第 1～9、11 节，新增第 12 节（16 MiB 上限的来历）；2026-11-26：变基到 `main@bb230e1` 后复测，结果与变基前一致 |
 
 ---
 
@@ -186,7 +186,7 @@ go test ./internal/application/service/ -run 'Search|Fanout|Image|FAQ' -count=1
 
 ## 10. 记录区（开发过程中填写）
 
-记录时间 2026-11-25。实现在分支 `claude/bf-02-opensearch-response-size`（worktree `.claude/worktrees/bf-02-opensearch-response-size`，基线 `main@746189f`），**未提交、未合并**。
+记录时间 2026-11-25。实现在分支 `claude/bf-02-opensearch-response-size`（worktree `.claude/worktrees/bf-02-opensearch-response-size`），开发基线 `main@746189f`。2026-11-26 已提交并变基到 `main@bb230e1`（含 BF-01，两者改动的文件不重叠），在变基后的代码上复测：第 6.1 节 4 条命令、全模块构建、lint 和第 6.2 节集成测试全部通过，数据与下表一致。**尚未推送、未合并**。
 
 ### 10.1 T0 预检结论
 
