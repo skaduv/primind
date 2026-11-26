@@ -120,7 +120,8 @@ func TestCitationVariantMetrics(t *testing.T) {
 
 	got := registry.DecodeOutputText(`有效期[ref id="c1"]；见[ref id="c2"]；另见[ref id="c3"]。`)
 	require.Equal(t,
-		`有效期<kb doc="Doc" chunk_id="chunk-1" />；见<kb doc="Doc" chunk_id="chunk-2" />；另见<kb doc="Doc" chunk_id="chunk-3" />。`,
+		`有效期<kb doc="Doc" chunk_id="chunk-1" />；见<kb doc="Doc" chunk_id="chunk-2" />；`+
+			`另见<kb doc="Doc" chunk_id="chunk-3" />。`,
 		got)
 	require.Equal(t, map[string]int{"square_double_quoted": 3}, registry.CitationVariantStats())
 
@@ -179,7 +180,8 @@ func TestStreamExpanderNormalizesWhitespaceAfterOpener(t *testing.T) {
 	// expander must hold the same spellings instead of leaking them as text.
 	expander := newCitationStreamExpander(bracketTestRegistry())
 	require.Equal(t, "a"+kbChunk1+"b", feedAll(expander, "a[", "\n ref", ` id="c1"]b`))
-	require.Equal(t, "x"+kbChunk1+"y", feedAll(newCitationStreamExpander(bracketTestRegistry()), "x【", "ref\tid=", "c1】y"))
+	require.Equal(t, "x"+kbChunk1+"y",
+		feedAll(newCitationStreamExpander(bracketTestRegistry()), "x【", "ref\tid=", "c1】y"))
 	require.Equal(t, "[ ref=5] stays", feedAll(newCitationStreamExpander(bracketTestRegistry()), "[ ref=5] stays"))
 	require.Equal(t, "[ r", feedAll(newCitationStreamExpander(bracketTestRegistry()), "[ r"),
 		"ordinary prose that merely starts like a citation is kept")

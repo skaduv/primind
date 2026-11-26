@@ -35,7 +35,8 @@ const citationEnabledProtocolPrompt = `
   observed in the result, not proof that every linked page was read.
 - If a source has no citation handle, use its exact supplied HTTP(S) URL as a Markdown link when available.
   If neither is available, omit the citation; never invent or borrow a source.
-- Always write the angle-bracket form <ref id="cN"/>; never write [ref id="cN"], 【ref id="cN"】 or other bracket variants.
+- Always write the angle-bracket form <ref id="cN"/>; never write [ref id="cN"],
+  【ref id="cN"】 or other bracket variants.
 - Never output <kb> or <web> tags yourself; the system expands valid <ref/> tags after generation.
 - Keep each <ref/> inline on the same line as the claim it supports. Do not group citations ` +
 	`at the end. For a requested exact output format, use citations only where the format ` +

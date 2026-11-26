@@ -1,3 +1,5 @@
+// Package common holds small helpers shared across the application layers:
+// pipeline logging, retries, Redis TLS setup and similar cross-cutting code.
 package common
 
 import (
