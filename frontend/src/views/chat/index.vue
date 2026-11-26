@@ -206,6 +206,7 @@ import { resolveForkAffordance } from './forkPoint';
 import { rewindSkipMessage } from './rewindNotice';
 import { rewindPrefillText, rewindBlockedByOutgoingWork, canReplaceRewindTranscript, shouldApplyRewindLocally, rewindHistoryHasMore, keepMessagesThroughRewindPoint, rewindableMessageIds, rewindHttpConflictCode, rewindConflictI18nKey } from './rewindView';
 import { getSuggestedQuestions } from "@/api/agent/index";
+import { suggestedQuestionsErrorLabel } from '@/utils/suggestedQuestions';
 import { questionOriginFromSuggestion } from '@/utils/questionOrigin';
 import { deleteTemporaryAttachment, uploadTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { useStream } from '../../api/chat/streame'
@@ -670,14 +671,16 @@ const fetchSuggestedQuestions = async () => {
     suggestedQuestionsLoading.value = true;
     // 加载期间保留旧数据，不清空，避免布局抖动
     try {
-        const agentId = useSettingsStoreInstance.selectedAgentId;
-        if (!agentId) return;
-        const res = await getSuggestedQuestions(agentId, useSettingsStoreInstance.getSuggestedQuestionsParams());
+        // 用「ID + 来源空间」引用智能体：共享智能体只有带上来源空间，后端才能按共享关系解析
+        const agent = useSettingsStoreInstance.selectedAgentRef;
+        if (!agent.id) return;
+        const res = await getSuggestedQuestions(agent, useSettingsStoreInstance.getSuggestedQuestionsParams());
         if (fetchId === suggestedQuestionsFetchId) {
             suggestedQuestions.value = res?.data?.questions || [];
         }
     } catch (err) {
-        console.warn('[SuggestedQuestions] Failed to fetch:', err);
+        // 推荐区保持隐藏；把错误码打到控制台便于排查（404 = 智能体不存在或无权使用）
+        console.warn('[SuggestedQuestions] Failed to fetch:', suggestedQuestionsErrorLabel(err));
         if (fetchId === suggestedQuestionsFetchId) {
             suggestedQuestions.value = [];
         }
@@ -764,6 +767,8 @@ const debouncedFetchSuggestions = () => {
 watch(
     () => ({
         agentId: useSettingsStoreInstance.selectedAgentId,
+        // 同一个 ID 可能是不同来源空间的共享智能体，来源变了也要重新请求
+        sourceTenantId: useSettingsStoreInstance.selectedAgentSourceTenantId,
         kbs: useSettingsStoreInstance.settings.selectedKnowledgeBases,
         files: useSettingsStoreInstance.settings.selectedFiles,
         tags: useSettingsStoreInstance.settings.selectedTags,

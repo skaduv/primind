@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { nextTick } from "vue";
-import { BUILTIN_QUICK_ANSWER_ID, BUILTIN_SMART_REASONING_ID } from "@/api/agent";
+import { BUILTIN_QUICK_ANSWER_ID, BUILTIN_SMART_REASONING_ID, type AgentRef } from "@/api/agent";
 import { getApiBaseUrl } from "@/utils/api-base";
 import { isAgentStreamAgentId } from "@/utils/agent-mode";
 import { loadAndReconcileSettings } from "@/stores/settingsStorage";
@@ -180,6 +180,12 @@ export const useSettingsStore = defineStore("settings", {
     selectedAgentId: (state) => state.settings.selectedAgentId || BUILTIN_QUICK_ANSWER_ID,
     // 共享智能体来源空间 ID（可选）
     selectedAgentSourceTenantId: (state) => state.settings.selectedAgentSourceTenantId ?? null,
+    // 当前选中智能体的引用（ID + 来源空间）。按智能体 ID 发的请求统一用它：
+    // 同一 ID 可能既是本空间智能体又是别的空间共享来的，只看 ID 分不清。
+    selectedAgentRef: (state): AgentRef => ({
+      id: state.settings.selectedAgentId || BUILTIN_QUICK_ANSWER_ID,
+      sourceTenantId: state.settings.selectedAgentSourceTenantId ?? null,
+    }),
   },
 
   actions: {

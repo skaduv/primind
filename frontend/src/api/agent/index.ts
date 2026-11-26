@@ -412,10 +412,22 @@ export interface SuggestedQuestion {
   knowledge_id?: string;
 }
 
+/**
+ * 智能体引用：ID 加来源空间。
+ *
+ * 共享智能体记录在来源空间，同一个 ID 还可能同时是本空间的智能体和另一个空间共享来的智能体。
+ * 按智能体 ID 发请求时统一传这组信息，不要只传 ID。
+ */
+export interface AgentRef {
+  id: string;
+  // 共享智能体的来源空间 ID；本空间智能体为 null
+  sourceTenantId: string | null;
+}
+
 // 获取智能体推荐问题
 // 根据智能体关联的知识库范围返回推荐问题，用于前端对话面板快捷提问
 export function getSuggestedQuestions(
-  agentId: string,
+  agent: AgentRef,
   params?: {
     knowledge_base_ids?: string[];
     knowledge_ids?: string[];
@@ -424,12 +436,14 @@ export function getSuggestedQuestions(
   }
 ) {
   const query = new URLSearchParams();
+  // 共享智能体带上来源空间：后端按共享关系解析，不会退回到同 ID 的本空间智能体。
+  if (agent.sourceTenantId) query.set('source_tenant_id', agent.sourceTenantId);
   if (params?.knowledge_base_ids?.length) query.set('knowledge_base_ids', params.knowledge_base_ids.join(','));
   if (params?.knowledge_ids?.length) query.set('knowledge_ids', params.knowledge_ids.join(','));
   if (params?.tag_scopes?.length) query.set('tag_scopes', JSON.stringify(params.tag_scopes));
   if (params?.limit) query.set('limit', String(params.limit));
   const qs = query.toString();
-  return get<{ data: { questions: SuggestedQuestion[] } }>(`/api/v1/agents/${agentId}/suggested-questions${qs ? '?' + qs : ''}`);
+  return get<{ data: { questions: SuggestedQuestion[] } }>(`/api/v1/agents/${agent.id}/suggested-questions${qs ? '?' + qs : ''}`);
 }
 // ===== WeChat QR Code Login =====
 

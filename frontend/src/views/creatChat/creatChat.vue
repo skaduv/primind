@@ -78,6 +78,7 @@ import { pickHostProjectDir } from '@/utils/desktopProjectDir';
 import { projectDirBasename, shouldRenderHostProjectSettings, withOptionalProjectDir } from '@/utils/hostWorkspace';
 import { getSuggestedQuestions } from "@/api/agent/index";
 import type { SuggestedQuestion } from "@/api/agent/index";
+import { suggestedQuestionsErrorLabel } from '@/utils/suggestedQuestions';
 import { questionOriginFromSuggestion, type SendMessageOptions } from '@/utils/questionOrigin';
 import { useMenuStore } from '@/stores/menu';
 import { useSettingsStore } from '@/stores/settings';
@@ -170,16 +171,18 @@ const fetchSuggestedQuestions = async () => {
     const fetchId = ++suggestedQuestionsFetchId;
     sqLoading.value = true;
     try {
-        const agentId = settingsStore.selectedAgentId;
-        if (!agentId) return;
-        const res = await getSuggestedQuestions(agentId, settingsStore.getSuggestedQuestionsParams());
+        // 用「ID + 来源空间」引用智能体：共享智能体只有带上来源空间，后端才能按共享关系解析
+        const agent = settingsStore.selectedAgentRef;
+        if (!agent.id) return;
+        const res = await getSuggestedQuestions(agent, settingsStore.getSuggestedQuestionsParams());
         if (fetchId === suggestedQuestionsFetchId) {
             sqCardsRevealed.value = false;
             sqRenderKey.value++;
             suggestedQuestions.value = res?.data?.questions || [];
         }
     } catch (err) {
-        console.warn('[SuggestedQuestions] Failed to fetch:', err);
+        // 推荐区保持隐藏；把错误码打到控制台便于排查（404 = 智能体不存在或无权使用）
+        console.warn('[SuggestedQuestions] Failed to fetch:', suggestedQuestionsErrorLabel(err));
         if (fetchId === suggestedQuestionsFetchId) {
             suggestedQuestions.value = [];
         }
@@ -200,6 +203,8 @@ const debouncedFetch = () => {
 watch(
     () => ({
         agentId: settingsStore.selectedAgentId,
+        // 同一个 ID 可能是不同来源空间的共享智能体，来源变了也要重新请求
+        sourceTenantId: settingsStore.selectedAgentSourceTenantId,
         kbs: settingsStore.settings.selectedKnowledgeBases,
         files: settingsStore.settings.selectedFiles,
         tags: settingsStore.settings.selectedTags,
