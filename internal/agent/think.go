@@ -661,6 +661,19 @@ func (e *AgentEngine) callLLMWithRetry(
 	return response, nil
 }
 
+// logCitationVariants reports the non-canonical citations the model wrote
+// during this turn (BF-01 spec 4.4): bracketed citations that were rewritten
+// into cards, per rule-table row, and half tags dropped at the end of a
+// stream. Nothing is logged while the model keeps to the <ref id="cN"/>
+// protocol, so a new model's first runs stay comparable in the logs.
+func (e *AgentEngine) logCitationVariants(ctx context.Context, sessionID, messageID string) {
+	modelID := ""
+	if e.chatModel != nil {
+		modelID = e.chatModel.GetModelID()
+	}
+	common.LogCitationVariants(ctx, e.modelContext.CitationVariantStats(), modelID, sessionID, messageID)
+}
+
 // reportModelContextLeaks logs any durable identifier that survived encoding.
 // Each line names the producing role or tool so the leak can be fixed at its
 // source; see modelcontext/leaks.go.

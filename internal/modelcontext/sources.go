@@ -39,6 +39,12 @@ type sourceRegistry struct {
 	// not evidence until a current tool result supplies the source.
 	citable sync.Map // handle -> true; registrations may run concurrently
 
+	// variantCounts tallies non-canonical citations the registry rewrote or
+	// dropped while decoding model output (see citations.go). Guarded because
+	// parallel tool results and stream decoding both touch the registry.
+	variantMu     sync.Mutex
+	variantCounts map[string]int
+
 	chunks *handleTable[ChunkReference]
 	docs   *handleTable[struct{}]
 	kbs    *handleTable[struct{}]

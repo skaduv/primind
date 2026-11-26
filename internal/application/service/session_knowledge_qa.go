@@ -1270,6 +1270,12 @@ func (s *sessionService) consumeFallbackStream(
 	var finalContent string
 	streamCompleted := false
 	decoder := modelContext.StreamDecoder()
+	// The fallback answer goes through the same citation decoding as the main
+	// one, so report any variant once the stream is over (BF-01 spec 4.4).
+	defer func() {
+		common.LogCitationVariants(ctx, modelContext.CitationVariantStats(),
+			chatManage.ChatModelID, chatManage.SessionID, chatManage.MessageID)
+	}()
 
 	for response := range responseChan {
 		// Emit event for each answer chunk

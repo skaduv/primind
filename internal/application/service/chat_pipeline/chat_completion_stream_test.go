@@ -1,12 +1,17 @@
 package chatpipeline
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/primind/primind/internal/common"
 	"github.com/primind/primind/internal/event"
+	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/models/chat"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
@@ -281,4 +286,128 @@ func TestStreamReportsIncompleteAsError(t *testing.T) {
 	for _, answer := range bus.finalAnswerEvents() {
 		require.False(t, answer.Done, "a cut-off stream must not close the answer as complete")
 	}
+}
+
+// lockedBuffer is a bytes.Buffer the stream plugin's goroutine can write to
+// while the test goroutine reads.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// citationStreamChatManage seeds a quick-Q&A request whose two retrieved
+// chunks are citable as c1 and c2.
+func citationStreamChatManage(bus *syncEventBus, sessionID string) *types.ChatManage {
+	chatManage := &types.ChatManage{}
+	chatManage.SessionID = sessionID
+	chatManage.MessageID = "msg-" + sessionID
+	chatManage.ChatModelID = "model-" + sessionID
+	chatManage.MergeResult = []*types.SearchResult{
+		{ID: "chunk-1", KnowledgeTitle: "Doc"},
+		{ID: "chunk-2", KnowledgeTitle: "Doc"},
+	}
+	chatManage.EventBus = bus
+	return chatManage
+}
+
+// variantLogLines returns the captured log lines that report a citation variant.
+func variantLogLines(logs *lockedBuffer) []string {
+	var lines []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, common.CitationVariantLogMessage) {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// TestStreamExpandsBracketedCitationAndLogsVariant drives the quick-Q&A answer
+// path at the plugin level (BF-01 AC1, AC4, AC6): a model writing the
+// Markdown-style [ref id="cN"], split across provider chunks, reaches the
+// client only as a finished citation card, and the closing log line names the
+// model, the answer and the variant.
+func TestStreamExpandsBracketedCitationAndLogsVariant(t *testing.T) {
+	logs := &lockedBuffer{}
+	logger.SetOutput(logs)
+	t.Cleanup(func() { logger.SetOutput(os.Stdout) })
+
+	bus := &syncEventBus{}
+	model := &openStreamChat{closeStream: true, chunks: []types.StreamResponse{
+		{ResponseType: types.ResponseTypeAnswer, Content: "有效期内[ref"},
+		{ResponseType: types.ResponseTypeAnswer, Content: ` id="c`},
+		{ResponseType: types.ResponseTypeAnswer, Content: `2"]。`, Done: true, FinishReason: "stop"},
+	}}
+	plugin := &PluginChatCompletionStream{modelService: &stubModelService{model: model}}
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHAT_COMPLETION_STREAM,
+		citationStreamChatManage(bus, "bracket"),
+		func() *PluginError { return nil },
+	))
+
+	require.Eventually(t, func() bool {
+		events := bus.finalAnswerEvents()
+		return len(events) > 0 && events[len(events)-1].Done
+	}, 2*time.Second, 5*time.Millisecond)
+	events := bus.finalAnswerEvents()
+	// The half marker never reaches the wire: the text before it streams at
+	// once, the tag is released only once it is a complete card. (A provider
+	// chunk that resolves to nothing still produces an empty event.)
+	var wire strings.Builder
+	for _, evt := range events {
+		require.NotContains(t, evt.Content, "ref id=")
+		wire.WriteString(evt.Content)
+	}
+	require.Equal(t, "有效期内", events[0].Content)
+	require.Equal(t, `<kb doc="Doc" chunk_id="chunk-2" />。`, events[len(events)-1].Content)
+	require.Equal(t, "有效期内"+`<kb doc="Doc" chunk_id="chunk-2" />。`, wire.String())
+
+	require.Eventually(t, func() bool {
+		return len(variantLogLines(logs)) == 1
+	}, 2*time.Second, 5*time.Millisecond)
+	line := variantLogLines(logs)[0]
+	require.Contains(t, line, "variant=square_double_quoted")
+	require.Contains(t, line, "count=1")
+	require.Contains(t, line, "model_id=model-bracket")
+	require.Contains(t, line, "session_id=bracket")
+	require.Contains(t, line, "message_id=msg-bracket")
+}
+
+// TestStreamLogsNoVariantForCanonicalCitations keeps the log quiet for a model
+// that follows the protocol: the card still streams, no variant line is
+// written, which is what lets the per-model counts be compared.
+func TestStreamLogsNoVariantForCanonicalCitations(t *testing.T) {
+	logs := &lockedBuffer{}
+	logger.SetOutput(logs)
+	t.Cleanup(func() { logger.SetOutput(os.Stdout) })
+
+	bus := &syncEventBus{}
+	model := &openStreamChat{closeStream: true, chunks: []types.StreamResponse{
+		{ResponseType: types.ResponseTypeAnswer, Content: `有效期内<ref id="c`},
+		{ResponseType: types.ResponseTypeAnswer, Content: `2"/>。`, Done: true, FinishReason: "stop"},
+	}}
+	plugin := &PluginChatCompletionStream{modelService: &stubModelService{model: model}}
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHAT_COMPLETION_STREAM,
+		citationStreamChatManage(bus, "canonical"),
+		func() *PluginError { return nil },
+	))
+
+	require.Eventually(t, func() bool {
+		return len(bus.finalAnswerEvents()) == 2
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, `<kb doc="Doc" chunk_id="chunk-2" />。`, bus.finalAnswerEvents()[1].Content)
+	time.Sleep(20 * time.Millisecond)
+	require.Empty(t, variantLogLines(logs))
 }

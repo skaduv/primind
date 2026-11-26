@@ -1,4 +1,4 @@
-import { KB_WEB_TAG_RE } from './citationMarkdown'
+import { KB_WEB_TAG_RE, stripResidualRefMarkers } from './citationMarkdown'
 
 export interface SessionExportAttachment {
   file_name?: string
@@ -75,7 +75,9 @@ export async function collectAllSessionMessages(
 }
 
 function cleanMessageContent(content?: string): string {
-  return String(content || '')
+  // An exported conversation is a reader-facing copy of the history: drop the
+  // private citation markers an older answer may still carry, as the chat does.
+  return stripResidualRefMarkers(String(content || ''))
     .replace(KB_WEB_TAG_RE, '')
     .replace(/[ \t]+\n/g, '\n')
     .trim()

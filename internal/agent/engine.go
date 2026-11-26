@@ -333,6 +333,9 @@ func (e *AgentEngine) Execute(
 		sessionID, messageID, len(query), len(llmContext))
 	// Ensure tools are cleaned up after execution
 	defer e.toolRegistry.Cleanup(ctx)
+	// Every round of the turn decodes its stream through e.modelContext, so
+	// the citation-variant counts are final only once the loop has returned.
+	defer e.logCitationVariants(ctx, sessionID, messageID)
 
 	common.PipelineInfo(ctx, "Agent", "execute_start", map[string]interface{}{
 		"session_id":   sessionID,

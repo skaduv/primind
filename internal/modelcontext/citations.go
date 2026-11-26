@@ -7,6 +7,7 @@ package modelcontext
 import (
 	"fmt"
 	"html"
+	"maps"
 	"regexp"
 	"strings"
 )
@@ -34,6 +35,7 @@ const citationEnabledProtocolPrompt = `
   observed in the result, not proof that every linked page was read.
 - If a source has no citation handle, use its exact supplied HTTP(S) URL as a Markdown link when available.
   If neither is available, omit the citation; never invent or borrow a source.
+- Always write the angle-bracket form <ref id="cN"/>; never write [ref id="cN"], 【ref id="cN"】 or other bracket variants.
 - Never output <kb> or <web> tags yourself; the system expands valid <ref/> tags after generation.
 - Keep each <ref/> inline on the same line as the claim it supports. Do not group citations ` +
 	`at the end. For a requested exact output format, use citations only where the format ` +
@@ -138,7 +140,170 @@ var (
 	refCandidateRE = regexp.MustCompile(`(?is)<ref(?:\s|$)[^>]*(?:>|$)`)
 	modelKBTagRE   = regexp.MustCompile(`(?is)<kb(?:\s|$)[^>]*(?:>|$)`)
 	modelWebTagRE  = regexp.MustCompile(`(?is)<web(?:\s|$)[^>]*(?:>|$)`)
+	// bracketRefRE matches a citation a model wrote with square or full-width
+	// brackets instead of the protocol's angle brackets, e.g. [ref id="c2"].
+	// It is the union of every row in citationVariants, so the rule table is
+	// the only place a variant is defined.
+	bracketRefRE = regexp.MustCompile(`(?:` + bracketVariantSources() + `)`)
+	// fullBracketRefRE is bracketRefRE anchored to a whole candidate tag.
+	fullBracketRefRE = regexp.MustCompile(`^(?:` + bracketVariantSources() + `)$`)
 )
+
+// Citation variants a model writes instead of the protocol's <ref id="cN"/>
+// (BF-01 spec 4.2). A 27B local model drifted into Markdown-style square
+// brackets for a whole answer, and the strict angle-bracket parser passed the
+// markers through to the page as literal text.
+//
+// This table is the single place a variant is defined: bracketRefRE is built
+// from its rows, ExpandText counts every hit under the row's name, and the
+// corpus test (TestModelOutputCorpus) fails on a real sample no row covers.
+// To register a new variant, add the sample under testdata/model_outputs/,
+// then add one row here with the model and date it was first seen. Only
+// handle-shaped ids ([cwdb] + digits, no leading zero) are accepted so
+// ordinary bracketed prose such as [1], [text](url) or 【注】 is kept.
+//
+// Rows are tried in order and the last row of each bracket family is the
+// catch-all for a quote on only one side or mismatched quote styles, so the
+// union stays exactly the language the original lenient matcher accepted.
+type citationVariant struct {
+	name string
+	// source is the row's whole regular expression body. bracketRefRE is the
+	// alternation of every row's source.
+	source string
+	// full is source anchored to one whole tag; it also names the row for a
+	// tag bracketRefRE found and captures the handle inside it.
+	full    *regexp.Regexp
+	example string // positive case for TestExpandTextVariantTableCoversEveryRule
+	// model and date record where the variant was first seen in a real answer
+	// (date in Beijing time). Empty when the row was registered preventively.
+	model string
+	date  string
+}
+
+const bracketHandle = `([cwdb][1-9][0-9]*)`
+
+// newCitationVariant compiles one rule-table row. openQuote and closeQuote
+// are the quote classes allowed on each side of the handle, "" for none. The
+// other pattern pieces are shared so whitespace, the optional "/" before the
+// closer and the closer itself (] or 】) behave the same for every variant.
+func newCitationVariant(name, opener, openQuote, closeQuote, example, model, date string) citationVariant {
+	source := `(?i)` + opener + `\s*ref\s+id\s*=\s*` + openQuote + bracketHandle +
+		closeQuote + `\s*/?\s*[\]】]`
+	return citationVariant{
+		name:    name,
+		source:  source,
+		full:    regexp.MustCompile(`^(?:` + source + `)$`),
+		example: example,
+		model:   model,
+		date:    date,
+	}
+}
+
+// citationVariants lists every known bracket spelling, most specific first.
+var citationVariants = []citationVariant{
+	// Observed: the BF-01 defect. qwen3.8-27b-bf16, quick Q&A over a policy
+	// knowledge base, wrote every citation of one answer this way.
+	newCitationVariant("square_double_quoted", `\[`, `["“”]`, `["“”]`,
+		`[ref id="c2"]`, "qwen3.8-27b-bf16", "2026-11-23"),
+	newCitationVariant("square_single_quoted", `\[`, `'`, `'`, `[ref id='c2']`, "", ""),
+	newCitationVariant("square_bare", `\[`, ``, ``, `[ref id=c2]`, "", ""),
+	newCitationVariant("square_unbalanced_quote", `\[`, `["“”']?`, `["“”']?`, `[ref id="c2]`, "", ""),
+	// Preventive: a CJK model may reach for the full-width bracket instead.
+	newCitationVariant("fullwidth_double_quoted", `【`, `["“”]`, `["“”]`,
+		`【ref id="c2"】`, "", ""),
+	newCitationVariant("fullwidth_single_quoted", `【`, `'`, `'`, `【ref id='c2'】`, "", ""),
+	newCitationVariant("fullwidth_bare", `【`, ``, ``, `【ref id=c2】`, "", ""),
+	newCitationVariant("fullwidth_unbalanced_quote", `【`, `["“”']?`, `["“”']?`, `【ref id="c2】`, "", ""),
+}
+
+// bracketVariantOther names a match of bracketRefRE that no row claims. The
+// table is a partition, so this is only a defensive label for the stats.
+const bracketVariantOther = "bracket_other"
+
+func bracketVariantSources() string {
+	sources := make([]string, 0, len(citationVariants))
+	for i := range citationVariants {
+		sources = append(sources, citationVariants[i].source)
+	}
+	return strings.Join(sources, "|")
+}
+
+// classifyBracketRef returns the rule-table row that produced tag, which must
+// be a whole match of bracketRefRE, together with the handle it carries.
+func classifyBracketRef(tag string) (string, string) {
+	for i := range citationVariants {
+		row := &citationVariants[i]
+		if match := row.full.FindStringSubmatch(tag); match != nil {
+			return row.name, match[1]
+		}
+	}
+	return bracketVariantOther, ""
+}
+
+// maxBracketRefLen bounds how long the stream expander buffers a possible
+// bracketed citation before giving up and emitting it as plain text.
+const maxBracketRefLen = 64
+
+// Variants logged for citation tags the stream expander dropped because the
+// answer ended (or stalled past maxBracketRefLen) before the tag was closed.
+const (
+	variantTruncatedAngle   = "truncated_angle"
+	variantTruncatedBracket = "truncated_bracket"
+)
+
+// normalizeBracketRefs rewrites bracketed citation variants into the canonical
+// private <ref/> form so they follow the same validation as protocol tags,
+// counting each rewrite under its rule-table row.
+func (r *sourceRegistry) normalizeBracketRefs(text string) string {
+	if r == nil || text == "" {
+		return text
+	}
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "ref") || !strings.ContainsAny(lower, "[【") {
+		return text
+	}
+	return bracketRefRE.ReplaceAllStringFunc(text, func(tag string) string {
+		variant, handle := classifyBracketRef(tag)
+		if handle == "" {
+			return tag
+		}
+		r.countVariant(variant)
+		return `<ref id="` + handle + `"/>`
+	})
+}
+
+// countVariant records one non-canonical citation under variant. Registration
+// of tool results can run concurrently with stream decoding, so the count is
+// mutex-guarded rather than assumed single-goroutine.
+func (r *sourceRegistry) countVariant(variant string) {
+	if r == nil || variant == "" {
+		return
+	}
+	r.variantMu.Lock()
+	defer r.variantMu.Unlock()
+	if r.variantCounts == nil {
+		r.variantCounts = make(map[string]int)
+	}
+	r.variantCounts[variant]++
+}
+
+// VariantStats returns a copy of the citation variants this registry has
+// recorded: each rewritten tag under its rule-table row and each dropped
+// unfinished tag under truncated_angle / truncated_bracket. It returns nil
+// while the model kept to the protocol, so callers log only when needed.
+func (r *sourceRegistry) VariantStats() map[string]int {
+	if r == nil {
+		return nil
+	}
+	r.variantMu.Lock()
+	defer r.variantMu.Unlock()
+	if len(r.variantCounts) == 0 {
+		return nil
+	}
+	stats := make(map[string]int, len(r.variantCounts))
+	maps.Copy(stats, r.variantCounts)
+	return stats
+}
 
 var (
 	documentAttrRE    = regexp.MustCompile(`(?i)\bknowledge_id\s*=\s*"([^"]+)"`)
@@ -176,6 +341,7 @@ func (r *sourceRegistry) ExpandText(text string) string {
 	if r == nil || text == "" {
 		return text
 	}
+	text = r.normalizeBracketRefs(text)
 	// Public citation tags are output-only. Drop any instance written directly
 	// by the model, then create canonical tags solely from registered handles.
 	text = modelKBTagRE.ReplaceAllString(text, "")
@@ -227,7 +393,7 @@ func (d *citationStreamExpander) Feed(chunk string) string {
 	d.pending = ""
 	var out strings.Builder
 	for data != "" {
-		idx := strings.Index(data, "<")
+		idx := strings.IndexAny(data, "<[【")
 		if idx < 0 {
 			out.WriteString(data)
 			break
@@ -235,6 +401,32 @@ func (d *citationStreamExpander) Feed(chunk string) string {
 		out.WriteString(data[:idx])
 		data = data[idx:]
 		lower := strings.ToLower(data)
+		if data[0] != '<' {
+			opener := bracketOpenerLen(data)
+			if isBracketRefPending(lower) {
+				if len(data) <= maxBracketRefLen {
+					d.pending = data
+					break
+				}
+				out.WriteString(data[:opener])
+				data = data[opener:]
+				continue
+			}
+			if isBracketRefStart(lower) {
+				end, closeLen := bracketCloseIndex(data)
+				if end >= 0 && end+closeLen <= maxBracketRefLen {
+					tag := data[:end+closeLen]
+					if fullBracketRefRE.MatchString(tag) {
+						out.WriteString(d.registry.ExpandText(tag))
+						data = data[end+closeLen:]
+						continue
+					}
+				}
+			}
+			out.WriteString(data[:opener])
+			data = data[opener:]
+			continue
+		}
 		if isSourceTagPending(lower) && !strings.Contains(data, ">") {
 			d.pending = data
 			break
@@ -299,9 +491,91 @@ func (d *citationStreamExpander) Flush() string {
 	}
 	pending := d.pending
 	d.pending = ""
+	if pending == "" {
+		return ""
+	}
 	lower := strings.ToLower(pending)
+	// An answer that stops inside a citation tag must not surface the
+	// protocol fragment. Record which kind was dropped so the per-model
+	// citation stats can tell a cut-off answer from a formatting drift.
+	if isBracketRefStart(lower) {
+		d.registry.countVariant(variantTruncatedBracket)
+		return ""
+	}
 	if isSourceTagPending(lower) {
+		d.registry.countVariant(variantTruncatedAngle)
 		return ""
 	}
 	return d.registry.ExpandText(pending)
+}
+
+// bracketOpenerLen returns the byte length of the leading "[" or "【", or 0
+// when value does not start with either.
+func bracketOpenerLen(value string) int {
+	if strings.HasPrefix(value, "【") {
+		return len("【")
+	}
+	if strings.HasPrefix(value, "[") {
+		return 1
+	}
+	return 0
+}
+
+// bracketRest returns value without its leading "[" or "【" and without any
+// whitespace that follows the opener, which the rule table tolerates. Any
+// other leading character yields "" so callers treat the text as not a
+// bracketed citation.
+func bracketRest(value string) string {
+	opener := bracketOpenerLen(value)
+	if opener == 0 {
+		return ""
+	}
+	return strings.TrimLeft(value[opener:], " \t\r\n")
+}
+
+func isSpaceByte(char byte) bool {
+	return char == ' ' || char == '\t' || char == '\r' || char == '\n'
+}
+
+// isBracketRefStart reports whether value begins with "[ref" or "【ref"
+// followed by whitespace, i.e. a bracketed citation the model may still be
+// writing.
+func isBracketRefStart(value string) bool {
+	rest := bracketRest(value)
+	if rest == "" || !strings.HasPrefix(rest, "ref") || len(rest) == len("ref") {
+		return false
+	}
+	return isSpaceByte(rest[len("ref")])
+}
+
+// isBracketRefPending reports whether more stream data is needed to decide if
+// value is a bracketed citation: either an incomplete "[ref" prefix or a
+// started citation whose closing bracket has not arrived yet.
+func isBracketRefPending(value string) bool {
+	if bracketOpenerLen(value) == 0 {
+		return false
+	}
+	rest := bracketRest(value)
+	if len(rest) <= len("ref") && strings.HasPrefix("ref", rest) {
+		return true
+	}
+	if !isBracketRefStart(value) {
+		return false
+	}
+	end, _ := bracketCloseIndex(value)
+	return end < 0
+}
+
+// bracketCloseIndex finds the first "]" or "】" and its byte length.
+func bracketCloseIndex(value string) (int, int) {
+	ascii := strings.IndexByte(value, ']')
+	wide := strings.Index(value, "】")
+	switch {
+	case ascii < 0 && wide < 0:
+		return -1, 0
+	case wide < 0 || (ascii >= 0 && ascii < wide):
+		return ascii, 1
+	default:
+		return wide, len("】")
+	}
 }
