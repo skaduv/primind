@@ -11,6 +11,10 @@ import "errors"
 var (
 	ErrRequestBudgetFull = errors.New("opensearch: request waiting capacity exhausted")
 	ErrResponseTooLarge  = errors.New("opensearch: response exceeds byte cap")
+	// ErrResultsTruncated marks a retrieval result set (RetrieveResult.Error)
+	// that kept only the top hits because the full response exceeded the byte
+	// cap. The hits it carries are valid; the set is incomplete.
+	ErrResultsTruncated = errors.New("opensearch: results truncated to fit response byte cap")
 	// ErrIndexNotFound — alias / underlying index missing. Search and
 	// delete-by-query operations return this when the per-dim alias has
 	// not been created yet (no Save has been issued for that dim).

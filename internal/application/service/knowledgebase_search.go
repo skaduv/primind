@@ -130,7 +130,7 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	// copy, so this stays local to the call.
 	params.MatchCount = normalizedMatchCount(params.MatchCount)
 
-	chunks, err := s.hybridSearchCandidates(ctx, id, params)
+	chunks, content, err := s.hybridSearchCandidates(ctx, id, params)
 	if err != nil || len(chunks) == 0 {
 		return nil, err
 	}
@@ -144,6 +144,8 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	if len(chunks) > params.MatchCount {
 		chunks = chunks[:params.MatchCount]
 	}
+	// Stores that deferred the matched text send it now, for the kept hits only.
+	content.fill(ctx, chunks)
 
 	return s.processSearchResults(ctx, chunks, params.SkipContextEnrichment)
 }
@@ -151,9 +153,27 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 // hybridSearchCandidates runs retrieval, fusion and FAQ post-processing for
 // HybridSearch and returns the fused chunks, best first, before the
 // MatchCount cut. params.MatchCount must already be normalized.
+//
+// The returned matchedContentSource fills IndexWithScore.Content for hits
+// whose store deferred it (OPENSEARCH_DEFER_CONTENT); callers call fill on the
+// hits they keep, before processSearchResults. It is nil-safe.
 func (s *knowledgeBaseService) hybridSearchCandidates(ctx context.Context,
 	id string,
 	params types.SearchParams,
+) ([]*types.IndexWithScore, *matchedContentSource, error) {
+	ctx, stats := types.WithRetrievalStats(ctx)
+	var groups []*storeGroup
+	chunks, err := s.collectSearchCandidates(ctx, id, params, &groups)
+	logRetrievalSummary(ctx, groups, stats, len(chunks), err)
+	return chunks, newMatchedContentSource(groups), err
+}
+
+// collectSearchCandidates is hybridSearchCandidates' body. It reports the
+// store groups it resolved through groupsOut.
+func (s *knowledgeBaseService) collectSearchCandidates(ctx context.Context,
+	id string,
+	params types.SearchParams,
+	groupsOut *[]*storeGroup,
 ) ([]*types.IndexWithScore, error) {
 	// Determine the set of KB IDs to search.
 	searchKBIDs := params.KnowledgeBaseIDs
@@ -252,6 +272,7 @@ func (s *knowledgeBaseService) hybridSearchCandidates(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	*groupsOut = groups
 	if len(groups) == 0 || allBaseParamsEmpty(groups) {
 		// Wiki-only / graph-only fan-out: every KB is non-retrievable.
 		// Preserve the existing "return empty rather than error" contract

@@ -75,6 +75,24 @@ func (v *KeywordsVectorHybridRetrieveEngineService) Retrieve(ctx context.Context
 	return v.indexRepository.Retrieve(ctx, params)
 }
 
+// DefersMatchedContent forwards the repository's optional
+// interfaces.MatchedContentFetcher capability; false when it has none.
+func (v *KeywordsVectorHybridRetrieveEngineService) DefersMatchedContent() bool {
+	f, ok := v.indexRepository.(interfaces.MatchedContentFetcher)
+	return ok && f.DefersMatchedContent()
+}
+
+// FetchMatchedContent forwards to the repository when it can fetch indexed
+// text; otherwise it returns an empty map.
+func (v *KeywordsVectorHybridRetrieveEngineService) FetchMatchedContent(
+	ctx context.Context, chunkIDs []string,
+) (map[string]string, error) {
+	if f, ok := v.indexRepository.(interfaces.MatchedContentFetcher); ok {
+		return f.FetchMatchedContent(ctx, chunkIDs)
+	}
+	return map[string]string{}, nil
+}
+
 // Index creates embeddings for the content and saves it to the repository
 // if vector retrieval is enabled in the retriever types
 func (v *KeywordsVectorHybridRetrieveEngineService) Index(ctx context.Context,

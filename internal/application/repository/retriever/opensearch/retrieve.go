@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"slices"
+	"strings"
+	"time"
 
 	osapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 
@@ -80,29 +85,76 @@ func resolveDim(p types.RetrieveParams) (int, bool) {
 func (r *Repository) vectorRetrieve(
 	ctx context.Context, p types.RetrieveParams, dim int,
 ) ([]*types.RetrieveResult, error) {
-	body, err := buildKNNQuery(p.Embedding, effectiveTopK(ctx, p), p.Threshold, fromParams(p))
-	if err != nil {
-		return nil, err
-	}
-	hits, err := r.search(ctx, r.indexAlias(dim), body)
-	if err != nil {
-		return nil, err
-	}
-	return wrapResults(ctx, hits, types.VectorRetrieverType, types.MatchTypeEmbedding), nil
+	k, filters := effectiveTopK(ctx, p), fromParams(p)
+	return r.retrieveShrinking(ctx, p, r.indexAlias(dim), types.VectorRetrieverType, types.MatchTypeEmbedding, k,
+		func(size int) ([]byte, error) { return buildKNNQuery(p.Embedding, k, size, p.Threshold, filters) })
 }
 
 func (r *Repository) keywordsRetrieve(
 	ctx context.Context, p types.RetrieveParams, indexPattern string,
 ) ([]*types.RetrieveResult, error) {
-	body, err := buildKeywordQuery(p.Query, effectiveTopK(ctx, p), p.Threshold, fromParams(p))
-	if err != nil {
-		return nil, err
+	topK, filters := effectiveTopK(ctx, p), fromParams(p)
+	return r.retrieveShrinking(ctx, p, indexPattern, types.KeywordsRetrieverType, types.MatchTypeKeywords, topK,
+		func(size int) ([]byte, error) { return buildKeywordQuery(p.Query, size, p.Threshold, filters) })
+}
+
+// maxShrinkRetries bounds the oversized-response fallback: 500 -> 250 -> 125 -> 62.
+const maxShrinkRetries = 3
+
+// retrieveShrinking runs a retrieval search and, when the response exceeds the
+// client's byte cap, halves the requested hit count and retries, at most
+// maxShrinkRetries times. build must return a query whose hits for a smaller
+// size are a prefix of those for a larger one (the k-NN query keeps k and
+// shrinks only size), so a shrunk result keeps the original order and scores.
+//
+// A shrunk result is returned with RetrieveResult.Error set to
+// ErrResultsTruncated: CompositeRetrieveEngine and the service fan-out keep
+// such partial results instead of failing the whole search. When even the
+// smallest size is too large, the original error is returned unchanged.
+func (r *Repository) retrieveShrinking(
+	ctx context.Context,
+	p types.RetrieveParams,
+	index string,
+	rt types.RetrieverType,
+	mt types.MatchType,
+	topK int,
+	build func(size int) ([]byte, error),
+) ([]*types.RetrieveResult, error) {
+	started := time.Now()
+	size, retries := topK, 0
+	record := retrievalLog{index: index, retriever: rt, kbCount: len(p.KnowledgeBaseIDs), topK: topK}
+	for {
+		body, err := build(size)
+		if err != nil {
+			return nil, err
+		}
+		hits, n, err := r.search(ctx, index, body, r.retrievalSourceFields())
+		record.size, record.bytes, record.retries = size, n, retries
+		if err == nil {
+			record.hits, record.truncated, record.elapsed = len(hits), size < topK, time.Since(started)
+			r.logRetrieval(ctx, record)
+			results := wrapResults(ctx, hits, rt, mt)
+			if record.truncated {
+				if stats := types.RetrievalStatsFromContext(ctx); stats != nil {
+					stats.TruncatedSets.Add(1)
+				}
+				results[0].Error = fmt.Errorf("%w: kept top %d of %d %s hits",
+					ErrResultsTruncated, size, topK, rt)
+			}
+			return results, nil
+		}
+		if !errors.Is(err, ErrResponseTooLarge) || retries >= maxShrinkRetries || size <= 1 {
+			record.err, record.elapsed = err, time.Since(started)
+			r.logRetrieval(ctx, record)
+			return nil, err
+		}
+		retries++
+		size = max(1, size/2)
+		logger.GetLogger(ctx).WithFields(logger.Fields{
+			"index": index, "retriever": rt, "next_size": size, "retry": retries,
+			"response_cap": responseCap(r.client),
+		}).Warn("[OpenSearch] retrieval response exceeded byte cap; retrying with fewer hits")
 	}
-	hits, err := r.search(ctx, indexPattern, body)
-	if err != nil {
-		return nil, err
-	}
-	return wrapResults(ctx, hits, types.KeywordsRetrieverType, types.MatchTypeKeywords), nil
 }
 
 // effectiveTopK returns the caller's TopK or 10 if unset. The 10 is a
@@ -120,22 +172,105 @@ func effectiveTopK(ctx context.Context, p types.RetrieveParams) int {
 	return p.TopK
 }
 
-func (r *Repository) search(ctx context.Context, indexPattern string, body []byte) ([]hit, error) {
-	req := osapi.SearchReq{Indices: []string{indexPattern}, Body: bytes.NewReader(body)}
+// retrievalSourceFields lists the _source fields a retrieval search asks for:
+// everything hit.Source decodes, minus content when it is deferred.
+func (r *Repository) retrievalSourceFields() []string {
+	if r.deferContent {
+		return hitSourceFieldsWithoutContent
+	}
+	return hitSourceFields
+}
+
+// search runs one search and decodes its hits, fetching only includes from
+// _source. It returns the response body size it read alongside the hits.
+// Returning stored vectors (or unused fields) would spend the response byte
+// cap before the hits reach the decoder.
+func (r *Repository) search(
+	ctx context.Context, indexPattern string, body []byte, includes []string,
+) ([]hit, int64, error) {
+	if stats := types.RetrievalStatsFromContext(ctx); stats != nil {
+		stats.Searches.Add(1)
+	}
+	req := osapi.SearchReq{
+		Indices: []string{indexPattern},
+		Body:    bytes.NewReader(body),
+		Params:  osapi.SearchParams{SourceIncludes: includes},
+	}
 	resp, err := r.client.Search(ctx, &req)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, fmt.Errorf("opensearch: index %s missing: %w", indexPattern, ErrIndexNotFound)
+			return nil, 0, fmt.Errorf("opensearch: index %s missing: %w", indexPattern, ErrIndexNotFound)
 		}
-		return nil, wrapTransport(err)
+		return nil, 0, wrapTransport(err)
 	}
 	defer func() {
 		if resp != nil {
 			drainAndClose(resp.Inspect().Response.Body)
 		}
 	}()
-	// Cap response body at 16MB (search results bounded by max_result_window * doc_size).
-	return parseSearchHits(io.LimitReader(resp.Inspect().Response.Body, 16<<20))
+	// The transport already read the whole body within the client's cap; the
+	// limit here follows that cap instead of repeating a fixed size.
+	counted := &countingReader{r: io.LimitReader(resp.Inspect().Response.Body, responseCap(r.client))}
+	hits, err := parseSearchHits(counted)
+	if stats := types.RetrievalStatsFromContext(ctx); stats != nil {
+		stats.ResponseBytes.Add(counted.n)
+	}
+	return hits, counted.n, err
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// retrievalLog is the structured record written once per retrieval search.
+type retrievalLog struct {
+	index     string
+	retriever types.RetrieverType
+	kbCount   int
+	topK      int
+	size      int
+	hits      int
+	bytes     int64
+	elapsed   time.Duration
+	retries   int
+	truncated bool
+	err       error
+}
+
+// logRetrieval writes one structured line per retrieval search (request_id
+// comes from the context logger), and a WARN once the response passes half
+// of the client's byte cap so growth shows up before searches fail.
+func (r *Repository) logRetrieval(ctx context.Context, l retrievalLog) {
+	limit := responseCap(r.client)
+	entry := logger.GetLogger(ctx).WithFields(logger.Fields{
+		"index":          l.index,
+		"retriever":      l.retriever,
+		"kb_count":       l.kbCount,
+		"top_k":          l.topK,
+		"size":           l.size,
+		"hits":           l.hits,
+		"response_bytes": l.bytes,
+		"response_cap":   limit,
+		"elapsed_ms":     l.elapsed.Milliseconds(),
+		"retries":        l.retries,
+		"truncated":      l.truncated,
+	})
+	switch {
+	case l.err != nil:
+		entry.WithField("error", l.err.Error()).Warn("[OpenSearch] retrieval search failed")
+	case l.bytes > limit/2:
+		entry.Warn("[OpenSearch] retrieval response above half of the byte cap")
+	default:
+		entry.Info("[OpenSearch] retrieval search")
+	}
 }
 
 // hit is the structural shape we pull from each OpenSearch search hit.
@@ -154,6 +289,27 @@ type hit struct {
 		TagID           string `json:"tag_id"`
 		IsEnabled       bool   `json:"is_enabled"`
 	} `json:"_source"`
+}
+
+// hitSourceFields lists the _source fields hit.Source decodes, read from its
+// json tags so a field added to the struct is also fetched.
+var hitSourceFields = sourceFieldNames(reflect.TypeOf(hit{}.Source))
+
+// hitSourceFieldsWithoutContent is hitSourceFields without the indexed text,
+// used when content is deferred. It keeps every field the service layer
+// filters on (source_type drives the image recall rules).
+var hitSourceFieldsWithoutContent = slices.DeleteFunc(slices.Clone(hitSourceFields),
+	func(f string) bool { return f == "content" })
+
+func sourceFieldNames(t reflect.Type) []string {
+	fields := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			fields = append(fields, name)
+		}
+	}
+	return fields
 }
 
 func parseSearchHits(body io.Reader) ([]hit, error) {

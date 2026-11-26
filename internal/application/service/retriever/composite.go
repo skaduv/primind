@@ -85,6 +85,49 @@ func (c *CompositeRetrieveEngine) Retrieve(ctx context.Context,
 	return results, nil
 }
 
+// deferringFetchers returns the distinct engines that currently leave
+// IndexWithScore.Content empty and can fetch it afterwards.
+func (c *CompositeRetrieveEngine) deferringFetchers() []interfaces.MatchedContentFetcher {
+	var out []interfaces.MatchedContentFetcher
+	for _, info := range c.engineInfos {
+		if info == nil {
+			continue
+		}
+		f, ok := info.retrieveEngine.(interfaces.MatchedContentFetcher)
+		if !ok || !f.DefersMatchedContent() || slices.Contains(out, f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// DefersMatchedContent reports whether any engine of this composite leaves
+// IndexWithScore.Content empty for the caller to fetch.
+func (c *CompositeRetrieveEngine) DefersMatchedContent() bool {
+	return len(c.deferringFetchers()) > 0
+}
+
+// FetchMatchedContent asks every deferring engine for the indexed text of
+// chunkIDs and merges the answers; the first engine to hold a chunk wins.
+func (c *CompositeRetrieveEngine) FetchMatchedContent(
+	ctx context.Context, chunkIDs []string,
+) (map[string]string, error) {
+	out := make(map[string]string, len(chunkIDs))
+	for _, f := range c.deferringFetchers() {
+		got, err := f.FetchMatchedContent(ctx, chunkIDs)
+		if err != nil {
+			return nil, err
+		}
+		for id, content := range got {
+			if _, seen := out[id]; !seen {
+				out[id] = content
+			}
+		}
+	}
+	return out, nil
+}
+
 // NewCompositeRetrieveEngine creates a new composite retrieve engine with the given parameters
 func NewCompositeRetrieveEngine(
 	registry interfaces.RetrieveEngineRegistry,

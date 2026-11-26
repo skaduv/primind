@@ -41,6 +41,10 @@ type Repository struct {
 	// ownsClient marks the client as exclusively owned (set by the engine
 	// factory). Only an owner releases the pool in Close; borrowers do not.
 	ownsClient bool
+	// deferContent leaves content out of retrieval responses; callers fetch it
+	// for the hits they keep via FetchMatchedContent. Set from
+	// OPENSEARCH_DEFER_CONTENT (default off) or WithDeferredContent.
+	deferContent bool
 }
 
 // Compile-time interface satisfaction (Go best practice — keeps the build
@@ -117,12 +121,13 @@ func NewRepository(
 		baseIndex:       base,
 		cfg:             icfg,
 		initializations: make(map[int]*indexInitialization),
+		deferContent:    deferContentFromEnv(ctx),
 	}
 	for _, opt := range opts {
 		opt(r)
 	}
-	log.Infof("[OpenSearch] repository ready (baseIndex=%s, knn_engine=%s, hnsw_m=%d)",
-		base, icfg.knnEngine, icfg.hnswM)
+	log.Infof("[OpenSearch] repository ready (baseIndex=%s, knn_engine=%s, hnsw_m=%d, defer_content=%t)",
+		base, icfg.knnEngine, icfg.hnswM, r.deferContent)
 	return r, nil
 }
 
