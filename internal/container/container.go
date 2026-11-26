@@ -279,6 +279,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewMCPServiceService))
 	must(container.Provide(service.NewMCPToolApprovalService))
 	must(container.Provide(service.NewCustomAgentService))
+	// The one place that decides whether a caller may use an agent named by ID
+	// (own or shared); every agent-by-ID read route resolves through it.
+	must(container.Provide(service.NewAgentAccessResolver))
 	must(container.Provide(service.NewUserResourceFavoriteService))
 	must(container.Provide(service.NewWikiPageService))
 	must(container.Provide(service.NewWikiIngestService, dig.Name("wikiIngest")))

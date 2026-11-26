@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/primind/primind/internal/agent/tools"
+	"github.com/primind/primind/internal/application/access"
 	"github.com/primind/primind/internal/application/service"
 	"github.com/primind/primind/internal/errors"
 	"github.com/primind/primind/internal/im"
@@ -29,9 +31,13 @@ type sandboxConfigLookup interface {
 
 // CustomAgentHandler defines the HTTP handler for custom agent operations
 type CustomAgentHandler struct {
-	service      interfaces.CustomAgentService
-	imService    *im.Service
-	disabledRepo interfaces.TenantDisabledSharedAgentRepository
+	service interfaces.CustomAgentService
+	// agentAccessResolver decides whether the caller may use the agent an
+	// agent-by-ID read names, including a share from another workspace. It is
+	// the same component the chat path resolves agents with.
+	agentAccessResolver service.AgentAccessResolver
+	imService           *im.Service
+	disabledRepo        interfaces.TenantDisabledSharedAgentRepository
 	// userService 仅用于 list 接口批量回填 creator_name，作用见
 	// KnowledgeBaseHandler.userService。
 	userService interfaces.UserService
@@ -49,14 +55,16 @@ func NewCustomAgentHandler(
 	userService interfaces.UserService,
 	sandboxConfigs *service.TenantSandboxConfigService,
 	host service.HostSandboxManager,
+	agentAccessResolver service.AgentAccessResolver,
 ) *CustomAgentHandler {
 	return &CustomAgentHandler{
-		service:        service,
-		imService:      imService,
-		disabledRepo:   disabledRepo,
-		userService:    userService,
-		sandboxConfigs: sandboxConfigs,
-		desktop:        host.Desktop,
+		service:             service,
+		agentAccessResolver: agentAccessResolver,
+		imService:           imService,
+		disabledRepo:        disabledRepo,
+		userService:         userService,
+		sandboxConfigs:      sandboxConfigs,
+		desktop:             host.Desktop,
 	}
 }
 
@@ -686,20 +694,27 @@ func (h *CustomAgentHandler) GetAgentTools(c *gin.Context) {
 	})
 }
 
+// suggestedQuestionsSourceTenantIDParam is the optional source-workspace
+// selector of GET /agents/:id/suggested-questions. Without it the ID names the
+// caller's own agent first and a share second, as on the chat path; with it,
+// only a share from that workspace.
+const suggestedQuestionsSourceTenantIDParam = "source_tenant_id"
+
 // GetSuggestedQuestions godoc
 // @Summary      获取推荐问题
-// @Description  基于智能体关联的知识库，返回推荐问题供用户快捷提问
+// @Description  基于智能体关联的知识库，返回推荐问题供用户快捷提问。共享智能体通过来源空间解析，推荐只来自该共享授权的知识库范围
 // @Tags         智能体
 // @Accept       json
 // @Produce      json
 // @Param        id                  path      string  true   "智能体ID"
+// @Param        source_tenant_id    query     int     false  "共享智能体的来源空间ID；传入后只按共享关系解析，不传时先查本空间再查共享"
 // @Param        knowledge_base_ids  query     string  false  "知识库ID列表（逗号分隔），覆盖智能体默认配置"
 // @Param        knowledge_ids       query     string  false  "知识ID列表（逗号分隔），限定到具体文档"
 // @Param        tag_scopes          query     string  false  "带知识库归属的标签范围（JSON）"
 // @Param        limit               query     int     false  "返回数量上限（未传时使用智能体配置的开场问题数量，最大30）"
 // @Success      200                 {object}  map[string]interface{}  "推荐问题列表"
 // @Failure      400                 {object}  errors.AppError         "请求参数错误"
-// @Failure      404                 {object}  errors.AppError         "智能体不存在"
+// @Failure      404                 {object}  errors.AppError         "智能体不存在或无权访问"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /agents/{id}/suggested-questions [get]
@@ -715,6 +730,12 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 	}
 
 	// Parse optional query parameters
+	sourceTenantID, err := parseSuggestedQuestionsSourceTenantID(c.Query(suggestedQuestionsSourceTenantIDParam))
+	if err != nil {
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+
 	var kbIDs []string
 	if kbIDsStr := strings.TrimSpace(c.Query("knowledge_base_ids")); kbIDsStr != "" {
 		for _, id := range strings.Split(kbIDsStr, ",") {
@@ -751,10 +772,50 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		}
 	}
 
-	logger.Infof(ctx, "Getting suggested questions for agent %s, kbIDs: %v, tagScopes: %d, limit: %d",
-		secutils.SanitizeForLog(id), kbIDs, len(tagScopes), limit)
+	logger.Infof(ctx, "Getting suggested questions for agent %s, source tenant: %d, kbIDs: %v, tagScopes: %d, "+
+		"limit: %d", secutils.SanitizeForLog(id), sourceTenantID, kbIDs, len(tagScopes), limit)
 
-	questions, err := h.service.GetSuggestedQuestions(ctx, id, kbIDs, knowledgeIDs, tagScopes, limit)
+	// The same resolution the chat path performs: an own agent, or a share the
+	// caller's workspace may use. Unknown and forbidden alike are "not found".
+	resolved, appErr := h.resolveAgentForRead(ctx, c, id, sourceTenantID)
+	if appErr != nil {
+		_ = c.Error(appErr)
+		return
+	}
+
+	// An own agent keeps the request exactly as it was.
+	scope := service.SuggestionScope{KnowledgeBaseIDs: kbIDs, KnowledgeIDs: knowledgeIDs, TagScopes: tagScopes}
+	agentCtx := ctx
+	if resolved.IsShared {
+		// A share answers from its owner's workspace. access.WithSharedAgent
+		// moves execution there and carries the agent's knowledge-base grant,
+		// which the service's permission checks need to accept the owner's
+		// knowledge bases. The request's own range is first narrowed to that
+		// grant, so nothing outside what this member may use through the agent
+		// is read.
+		agentCtx = access.WithSharedAgent(ctx, resolved.Agent)
+		restricted, err := h.agentAccessResolver.RestrictSuggestionScope(agentCtx, resolved, scope)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, map[string]interface{}{
+				"agent_id": id,
+			})
+			_ = c.Error(errors.NewInternalServerError("Failed to build suggested questions"))
+			return
+		}
+		if restricted.EmptyByScope {
+			// The caller named a range and none of it is inside the share.
+			// Passing the emptied fields on would read as "unspecified" and
+			// fall back to every knowledge base the agent can see.
+			logger.Infof(ctx, "Suggested-questions scope lies entirely outside shared agent %s",
+				secutils.SanitizeForLog(id))
+			writeSuggestedQuestions(c, []types.SuggestedQuestion{})
+			return
+		}
+		scope = restricted.Scope
+	}
+
+	questions, err := h.service.GetSuggestedQuestions(
+		agentCtx, id, scope.KnowledgeBaseIDs, scope.KnowledgeIDs, scope.TagScopes, limit)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"agent_id": id,
@@ -775,12 +836,63 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		return
 	}
 
+	writeSuggestedQuestions(c, questions)
+}
+
+func writeSuggestedQuestions(c *gin.Context, questions []types.SuggestedQuestion) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
 			"questions": questions,
 		},
 	})
+}
+
+// parseSuggestedQuestionsSourceTenantID reads the optional source-workspace
+// selector. Blank means absent; anything else must be a workspace ID, so a
+// malformed value fails the request instead of silently choosing another agent.
+func parseSuggestedQuestionsSourceTenantID(raw string) (uint64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: must be a workspace ID", suggestedQuestionsSourceTenantIDParam)
+	}
+	return value, nil
+}
+
+// resolveAgentForRead resolves the agent an agent-by-ID read names through the
+// shared AgentAccessResolver. Unknown, unshared, revoked and disabled agents
+// are all "not found"; only a failed lookup is a server error.
+func (h *CustomAgentHandler) resolveAgentForRead(
+	ctx context.Context,
+	c *gin.Context,
+	agentID string,
+	sourceTenantID uint64,
+) (*service.ResolvedAgent, *errors.AppError) {
+	if h.agentAccessResolver == nil {
+		logger.Error(ctx, "Agent access resolver is not configured")
+		return nil, errors.NewInternalServerError("Agent access resolver is not configured")
+	}
+	userID, _ := c.Get(types.UserIDContextKey.String())
+	id, _ := userID.(string)
+	resolved, err := h.agentAccessResolver.Resolve(ctx, service.AgentCaller{
+		TenantID: c.GetUint64(types.TenantIDContextKey.String()),
+		UserID:   id,
+		Role:     types.TenantRoleFromContext(ctx),
+	}, agentID, sourceTenantID)
+	if err != nil {
+		if stderrors.Is(err, service.ErrAgentNotFound) {
+			return nil, errors.NewNotFoundError("Agent not found")
+		}
+		if appErr, ok := err.(*errors.AppError); ok {
+			return nil, appErr
+		}
+		return nil, errors.NewInternalServerError("Failed to resolve agent access")
+	}
+	return resolved, nil
 }
 
 // validateAgentSandboxConfig rejects a selection the workspace does not have.

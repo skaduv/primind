@@ -7712,13 +7712,17 @@ paths:
     get:
       consumes:
       - application/json
-      description: 基于智能体关联的知识库，返回推荐问题供用户快捷提问
+      description: 基于智能体关联的知识库，返回推荐问题供用户快捷提问。共享智能体通过来源空间解析，推荐只来自该共享授权的知识库范围
       parameters:
       - description: 智能体ID
         in: path
         name: id
         required: true
         type: string
+      - description: 共享智能体的来源空间ID；传入后只按共享关系解析，不传时先查本空间再查共享
+        in: query
+        name: source_tenant_id
+        type: integer
       - description: 知识库ID列表（逗号分隔），覆盖智能体默认配置
         in: query
         name: knowledge_base_ids
@@ -7748,7 +7752,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
         "404":
-          description: 智能体不存在
+          description: 智能体不存在或无权访问
           schema:
             $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
       security:
@@ -18923,7 +18927,10 @@ paths:
       - VectorStore
   /vector-stores/{id}:
     delete:
-      description: Soft-delete a vector store. Env stores cannot be deleted.
+      description: |-
+        Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend
+        (e.g. OpenSearch indices `<index_name>_<store ID first 12 chars>_*`) is not removed and must be
+        cleaned up manually; the server logs the exact prefix.
       parameters:
       - description: Vector store ID
         in: path

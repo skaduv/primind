@@ -197,6 +197,212 @@ func TestResolveAgent_UsesShareWhenNoOwnAgentMatches(t *testing.T) {
 	require.True(t, sharedReadOnly)
 }
 
+type resolveAgentExpectation int
+
+const (
+	expectNoAgent resolveAgentExpectation = iota
+	expectOwnAgent
+	expectSharedAgent
+)
+
+// resolveAgentCase is one input of the resolveAgent decision table. The table
+// pins the chat behaviour that moved into service.AgentAccessResolver, so a
+// later change to the resolver cannot shift what a conversation runs with.
+type resolveAgentCase struct {
+	name string
+	// identity leaves the user or workspace key out of the request when nil.
+	identity *resolveAgentIdentity
+	agentID  string
+	source   uint64
+	own      *resolveOwnAgentStub
+	share    *resolveAgentShareStub // nil = no share service wired
+}
+
+type resolveAgentIdentity struct {
+	user   string
+	tenant uint64
+}
+
+var resolveAgentMember = &resolveAgentIdentity{user: "user-1", tenant: 7}
+
+var resolveAgentDecisionTable = []struct {
+	resolveAgentCase
+	want            resolveAgentExpectation
+	effectiveTenant uint64 // effective tenant of a resolved share; own agents always resolve to 0
+}{
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "empty ID", identity: resolveAgentMember, agentID: "",
+			own:   &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "own", TenantID: 7}},
+			share: &resolveAgentShareStub{agent: &types.CustomAgent{ID: "shared", TenantID: 84}},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "own agent without a source", identity: resolveAgentMember, agentID: "agent",
+			own:   &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "agent", TenantID: 7}},
+			share: &resolveAgentShareStub{agent: &types.CustomAgent{ID: "agent", TenantID: 84}},
+		},
+		want: expectOwnAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "share when no own agent matches", identity: resolveAgentMember, agentID: "agent",
+			own: &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "agent", TenantID: 84},
+			},
+		},
+		want: expectSharedAgent, effectiveTenant: 84,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "source selector resolves the share", identity: resolveAgentMember, agentID: "agent", source: 84,
+			own: &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "agent", TenantID: 84},
+			},
+		},
+		want: expectSharedAgent, effectiveTenant: 84,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "source selector skips the same-ID own agent", identity: resolveAgentMember,
+			agentID: "agent", source: 84,
+			own: &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "agent", TenantID: 7}},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "agent", TenantID: 84},
+			},
+		},
+		want: expectSharedAgent, effectiveTenant: 84,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "refused selector never falls back to the own agent", identity: resolveAgentMember,
+			agentID: "agent", source: 84,
+			own:   &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "agent", TenantID: 7}},
+			share: &resolveAgentShareStub{},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "revoked share with a source", identity: resolveAgentMember, agentID: "agent", source: 84,
+			own:   &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "agent", TenantID: 7}},
+			share: &resolveAgentShareStub{err: service.ErrAgentSharePermission},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "built-in ID stays in the caller's workspace", identity: resolveAgentMember,
+			agentID: "builtin-quick-answer",
+			own:     &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "builtin-quick-answer", TenantID: 7}},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "builtin-quick-answer", TenantID: 84},
+			},
+		},
+		want: expectOwnAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "no agent anywhere", identity: resolveAgentMember, agentID: "agent",
+			own:   &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{err: service.ErrAgentSharePermission},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "share without a user", identity: &resolveAgentIdentity{tenant: 7}, agentID: "agent",
+			own: &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "agent", TenantID: 84},
+			},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "share without a workspace", identity: &resolveAgentIdentity{user: "user-1"}, agentID: "agent",
+			own: &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{
+				agent: &types.CustomAgent{ID: "agent", TenantID: 84},
+			},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "no share service wired", identity: resolveAgentMember, agentID: "agent",
+			own: &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+		},
+		want: expectNoAgent,
+	},
+	{
+		resolveAgentCase: resolveAgentCase{
+			name: "share store failure", identity: resolveAgentMember, agentID: "agent",
+			own:   &resolveOwnAgentStub{err: service.ErrAgentNotFound},
+			share: &resolveAgentShareStub{err: errors.New("share store down")},
+		},
+		want: expectNoAgent,
+	},
+}
+
+// handler wires the case's stubs the way NewHandler wires the services: a nil
+// share stub leaves no share service at all, rather than a typed nil one.
+func (tc resolveAgentCase) handler() *Handler {
+	h := &Handler{customAgentService: tc.own}
+	if tc.share != nil {
+		h.agentShareService = tc.share
+	}
+	return h
+}
+
+func (tc resolveAgentCase) request() (*gin.Context, context.Context) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	ctx := c.Request.Context()
+	if tc.identity != nil {
+		if tc.identity.user != "" {
+			c.Set(types.UserIDContextKey.String(), tc.identity.user)
+		}
+		if tc.identity.tenant != 0 {
+			c.Set(types.TenantIDContextKey.String(), tc.identity.tenant)
+			ctx = context.WithValue(ctx, types.TenantIDContextKey, tc.identity.tenant)
+		}
+	}
+	c.Request = c.Request.WithContext(ctx)
+	return c, ctx
+}
+
+func TestResolveAgent_DecisionTable(t *testing.T) {
+	for _, tc := range resolveAgentDecisionTable {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ctx := tc.request()
+
+			agent, effectiveTenantID, sharedReadOnly := tc.handler().resolveAgent(ctx, c, tc.agentID, tc.source)
+
+			switch tc.want {
+			case expectOwnAgent:
+				require.Same(t, tc.own.agent, agent)
+				require.Zero(t, effectiveTenantID, "an own agent runs in the caller's workspace")
+				require.False(t, sharedReadOnly)
+			case expectSharedAgent:
+				require.Same(t, tc.share.agent, agent)
+				require.Equal(t, tc.effectiveTenant, effectiveTenantID)
+				require.True(t, sharedReadOnly)
+			default:
+				require.Nil(t, agent)
+				require.Zero(t, effectiveTenantID)
+				require.False(t, sharedReadOnly)
+			}
+		})
+	}
+}
+
 func TestTerminalProvisionPin_UsesSharedAgentSandboxConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

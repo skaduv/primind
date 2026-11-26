@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/primind/primind/internal/application/service"
 	apperrors "github.com/primind/primind/internal/errors"
 	"github.com/primind/primind/internal/middleware"
 	"github.com/primind/primind/internal/types"
@@ -19,6 +20,10 @@ type suggestedQuestionsAgentService struct {
 	interfaces.CustomAgentService
 	err       error
 	tagScopes []types.TagScope
+}
+
+func (s *suggestedQuestionsAgentService) GetAgentByID(context.Context, string) (*types.CustomAgent, error) {
+	return &types.CustomAgent{ID: "agent-1", TenantID: 1}, nil
 }
 
 func (s *suggestedQuestionsAgentService) GetSuggestedQuestions(
@@ -33,14 +38,23 @@ func (s *suggestedQuestionsAgentService) GetSuggestedQuestions(
 	return nil, s.err
 }
 
+// newSuggestedQuestionsHandler wires the service behind the same agent
+// resolution the production handler uses, without a share service.
+func newSuggestedQuestionsHandler(svc interfaces.CustomAgentService) *CustomAgentHandler {
+	return &CustomAgentHandler{
+		service:             svc,
+		agentAccessResolver: service.NewAgentAccessResolver(svc, nil, nil, nil),
+	}
+}
+
 func TestGetSuggestedQuestionsPreservesAppErrorStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 
-	h := &CustomAgentHandler{service: &suggestedQuestionsAgentService{
+	h := newSuggestedQuestionsHandler(&suggestedQuestionsAgentService{
 		err: apperrors.NewForbiddenError("API key scope does not allow one or more knowledge bases"),
-	}}
+	})
 	r.GET("/agents/:id/suggested-questions", h.GetSuggestedQuestions)
 
 	rec := httptest.NewRecorder()
@@ -57,8 +71,8 @@ func TestGetSuggestedQuestionsParsesScopedTags(t *testing.T) {
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 
-	service := &suggestedQuestionsAgentService{}
-	h := &CustomAgentHandler{service: service}
+	svc := &suggestedQuestionsAgentService{}
+	h := newSuggestedQuestionsHandler(svc)
 	r.GET("/agents/:id/suggested-questions", h.GetSuggestedQuestions)
 
 	rawScopes := `[{"knowledge_base_id":"kb-1","tag_ids":["tag-1","tag-2"]}]`
@@ -71,7 +85,7 @@ func TestGetSuggestedQuestionsParsesScopedTags(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, []types.TagScope{{KnowledgeBaseID: "kb-1", TagIDs: []string{"tag-1", "tag-2"}}}, service.tagScopes)
+	require.Equal(t, []types.TagScope{{KnowledgeBaseID: "kb-1", TagIDs: []string{"tag-1", "tag-2"}}}, svc.tagScopes)
 }
 
 func TestGetSuggestedQuestionsRejectsInvalidScopedTags(t *testing.T) {
@@ -79,7 +93,7 @@ func TestGetSuggestedQuestionsRejectsInvalidScopedTags(t *testing.T) {
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 
-	h := &CustomAgentHandler{service: &suggestedQuestionsAgentService{}}
+	h := newSuggestedQuestionsHandler(&suggestedQuestionsAgentService{})
 	r.GET("/agents/:id/suggested-questions", h.GetSuggestedQuestions)
 
 	rec := httptest.NewRecorder()
