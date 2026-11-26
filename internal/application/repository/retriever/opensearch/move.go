@@ -50,5 +50,5 @@ func (r *Repository) MoveKnowledgeIndices(
 		return fmt.Errorf("opensearch: missing move response: %w", ErrTransport)
 	}
 	defer drainAndClose(resp.Inspect().Response.Body)
-	return inspectByQueryResult(io.LimitReader(resp.Inspect().Response.Body, 16<<20), true)
+	return inspectByQueryResult(io.LimitReader(resp.Inspect().Response.Body, responseCap(r.client)), true)
 }

@@ -822,6 +822,88 @@ func TestOS01_CancelBackoffAndBoundResponse(t *testing.T) {
 	})
 }
 
+func TestRetrieveFiltersLargeUnusedSourceFields(t *testing.T) {
+	embedding := make([]float32, 4096)
+	embedding[0] = 1
+	want := types.IndexWithScore{
+		ID:              "chunk-1",
+		ChunkID:         "chunk-1",
+		KnowledgeID:     "document-1",
+		KnowledgeBaseID: "knowledge-base-1",
+		SourceID:        "source-1",
+		SourceType:      types.SummarySourceType,
+		TagID:           "tag-1",
+		Content:         "Policy text used by the answer and its citation.",
+		IsEnabled:       true,
+	}
+	source := map[string]any{
+		"chunk_id":          want.ChunkID,
+		"knowledge_id":      want.KnowledgeID,
+		"knowledge_base_id": want.KnowledgeBaseID,
+		"source_id":         want.SourceID,
+		"source_type":       want.SourceType,
+		"tag_id":            want.TagID,
+		"content":           want.Content,
+		"is_enabled":        want.IsEnabled,
+		"embedding":         embedding,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		returnedSource := source
+		if includes := r.URL.Query().Get("_source_includes"); includes != "" {
+			fields := strings.Split(includes, ",")
+			returnedSource = make(map[string]any, len(fields))
+			for _, field := range fields {
+				if value, ok := source[field]; ok {
+					returnedSource[field] = value
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"hits": map[string]any{
+			"hits": []map[string]any{{"_id": want.ID, "_score": 0.75, "_source": returnedSource}},
+		}})
+	}))
+	defer ts.Close()
+
+	opts := DefaultRuntimeOptions()
+	opts.MaxResponseBytes = 1024
+	repo := managedTestRepo(t, ts.URL, "store_a", WithRuntimeOptions(opts))
+	ready := make(chan struct{})
+	close(ready)
+	repo.initializations = map[int]*indexInitialization{len(embedding): {done: ready}}
+
+	for _, tc := range []struct {
+		retriever types.RetrieverType
+		matchType types.MatchType
+		score     float64
+	}{
+		{types.VectorRetrieverType, types.MatchTypeEmbedding, 0.5},
+		{types.KeywordsRetrieverType, types.MatchTypeKeywords, 0.75},
+	} {
+		t.Run(string(tc.retriever), func(t *testing.T) {
+			results, err := repo.Retrieve(context.Background(), types.RetrieveParams{
+				Query:            "policy",
+				Embedding:        embedding,
+				KnowledgeBaseIDs: []string{want.KnowledgeBaseID},
+				TopK:             5,
+				RetrieverType:    tc.retriever,
+			})
+			if err != nil {
+				t.Fatalf("retrieve: %v", err)
+			}
+			if len(results) != 1 || len(results[0].Results) != 1 {
+				t.Fatalf("expected one result with one hit, got %+v", results)
+			}
+			expected := want
+			expected.MatchType = tc.matchType
+			expected.Score = tc.score
+			if got := *results[0].Results[0]; got != expected {
+				t.Fatalf("hit = %+v, want %+v", got, expected)
+			}
+		})
+	}
+}
+
 func TestOS01_ReviewSafeErrorsAndZeroBudget(t *testing.T) {
 	t.Run("bounded by-query errors", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"failures": []any{map[string]any{

@@ -385,7 +385,7 @@ func TestRetrieveFilters_RejectsJSONFragmentInjection(t *testing.T) {
 	f := &retrieveFilters{
 		ExcludeChunkIDs: []string{`{"$or":[{"_id":"x"}]}`, `*`, `"; DROP TABLE chunks; --`},
 	}
-	body, err := buildKNNQuery([]float32{0.1, 0.2}, 5, 0, f)
+	body, err := buildKNNQuery([]float32{0.1, 0.2}, 5, 5, 0, f)
 	if err != nil {
 		t.Fatalf("buildKNNQuery: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestRetrieveFilters_RejectsJSONFragmentInjection(t *testing.T) {
 func TestRetrieveFilters_AppliesExcludeKnowledgeIDs(t *testing.T) {
 	t.Parallel()
 	f := &retrieveFilters{ExcludeKnowledgeIDs: []string{"k1", "k2"}}
-	body, err := buildKNNQuery([]float32{0.1}, 5, 0, f)
+	body, err := buildKNNQuery([]float32{0.1}, 5, 5, 0, f)
 	if err != nil {
 		t.Fatalf("buildKNNQuery: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestRetrieveFilters_DefaultPinsIsEnabledTrue(t *testing.T) {
 
 func TestBuildKNNQuery_AppliesMinScoreWhenThreshold(t *testing.T) {
 	t.Parallel()
-	body, err := buildKNNQuery([]float32{0.1}, 5, 0.75, &retrieveFilters{})
+	body, err := buildKNNQuery([]float32{0.1}, 5, 5, 0.75, &retrieveFilters{})
 	if err != nil {
 		t.Fatalf("buildKNNQuery: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestBuildKNNQuery_AppliesMinScoreWhenThreshold(t *testing.T) {
 
 func TestBuildKNNQuery_OmitsMinScoreWhenThresholdZero(t *testing.T) {
 	t.Parallel()
-	body, err := buildKNNQuery([]float32{0.1}, 5, 0, &retrieveFilters{})
+	body, err := buildKNNQuery([]float32{0.1}, 5, 5, 0, &retrieveFilters{})
 	if err != nil {
 		t.Fatalf("buildKNNQuery: %v", err)
 	}

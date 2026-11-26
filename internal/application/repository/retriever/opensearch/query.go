@@ -104,20 +104,24 @@ func (f *retrieveFilters) toBoolMust() []map[string]any {
 // scale every other engine uses), so the threshold is mapped onto the
 // plugin's scale; wrapResults maps scores back.
 //
+// k is the neighbour count and size the number of hits returned. They are
+// separate so the oversized-response fallback can shrink size while keeping
+// k: the hits then stay a prefix of the full ranking.
+//
 // Signature returns ([]byte, error) so callers can propagate
 // json.Marshal failures (reachable for NaN / +/-Inf in embedding).
-func buildKNNQuery(embedding []float32, topK int, threshold float64, f *retrieveFilters) ([]byte, error) {
+func buildKNNQuery(embedding []float32, k, size int, threshold float64, f *retrieveFilters) ([]byte, error) {
 	knn := map[string]any{
 		"embedding": map[string]any{
 			"vector": embedding,
-			"k":      topK,
+			"k":      k,
 			"filter": map[string]any{
 				"bool": map[string]any{"must": f.toBoolMust()},
 			},
 		},
 	}
 	body := map[string]any{
-		"size":  topK,
+		"size":  size,
 		"query": map[string]any{"knn": knn},
 	}
 	if threshold > 0 {

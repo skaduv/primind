@@ -110,5 +110,5 @@ func (r *Repository) updateByQueryScript(
 		return nil
 	}
 	defer drainAndClose(resp.Inspect().Response.Body)
-	return inspectByQueryResponse(io.LimitReader(resp.Inspect().Response.Body, 16<<20))
+	return inspectByQueryResponse(io.LimitReader(resp.Inspect().Response.Body, responseCap(r.client)))
 }

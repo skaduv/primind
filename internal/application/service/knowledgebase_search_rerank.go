@@ -121,7 +121,7 @@ func (s *knowledgeBaseService) HybridSearchWithRerank(ctx context.Context,
 	// Recall at least as deep as the rerank asks for: with match_count=5 and
 	// rerank.top_k=200 the pool used to stop at the 50-hit floor.
 	params.MatchCount = max(params.MatchCount, topK)
-	chunks, err := s.hybridSearchCandidates(ctx, id, params)
+	chunks, content, err := s.hybridSearchCandidates(ctx, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +130,9 @@ func (s *knowledgeBaseService) HybridSearchWithRerank(ctx context.Context,
 		return out, nil
 	}
 	pool := chunks[:min(len(chunks), max(topK, types.DefaultRetrievalTopK))]
+	// Stores that deferred the matched text send it now, for the pool only;
+	// the reranked primaries below copy these entries.
+	content.fill(ctx, pool)
 	candidates, err := s.processSearchResults(ctx, pool, true)
 	if err != nil {
 		return nil, err

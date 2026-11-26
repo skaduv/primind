@@ -19,6 +19,20 @@ type RetrieveEngine interface {
 	Support() []types.RetrieverType
 }
 
+// MatchedContentFetcher is an optional capability of a retrieve engine whose
+// retrieval responses may omit the indexed text (IndexWithScore.Content) to
+// keep their size independent of chunk length. The caller fetches the text
+// only for the hits it keeps. Engines that always return the text do not
+// implement it; callers detect it with a type assertion.
+type MatchedContentFetcher interface {
+	// DefersMatchedContent reports whether Retrieve currently leaves
+	// IndexWithScore.Content empty.
+	DefersMatchedContent() bool
+	// FetchMatchedContent returns the indexed text keyed by chunk ID. IDs the
+	// store does not hold are absent from the map.
+	FetchMatchedContent(ctx context.Context, chunkIDs []string) (map[string]string, error)
+}
+
 // RetrieveEngineRepository defines the retrieve engine repository interface
 type RetrieveEngineRepository interface {
 	// Save saves the index info
