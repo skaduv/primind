@@ -220,7 +220,7 @@ func newContractEngine() *contractEngine {
 			Config: types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{"kb-in"}},
 		}},
 	}
-	resolver := service.NewAgentAccessResolver(e.agents, e.shares, nil, nil)
+	resolver := service.NewAgentAccessResolver(e.agents, e.shares, nil, nil, nil)
 	agents := handler.NewCustomAgentHandler(
 		e.agents, nil, nil, nil, nil, service.HostSandboxManager{}, resolver)
 	e.engine = agentRoutesEngine(agents, middleware.ErrorHandler(), func(c *gin.Context) {

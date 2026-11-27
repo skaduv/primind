@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
-	"github.com/primind/primind/internal/application/repository"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -76,18 +76,46 @@ type resolverKnowledge struct {
 	byID  map[string]*types.Knowledge
 	err   error
 	calls int
+	asked []string
 }
 
-func (r *resolverKnowledge) GetKnowledgeByIDOnly(_ context.Context, id string) (*types.Knowledge, error) {
+func (r *resolverKnowledge) GetKnowledgeBatchByIDOnly(_ context.Context, ids []string) ([]*types.Knowledge, error) {
+	r.calls++
+	r.asked = append([]string{}, ids...)
+	if r.err != nil {
+		return nil, r.err
+	}
+	var rows []*types.Knowledge
+	for _, id := range ids {
+		if knowledge, ok := r.byID[id]; ok {
+			rows = append(rows, knowledge)
+		}
+	}
+	return rows, nil
+}
+
+// resolverKnowledgeBases answers which workspace owns each knowledge base.
+type resolverKnowledgeBases struct {
+	interfaces.KnowledgeBaseRepository
+	owners map[string]uint64
+	err    error
+	calls  int
+}
+
+func (r *resolverKnowledgeBases) GetKnowledgeBaseByIDs(
+	_ context.Context, ids []string,
+) ([]*types.KnowledgeBase, error) {
 	r.calls++
 	if r.err != nil {
 		return nil, r.err
 	}
-	knowledge, ok := r.byID[id]
-	if !ok {
-		return nil, repository.ErrKnowledgeNotFound
+	var kbs []*types.KnowledgeBase
+	for _, id := range ids {
+		if owner, ok := r.owners[id]; ok {
+			kbs = append(kbs, &types.KnowledgeBase{ID: id, TenantID: owner})
+		}
 	}
-	return knowledge, nil
+	return kbs, nil
 }
 
 func resolverSharedAgent() *types.CustomAgent {
@@ -125,7 +153,7 @@ func TestAgentAccessResolver_OwnAgentWithoutSource(t *testing.T) {
 	own := &types.CustomAgent{ID: "own-agent", TenantID: resolverCallerTenant}
 	agents := &resolverOwnAgents{agent: own}
 	shares := &resolverShares{agent: resolverSharedAgent()}
-	resolver := NewAgentAccessResolver(agents, shares, nil, nil)
+	resolver := NewAgentAccessResolver(agents, shares, nil, nil, nil)
 
 	resolved, err := resolver.Resolve(context.Background(), resolverMember(), own.ID, 0)
 
@@ -144,7 +172,7 @@ func TestAgentAccessResolver_ShareWithoutSource(t *testing.T) {
 	shared := resolverSharedAgent()
 	agents := &resolverOwnAgents{err: ErrAgentNotFound}
 	shares := &resolverShares{agent: shared}
-	resolver := NewAgentAccessResolver(agents, shares, nil, nil)
+	resolver := NewAgentAccessResolver(agents, shares, nil, nil, nil)
 
 	resolved, err := resolver.Resolve(context.Background(), resolverMember(), shared.ID, 0)
 
@@ -166,7 +194,7 @@ func TestAgentAccessResolver_SourceSelectorOnlyReadsShares(t *testing.T) {
 	shared := resolverSharedAgent()
 	agents := &resolverOwnAgents{agent: &types.CustomAgent{ID: shared.ID, TenantID: resolverCallerTenant}}
 	shares := &resolverShares{agent: shared}
-	resolver := NewAgentAccessResolver(agents, shares, nil, nil)
+	resolver := NewAgentAccessResolver(agents, shares, nil, nil, nil)
 
 	resolved, err := resolver.Resolve(context.Background(), resolverMember(), shared.ID, resolverSourceTenant)
 
@@ -197,7 +225,7 @@ func TestAgentAccessResolver_RejectedShareNeverFallsBackToLocalAgent(t *testing.
 		} {
 			t.Run(shareErr.Error()+"/"+tt.name, func(t *testing.T) {
 				shares := &resolverShares{err: shareErr}
-				resolver := NewAgentAccessResolver(tt.own, shares, nil, nil)
+				resolver := NewAgentAccessResolver(tt.own, shares, nil, nil, nil)
 
 				resolved, err := resolve(resolver, resolverSharedAgentID, tt.source)
 
@@ -217,7 +245,7 @@ func TestAgentAccessResolver_BuiltinIDStaysInCallerWorkspace(t *testing.T) {
 	resolved, err := resolve(NewAgentAccessResolver(
 		&resolverOwnAgents{agent: own},
 		&resolverShares{agent: &types.CustomAgent{ID: own.ID, TenantID: resolverSourceTenant}},
-		nil, nil,
+		nil, nil, nil,
 	), own.ID, 0)
 	require.NoError(t, err)
 	require.Same(t, own, resolved.Agent)
@@ -230,7 +258,7 @@ func TestAgentAccessResolver_BuiltinIDStaysInCallerWorkspace(t *testing.T) {
 		&agentShareService{shareRepo: builtinShareRepo{}, agentRepo: &builtinShareAgentRepo{
 			agent: &types.CustomAgent{ID: own.ID, TenantID: resolverSourceTenant, IsBuiltin: true},
 		}},
-		nil, nil,
+		nil, nil, nil,
 	), own.ID, resolverSourceTenant)
 	require.ErrorIs(t, err, ErrAgentNotFound)
 	require.Nil(t, resolved)
@@ -262,7 +290,7 @@ func TestAgentAccessResolver_OwnWorkspaceAsSourceIsRefused(t *testing.T) {
 	resolver := NewAgentAccessResolver(
 		&resolverOwnAgents{agent: resolverLocalAgent()},
 		&agentShareService{shareRepo: shareRepo, agentRepo: &builtinShareAgentRepo{agent: resolverSharedAgent()}},
-		nil, nil,
+		nil, nil, nil,
 	)
 
 	resolved, err := resolve(resolver, resolverSharedAgentID, resolverCallerTenant)
@@ -279,7 +307,7 @@ func TestAgentAccessResolver_RefusesShareDisabledInCallerWorkspace(t *testing.T)
 		{TenantID: resolverCallerTenant, AgentID: resolverSharedAgentID, SourceTenantID: resolverSourceTenant},
 	}}
 	resolver := NewAgentAccessResolver(
-		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: resolverSharedAgent()}, disabled, nil,
+		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: resolverSharedAgent()}, disabled, nil, nil,
 	)
 
 	resolved, err := resolve(resolver, resolverSharedAgentID, resolverSourceTenant)
@@ -305,13 +333,13 @@ func TestAgentAccessResolver_IgnoresUnrelatedDisabledRecords(t *testing.T) {
 	}}
 
 	byShare, err := resolve(NewAgentAccessResolver(
-		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: shared}, disabled, nil,
+		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: shared}, disabled, nil, nil,
 	), shared.ID, resolverSourceTenant)
 	require.NoError(t, err)
 	require.True(t, byShare.IsShared)
 
 	byID, err := resolve(NewAgentAccessResolver(
-		&resolverOwnAgents{agent: own}, &resolverShares{agent: shared}, disabled, nil,
+		&resolverOwnAgents{agent: own}, &resolverShares{agent: shared}, disabled, nil, nil,
 	), own.ID, 0)
 	require.NoError(t, err)
 	require.False(t, byID.IsShared, "the disabled list narrows shares only; own agents keep their path")
@@ -322,7 +350,7 @@ func TestAgentAccessResolver_IgnoresUnrelatedDisabledRecords(t *testing.T) {
 func TestAgentAccessResolver_DisabledListFailureIsNotNotFound(t *testing.T) {
 	disabled := &resolverDisabledList{err: errors.New("offline")}
 	resolver := NewAgentAccessResolver(
-		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: resolverSharedAgent()}, disabled, nil,
+		&resolverOwnAgents{err: ErrAgentNotFound}, &resolverShares{agent: resolverSharedAgent()}, disabled, nil, nil,
 	)
 
 	resolved, err := resolve(resolver, resolverSharedAgentID, 0)
@@ -341,7 +369,7 @@ func TestAgentAccessResolver_ShareNeedsUserAndWorkspace(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			shares := &resolverShares{agent: resolverSharedAgent()}
-			resolver := NewAgentAccessResolver(&resolverOwnAgents{err: ErrAgentNotFound}, shares, nil, nil)
+			resolver := NewAgentAccessResolver(&resolverOwnAgents{err: ErrAgentNotFound}, shares, nil, nil, nil)
 
 			resolved, err := resolver.Resolve(context.Background(), caller, resolverSharedAgentID, 0)
 
@@ -358,7 +386,7 @@ func TestAgentAccessResolver_ShareNeedsUserAndWorkspace(t *testing.T) {
 func TestAgentAccessResolver_APIKeyPrincipalResolvesSharesLikeChat(t *testing.T) {
 	shared := resolverSharedAgent()
 	shares := &resolverShares{agent: shared}
-	resolver := NewAgentAccessResolver(&resolverOwnAgents{err: ErrAgentNotFound}, shares, nil, nil)
+	resolver := NewAgentAccessResolver(&resolverOwnAgents{err: ErrAgentNotFound}, shares, nil, nil, nil)
 	apiKey := AgentCaller{TenantID: resolverCallerTenant, UserID: "system-7", Role: types.TenantRoleViewer}
 
 	resolved, err := resolver.Resolve(context.Background(), apiKey, shared.ID, resolverSourceTenant)
@@ -384,7 +412,7 @@ func TestAgentAccessResolver_LookupFailureIsNotNotFound(t *testing.T) {
 			if tt.wired {
 				shares = &resolverShares{err: tt.shareErr}
 			}
-			resolver := NewAgentAccessResolver(&resolverOwnAgents{err: errors.New("db down")}, shares, nil, nil)
+			resolver := NewAgentAccessResolver(&resolverOwnAgents{err: errors.New("db down")}, shares, nil, nil, nil)
 
 			resolved, err := resolver.Resolve(context.Background(), resolverMember(), resolverSharedAgentID, 0)
 
@@ -397,7 +425,7 @@ func TestAgentAccessResolver_LookupFailureIsNotNotFound(t *testing.T) {
 
 func TestAgentAccessResolver_EmptyIDIsNotFound(t *testing.T) {
 	agents := &resolverOwnAgents{agent: &types.CustomAgent{ID: "own-agent"}}
-	resolver := NewAgentAccessResolver(agents, &resolverShares{agent: resolverSharedAgent()}, nil, nil)
+	resolver := NewAgentAccessResolver(agents, &resolverShares{agent: resolverSharedAgent()}, nil, nil, nil)
 
 	for _, resolve := range []func(context.Context, AgentCaller, string, uint64) (*ResolvedAgent, error){
 		resolver.Resolve,
@@ -432,6 +460,14 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 		"doc-own":     {ID: "doc-own", TenantID: resolverCallerTenant, KnowledgeBaseID: "kb-in"},
 		"doc-foreign": {ID: "doc-foreign", TenantID: resolverSourceTenant + 1, KnowledgeBaseID: "kb-in"},
 	}
+	// kb-own is the caller's own knowledge base and kb-foreign belongs to a
+	// third workspace; kb-missing does not exist.
+	kbOwners := map[string]uint64{
+		"kb-in":      resolverSourceTenant,
+		"kb-out":     resolverSourceTenant,
+		"kb-own":     resolverCallerTenant,
+		"kb-foreign": resolverSourceTenant + 1,
+	}
 	full := SuggestionScope{
 		KnowledgeBaseIDs: []string{"kb-in", "kb-out"},
 		KnowledgeIDs:     []string{"doc-in", "doc-out", "doc-own", "doc-missing", "doc-foreign"},
@@ -440,16 +476,26 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 			{KnowledgeBaseID: "kb-out", TagIDs: []string{"tag-out"}},
 		},
 	}
+	outsideSource := SuggestionScope{
+		KnowledgeBaseIDs: []string{"kb-own", "kb-foreign", "kb-missing"},
+		TagScopes: []types.TagScope{
+			{KnowledgeBaseID: "kb-own", TagIDs: []string{"tag-own"}},
+			{KnowledgeBaseID: "kb-foreign", TagIDs: []string{"tag-foreign"}},
+		},
+	}
 
 	for _, tt := range []struct {
-		name      string
-		agent     *ResolvedAgent
-		scope     SuggestionScope
-		storeErr  error
-		noStore   bool
-		want      SuggestionScope
-		empty     bool
-		wantReads int
+		name        string
+		agent       *ResolvedAgent
+		scope       SuggestionScope
+		storeErr    error
+		kbStoreErr  error
+		noStore     bool
+		noKBStore   bool
+		want        SuggestionScope
+		empty       bool
+		wantReads   int
+		wantKBReads int
 	}{
 		{
 			name:  "own agent keeps its request untouched",
@@ -466,7 +512,8 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 				KnowledgeIDs:     []string{"doc-in"},
 				TagScopes:        []types.TagScope{{KnowledgeBaseID: "kb-in", TagIDs: []string{"tag-in"}}},
 			},
-			wantReads: 5,
+			wantReads:   1,
+			wantKBReads: 1,
 		},
 		{
 			name:  "whole-workspace share admits its own workspace's knowledge bases only",
@@ -477,7 +524,26 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 				KnowledgeIDs:     []string{"doc-in", "doc-out"},
 				TagScopes:        full.TagScopes,
 			},
-			wantReads: 5,
+			wantReads:   1,
+			wantKBReads: 1,
+		},
+		{
+			name:        "whole-workspace share refuses own, third-workspace and unknown knowledge bases",
+			agent:       shared(allKBs),
+			scope:       outsideSource,
+			want:        SuggestionScope{},
+			empty:       true,
+			wantKBReads: 1,
+		},
+		{
+			name:  "whole-workspace share keeps its own knowledge bases among outside ones",
+			agent: shared(allKBs),
+			scope: SuggestionScope{
+				KnowledgeBaseIDs: []string{"kb-own", "kb-in"},
+				TagScopes:        []types.TagScope{{KnowledgeBaseID: "kb-own", TagIDs: []string{"tag-own"}}},
+			},
+			want:        SuggestionScope{KnowledgeBaseIDs: []string{"kb-in"}},
+			wantKBReads: 1,
 		},
 		{
 			name:  "selected share with no range named falls back to the agent configuration",
@@ -485,11 +551,12 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 			want:  SuggestionScope{},
 		},
 		{
-			name:  "range entirely outside the share is empty, not the agent's own range",
-			agent: selected,
-			scope: SuggestionScope{KnowledgeBaseIDs: []string{"kb-out"}},
-			want:  SuggestionScope{},
-			empty: true,
+			name:        "range entirely outside the share is empty, not the agent's own range",
+			agent:       selected,
+			scope:       SuggestionScope{KnowledgeBaseIDs: []string{"kb-out"}},
+			want:        SuggestionScope{},
+			empty:       true,
+			wantKBReads: 1,
 		},
 		{
 			name:      "documents entirely outside the share are empty too",
@@ -497,7 +564,7 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 			scope:     SuggestionScope{KnowledgeIDs: []string{"doc-out", "doc-own", "doc-missing"}},
 			want:      SuggestionScope{},
 			empty:     true,
-			wantReads: 3,
+			wantReads: 1,
 		},
 		{
 			name:  "tag scope entirely outside the share is empty too",
@@ -505,8 +572,9 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 			scope: SuggestionScope{TagScopes: []types.TagScope{
 				{KnowledgeBaseID: "kb-out", TagIDs: []string{"tag-out"}},
 			}},
-			want:  SuggestionScope{},
-			empty: true,
+			want:        SuggestionScope{},
+			empty:       true,
+			wantKBReads: 1,
 		},
 		{
 			name:  "unresolvable documents are dropped without failing the request",
@@ -515,9 +583,23 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 				KnowledgeBaseIDs: []string{"kb-in"},
 				KnowledgeIDs:     []string{"doc-in", "doc-out"},
 			},
-			storeErr:  errors.New("offline"),
-			want:      SuggestionScope{KnowledgeBaseIDs: []string{"kb-in"}},
-			wantReads: 2,
+			storeErr:    errors.New("offline"),
+			want:        SuggestionScope{KnowledgeBaseIDs: []string{"kb-in"}},
+			wantReads:   1,
+			wantKBReads: 1,
+		},
+		{
+			name:  "unresolvable knowledge bases are dropped without failing the request",
+			agent: shared(allKBs),
+			scope: SuggestionScope{
+				KnowledgeBaseIDs: []string{"kb-in"},
+				KnowledgeIDs:     []string{"doc-in"},
+				TagScopes:        []types.TagScope{{KnowledgeBaseID: "kb-in", TagIDs: []string{"tag-in"}}},
+			},
+			kbStoreErr:  errors.New("offline"),
+			want:        SuggestionScope{KnowledgeIDs: []string{"doc-in"}},
+			wantReads:   1,
+			wantKBReads: 1,
 		},
 		{
 			name:  "no document store drops documents and keeps the rest",
@@ -526,8 +608,20 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 				KnowledgeBaseIDs: []string{"kb-in"},
 				KnowledgeIDs:     []string{"doc-in"},
 			},
-			noStore: true,
-			want:    SuggestionScope{KnowledgeBaseIDs: []string{"kb-in"}},
+			noStore:     true,
+			want:        SuggestionScope{KnowledgeBaseIDs: []string{"kb-in"}},
+			wantKBReads: 1,
+		},
+		{
+			name:  "no knowledge base store drops knowledge bases and tag scopes",
+			agent: shared(allKBs),
+			scope: SuggestionScope{
+				KnowledgeBaseIDs: []string{"kb-in"},
+				TagScopes:        []types.TagScope{{KnowledgeBaseID: "kb-in", TagIDs: []string{"tag-in"}}},
+			},
+			noKBStore: true,
+			want:      SuggestionScope{},
+			empty:     true,
 		},
 		{
 			name:  "nil resolution passes the request through",
@@ -542,14 +636,49 @@ func TestAgentAccessResolver_RestrictSuggestionScope(t *testing.T) {
 			if !tt.noStore {
 				knowledge = store
 			}
-			resolver := NewAgentAccessResolver(nil, nil, nil, knowledge)
+			var knowledgeBases interfaces.KnowledgeBaseRepository
+			kbStore := &resolverKnowledgeBases{owners: kbOwners, err: tt.kbStoreErr}
+			if !tt.noKBStore {
+				knowledgeBases = kbStore
+			}
+			resolver := NewAgentAccessResolver(nil, nil, nil, knowledge, knowledgeBases)
 
 			got, err := resolver.RestrictSuggestionScope(context.Background(), tt.agent, tt.scope)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got.Scope)
 			require.Equal(t, tt.empty, got.EmptyByScope)
-			require.Equal(t, tt.wantReads, store.calls)
+			require.Equal(t, tt.wantReads, store.calls, "document lookups")
+			require.Equal(t, tt.wantKBReads, kbStore.calls, "knowledge base lookups")
 		})
 	}
+}
+
+// However many document IDs a request names, the share's range is checked
+// with one lookup of at most maxSuggestionKnowledgeIDs distinct IDs.
+func TestAgentAccessResolver_RestrictSuggestionScopeBoundsDocumentLookups(t *testing.T) {
+	agent := resolverSharedAgent()
+	resolved := &ResolvedAgent{
+		Agent: agent, EffectiveTenantID: agent.TenantID, IsShared: true,
+		KBScope: types.NewSharedAgentKBScope(agent),
+	}
+	documents := map[string]*types.Knowledge{}
+	var ids []string
+	for i := 0; i < 3*maxSuggestionKnowledgeIDs; i++ {
+		id := fmt.Sprintf("doc-%03d", i)
+		documents[id] = &types.Knowledge{ID: id, TenantID: resolverSourceTenant, KnowledgeBaseID: "kb-in"}
+		// Every ID twice, and empty entries in between.
+		ids = append(ids, id, "", id)
+	}
+	store := &resolverKnowledge{byID: documents}
+	resolver := NewAgentAccessResolver(nil, nil, nil, store, nil)
+
+	got, err := resolver.RestrictSuggestionScope(context.Background(), resolved, SuggestionScope{KnowledgeIDs: ids})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, store.calls)
+	require.Len(t, store.asked, maxSuggestionKnowledgeIDs)
+	require.Equal(t, "doc-000", store.asked[0])
+	require.Equal(t, fmt.Sprintf("doc-%03d", maxSuggestionKnowledgeIDs-1), store.asked[maxSuggestionKnowledgeIDs-1])
+	require.Equal(t, store.asked, got.Scope.KnowledgeIDs)
 }

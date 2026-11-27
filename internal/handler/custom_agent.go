@@ -781,6 +781,15 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		return
 	}
 
+	// A KB-restricted API key is held to the range it asked for, before a share
+	// narrows that range. Narrowing first would turn a forbidden range into an
+	// empty 200, and the difference between that and a 403 would tell the key
+	// which knowledge bases and documents the share holds.
+	if err := authorizeSuggestionRangeForAPIKey(ctx, kbIDs, knowledgeIDs, tagScopes); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
 	// An own agent keeps the request exactly as it was.
 	scope := service.SuggestionScope{KnowledgeBaseIDs: kbIDs, KnowledgeIDs: knowledgeIDs, TagScopes: tagScopes}
 	agentCtx := ctx
@@ -844,6 +853,21 @@ func writeSuggestedQuestions(c *gin.Context, questions []types.SuggestedQuestion
 			"questions": questions,
 		},
 	})
+}
+
+// authorizeSuggestionRangeForAPIKey applies the KB-restricted API key checks
+// the suggestion service runs, to the range exactly as the request named it.
+func authorizeSuggestionRangeForAPIKey(
+	ctx context.Context, kbIDs, knowledgeIDs []string, tagScopes []types.TagScope,
+) error {
+	if err := types.AuthorizeTenantAPIKeyKnowledgeTargets(ctx, kbIDs, knowledgeIDs); err != nil {
+		return err
+	}
+	var tagIDs []string
+	for _, tagScope := range tagScopes {
+		tagIDs = append(tagIDs, tagScope.TagIDs...)
+	}
+	return types.AuthorizeTenantAPIKeyOptionalTagIDs(ctx, tagIDs)
 }
 
 // resolveAgentForRead resolves the agent an agent-by-ID read names through the

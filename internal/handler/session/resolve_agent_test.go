@@ -363,7 +363,7 @@ func (tc resolveAgentCase) handler() *Handler {
 // withAgentResolver wires the agent resolver from h's agent services, the way
 // the container hands NewHandler the AgentAccessResolver built from them.
 func withAgentResolver(h *Handler) *Handler {
-	h.agentAccessResolver = service.NewAgentAccessResolver(h.customAgentService, h.agentShareService, nil, nil)
+	h.agentAccessResolver = service.NewAgentAccessResolver(h.customAgentService, h.agentShareService, nil, nil, nil)
 	return h
 }
 

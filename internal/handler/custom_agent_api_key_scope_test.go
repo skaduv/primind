@@ -43,7 +43,7 @@ func (s *suggestedQuestionsAgentService) GetSuggestedQuestions(
 func newSuggestedQuestionsHandler(svc interfaces.CustomAgentService) *CustomAgentHandler {
 	return &CustomAgentHandler{
 		service:             svc,
-		agentAccessResolver: service.NewAgentAccessResolver(svc, nil, nil, nil),
+		agentAccessResolver: service.NewAgentAccessResolver(svc, nil, nil, nil, nil),
 	}
 }
 

@@ -107,12 +107,35 @@ type suggestionKnowledge struct {
 	byID map[string]*types.Knowledge
 }
 
-func (s suggestionKnowledge) GetKnowledgeByIDOnly(_ context.Context, id string) (*types.Knowledge, error) {
-	knowledge, ok := s.byID[id]
-	if !ok {
-		return nil, errors.New("not found")
+func (s suggestionKnowledge) GetKnowledgeBatchByIDOnly(_ context.Context, ids []string) ([]*types.Knowledge, error) {
+	var rows []*types.Knowledge
+	for _, id := range ids {
+		if knowledge, ok := s.byID[id]; ok {
+			rows = append(rows, knowledge)
+		}
 	}
-	return knowledge, nil
+	return rows, nil
+}
+
+// suggestionKnowledgeBases knows the share's two knowledge bases, kb-in and
+// kb-out, and own-kb, the caller's own.
+type suggestionKnowledgeBases struct {
+	interfaces.KnowledgeBaseRepository
+}
+
+func (suggestionKnowledgeBases) GetKnowledgeBaseByIDs(_ context.Context, ids []string) ([]*types.KnowledgeBase, error) {
+	owners := map[string]uint64{
+		"kb-in":  suggestionSourceTenant,
+		"kb-out": suggestionSourceTenant,
+		"own-kb": suggestionCallerTenant,
+	}
+	var kbs []*types.KnowledgeBase
+	for _, id := range ids {
+		if owner, ok := owners[id]; ok {
+			kbs = append(kbs, &types.KnowledgeBase{ID: id, TenantID: owner})
+		}
+	}
+	return kbs, nil
 }
 
 func suggestionSharedAgent() *types.CustomAgent {
@@ -148,14 +171,21 @@ func newSuggestionHandler(
 	knowledge interfaces.KnowledgeRepository,
 ) *CustomAgentHandler {
 	return &CustomAgentHandler{
-		service:             svc,
-		agentAccessResolver: service.NewAgentAccessResolver(svc, shares, disabled, knowledge),
+		service: svc,
+		agentAccessResolver: service.NewAgentAccessResolver(
+			svc, shares, disabled, knowledge, suggestionKnowledgeBases{}),
 	}
 }
 
 // suggestionRouter mounts the handler behind the identity auth attaches for a
 // workspace member, on both surfaces a handler reads it from.
 func suggestionRouter(h *CustomAgentHandler, user string) *gin.Engine {
+	return suggestionRouterWithKey(h, user, nil)
+}
+
+// suggestionRouterWithKey is suggestionRouter for a caller holding an API key
+// with the given scope (nil: no key scope at all).
+func suggestionRouterWithKey(h *CustomAgentHandler, user string, key *types.TenantAPIKeyScope) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler(), func(c *gin.Context) {
@@ -165,6 +195,9 @@ func suggestionRouter(h *CustomAgentHandler, user string) *gin.Engine {
 		ctx = types.WithCaller(ctx, types.Caller{
 			TenantID: suggestionCallerTenant, UserID: user, Role: types.TenantRoleViewer,
 		})
+		if key != nil {
+			ctx = types.WithTenantAPIKeyScope(ctx, *key)
+		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	})
@@ -263,7 +296,8 @@ func TestGetSuggestedQuestions_ResolvesSharedAgent(t *testing.T) {
 }
 
 // An API key resolves a share exactly as a workspace member does. Its own
-// knowledge-base scope, when it has one, is applied by the service, not here.
+// knowledge-base scope, when it has one, is checked by
+// TestGetSuggestedQuestions_HoldsRestrictedKeysToTheRangeTheyNamed.
 func TestGetSuggestedQuestions_APIKeyPrincipalUsesSharesLikeChat(t *testing.T) {
 	svc := unsharedSuggestionService()
 	shares := &suggestionAgentShares{agent: suggestionSharedAgent()}
@@ -407,6 +441,95 @@ func TestGetSuggestedQuestions_NarrowsTheRangeToTheShare(t *testing.T) {
 				"an empty list, never null and never the agent's own range")
 		})
 	}
+}
+
+// A whole-workspace share lends its owner's knowledge bases, not the caller's
+// own: those are dropped even though the caller could read them anyway.
+func TestGetSuggestedQuestions_WholeWorkspaceShareStaysInItsWorkspace(t *testing.T) {
+	agent := suggestionSharedAgent()
+	agent.Config = types.CustomAgentConfig{KBSelectionMode: "all"}
+	for _, tt := range []struct {
+		name      string
+		query     string
+		wantKBs   []string
+		wantCalls int
+	}{
+		{
+			name:      "the caller's own knowledge base is dropped, the owner's kept",
+			query:     "?agent_source_tenant_id=84&knowledge_base_ids=own-kb,kb-in",
+			wantKBs:   []string{"kb-in"},
+			wantCalls: 1,
+		},
+		{
+			name:  "only the caller's own and unknown knowledge bases give an empty list",
+			query: "?agent_source_tenant_id=84&knowledge_base_ids=own-kb,kb-missing",
+		},
+		{
+			name: "a tag scope on the caller's own knowledge base gives an empty list",
+			query: "?agent_source_tenant_id=84&tag_scopes=" +
+				url.QueryEscape(`[{"knowledge_base_id":"own-kb","tag_ids":["tag-own"]}]`),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := unsharedSuggestionService()
+			h := newSuggestionHandler(svc, &suggestionAgentShares{agent: agent}, nil, nil)
+
+			rec, questions := getSuggestions(t, suggestionRouter(h, "member"), tt.query)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, tt.wantCalls, svc.calls)
+			if tt.wantCalls == 0 {
+				require.Empty(t, questions)
+				return
+			}
+			require.Equal(t, tt.wantKBs, svc.gotKBs)
+		})
+	}
+}
+
+// A KB-restricted API key is held to the range it named before the share
+// narrows it, so a range the key may not use is a 403 whether or not it lies
+// inside the share: the answer says nothing about what the share holds.
+func TestGetSuggestedQuestions_HoldsRestrictedKeysToTheRangeTheyNamed(t *testing.T) {
+	key := &types.TenantAPIKeyScope{KeyID: 9, KnowledgeBaseIDs: types.StringArray{"kb-in"}}
+	documents := map[string]*types.Knowledge{
+		"doc-in":  {ID: "doc-in", TenantID: suggestionSourceTenant, KnowledgeBaseID: "kb-in"},
+		"doc-out": {ID: "doc-out", TenantID: suggestionSourceTenant, KnowledgeBaseID: "kb-out"},
+	}
+	for _, tt := range []struct {
+		name  string
+		query string
+	}{
+		{name: "a knowledge base outside the key and the share", query: "&knowledge_base_ids=own-kb"},
+		{name: "a knowledge base outside the key, inside the share's workspace", query: "&knowledge_base_ids=kb-out"},
+		{name: "documents inside the share", query: "&knowledge_ids=doc-in"},
+		{name: "documents outside the share", query: "&knowledge_ids=doc-out"},
+		{
+			name:  "tag scopes outside the share",
+			query: "&tag_scopes=" + url.QueryEscape(`[{"knowledge_base_id":"kb-out","tag_ids":["tag-out"]}]`),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := unsharedSuggestionService()
+			h := newSuggestionHandler(svc, &suggestionAgentShares{agent: suggestionSharedAgent()}, nil,
+				suggestionKnowledge{byID: documents})
+
+			rec, _ := getSuggestions(t, suggestionRouterWithKey(h, "system-1", key),
+				"?agent_source_tenant_id=84"+tt.query)
+
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+			require.Zero(t, svc.calls)
+		})
+	}
+
+	// The key's own knowledge base still answers.
+	svc := unsharedSuggestionService()
+	h := newSuggestionHandler(svc, &suggestionAgentShares{agent: suggestionSharedAgent()}, nil, nil)
+	rec, questions := getSuggestions(t, suggestionRouterWithKey(h, "system-1", key),
+		"?agent_source_tenant_id=84&knowledge_base_ids=kb-in")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, suggestionSuggestions(), questions)
+	require.Equal(t, []string{"kb-in"}, svc.gotKBs)
 }
 
 func TestGetSuggestedQuestions_RejectsMalformedSourceTenantID(t *testing.T) {

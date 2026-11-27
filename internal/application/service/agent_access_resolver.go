@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/primind/primind/internal/application/repository"
 	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
@@ -86,33 +85,43 @@ type AgentAccessResolver interface {
 	) (RestrictedSuggestionScope, error)
 }
 
-// knowledgeOwnerLookup reports which knowledge base and workspace own a
-// document. interfaces.KnowledgeRepository satisfies it.
+// knowledgeOwnerLookup reports which knowledge base and workspace own each
+// document, in one query. interfaces.KnowledgeRepository satisfies it.
 type knowledgeOwnerLookup interface {
-	GetKnowledgeByIDOnly(ctx context.Context, id string) (*types.Knowledge, error)
+	GetKnowledgeBatchByIDOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
+}
+
+// knowledgeBaseOwnerLookup reports which workspace owns each knowledge base, in
+// one query. interfaces.KnowledgeBaseRepository satisfies it.
+type knowledgeBaseOwnerLookup interface {
+	GetKnowledgeBaseByIDs(ctx context.Context, ids []string) ([]*types.KnowledgeBase, error)
 }
 
 type agentAccessResolver struct {
-	agents     interfaces.CustomAgentService
-	shares     interfaces.AgentShareService
-	disabled   interfaces.TenantDisabledSharedAgentRepository
-	knowledges knowledgeOwnerLookup
+	agents         interfaces.CustomAgentService
+	shares         interfaces.AgentShareService
+	disabled       interfaces.TenantDisabledSharedAgentRepository
+	knowledges     knowledgeOwnerLookup
+	knowledgeBases knowledgeBaseOwnerLookup
 }
 
 // NewAgentAccessResolver builds the resolver from the services it reads. A nil
-// share service, disabled list or knowledge repository only removes the check
-// that needs it; own agents still resolve.
+// share service or disabled list only removes the check that needs it; own
+// agents still resolve. A nil knowledge or knowledge-base repository means a
+// shared agent's request range cannot be checked, so that part of it is dropped.
 func NewAgentAccessResolver(
 	agents interfaces.CustomAgentService,
 	shares interfaces.AgentShareService,
 	disabledRepo interfaces.TenantDisabledSharedAgentRepository,
 	knowledgeRepo interfaces.KnowledgeRepository,
+	knowledgeBaseRepo interfaces.KnowledgeBaseRepository,
 ) AgentAccessResolver {
 	return &agentAccessResolver{
-		agents:     agents,
-		shares:     shares,
-		disabled:   disabledRepo,
-		knowledges: knowledgeRepo,
+		agents:         agents,
+		shares:         shares,
+		disabled:       disabledRepo,
+		knowledges:     knowledgeRepo,
+		knowledgeBases: knowledgeBaseRepo,
 	}
 }
 
@@ -205,28 +214,38 @@ func (r *agentAccessResolver) RestrictSuggestionScope(
 	}
 
 	named := len(scope.KnowledgeBaseIDs) > 0 || len(scope.KnowledgeIDs) > 0 || len(scope.TagScopes) > 0
+
+	// A knowledge base is inside the share only when it lives in the lending
+	// workspace and the share selects it, so each one is checked against the
+	// workspace that actually owns it: a whole-workspace share must not admit
+	// the caller's own or another workspace's knowledge base by its ID alone.
+	// Knowledge bases named directly and by tag scopes resolve in one query.
+	kbIDs := make([]string, 0, len(scope.KnowledgeBaseIDs)+len(scope.TagScopes))
+	kbIDs = append(kbIDs, scope.KnowledgeBaseIDs...)
+	for _, tagScope := range scope.TagScopes {
+		kbIDs = append(kbIDs, tagScope.KnowledgeBaseID)
+	}
+	kbOwners := r.knowledgeBaseOwners(ctx, kbIDs)
+	allowsKB := func(kbID string) bool {
+		owner, ok := kbOwners[kbID]
+		return ok && agent.KBScope.Allows(kbID, owner)
+	}
+
 	restricted := SuggestionScope{}
 	for _, kbID := range scope.KnowledgeBaseIDs {
-		if agent.KBScope.Allows(kbID, agent.EffectiveTenantID) {
+		if allowsKB(kbID) {
 			restricted.KnowledgeBaseIDs = append(restricted.KnowledgeBaseIDs, kbID)
 		}
 	}
 	for _, tagScope := range scope.TagScopes {
-		if agent.KBScope.Allows(tagScope.KnowledgeBaseID, agent.EffectiveTenantID) {
+		if allowsKB(tagScope.KnowledgeBaseID) {
 			restricted.TagScopes = append(restricted.TagScopes, tagScope)
 		}
 	}
-	// A document is only inside the scope when its own knowledge base is, which
-	// takes a lookup per ID. One that cannot be resolved is dropped: a missing
-	// row and a failing store both fail closed, as readableSuggestionKnowledgeIDs does.
-	for _, knowledgeID := range scope.KnowledgeIDs {
-		knowledge, err := r.knowledgeOwner(ctx, knowledgeID)
-		if err != nil {
-			logger.Warnf(ctx, "Dropping unresolved knowledge from a shared agent's suggestion scope: %v", err)
-			continue
-		}
+	// A document is only inside the scope when its own knowledge base is.
+	for _, knowledge := range r.knowledgeOwners(ctx, scope.KnowledgeIDs) {
 		if agent.KBScope.Allows(knowledge.KnowledgeBaseID, knowledge.TenantID) {
-			restricted.KnowledgeIDs = append(restricted.KnowledgeIDs, knowledgeID)
+			restricted.KnowledgeIDs = append(restricted.KnowledgeIDs, knowledge.ID)
 		}
 	}
 
@@ -243,18 +262,86 @@ func (r *agentAccessResolver) RestrictSuggestionScope(
 	}, nil
 }
 
-func (r *agentAccessResolver) knowledgeOwner(ctx context.Context, knowledgeID string) (*types.Knowledge, error) {
-	if r.knowledges == nil {
-		return nil, errors.New("knowledge lookup is not configured")
+// knowledgeBaseOwners maps each resolvable knowledge base ID to the workspace
+// that owns it. A missing row, a failing store and an unconfigured one all
+// leave the ID out, so the caller drops it: the check fails closed.
+func (r *agentAccessResolver) knowledgeBaseOwners(ctx context.Context, kbIDs []string) map[string]uint64 {
+	kbIDs = uniqueNonEmpty(kbIDs, 0)
+	owners := make(map[string]uint64, len(kbIDs))
+	if len(kbIDs) == 0 {
+		return owners
 	}
-	knowledge, err := r.knowledges.GetKnowledgeByIDOnly(ctx, knowledgeID)
+	if r.knowledgeBases == nil {
+		logger.Warnf(ctx, "Dropping %d knowledge bases from a shared agent's suggestion scope: "+
+			"knowledge base lookup is not configured", len(kbIDs))
+		return owners
+	}
+	kbs, err := r.knowledgeBases.GetKnowledgeBaseByIDs(ctx, kbIDs)
 	if err != nil {
-		return nil, err
+		logger.Warnf(ctx, "Dropping %d knowledge bases from a shared agent's suggestion scope: %v", len(kbIDs), err)
+		return owners
 	}
-	if knowledge == nil {
-		return nil, repository.ErrKnowledgeNotFound
+	for _, kb := range kbs {
+		if kb != nil && kb.ID != "" && kb.TenantID != 0 {
+			owners[kb.ID] = kb.TenantID
+		}
 	}
-	return knowledge, nil
+	return owners
+}
+
+// knowledgeOwners resolves the documents a request names, in request order.
+// IDs are deduplicated and capped at maxSuggestionKnowledgeIDs, as the
+// suggestion service caps them, so one request cannot fan out into an
+// unbounded lookup. Unresolvable documents are left out (fail closed).
+func (r *agentAccessResolver) knowledgeOwners(ctx context.Context, knowledgeIDs []string) []*types.Knowledge {
+	knowledgeIDs = uniqueNonEmpty(knowledgeIDs, maxSuggestionKnowledgeIDs)
+	if len(knowledgeIDs) == 0 {
+		return nil
+	}
+	if r.knowledges == nil {
+		logger.Warnf(ctx, "Dropping %d documents from a shared agent's suggestion scope: "+
+			"knowledge lookup is not configured", len(knowledgeIDs))
+		return nil
+	}
+	rows, err := r.knowledges.GetKnowledgeBatchByIDOnly(ctx, knowledgeIDs)
+	if err != nil {
+		logger.Warnf(ctx, "Dropping %d documents from a shared agent's suggestion scope: %v", len(knowledgeIDs), err)
+		return nil
+	}
+	byID := make(map[string]*types.Knowledge, len(rows))
+	for _, row := range rows {
+		if row != nil {
+			byID[row.ID] = row
+		}
+	}
+	owners := make([]*types.Knowledge, 0, len(knowledgeIDs))
+	for _, id := range knowledgeIDs {
+		if knowledge, ok := byID[id]; ok {
+			owners = append(owners, knowledge)
+		}
+	}
+	return owners
+}
+
+// uniqueNonEmpty drops empty and repeated IDs, keeping the first occurrence,
+// and keeps at most limit of them when limit is positive.
+func uniqueNonEmpty(ids []string, limit int) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // agentLookupMissed reports whether err means "no such agent or share" rather
