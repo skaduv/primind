@@ -346,6 +346,12 @@ import {
 } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import {
+  consumePendingLoginRedirect,
+  postLoginTarget,
+  safeRedirect,
+  stashPendingLoginRedirect,
+} from '@/utils/safeRedirect'
 
 // Import screenshot images. `?url` keeps the asset as a URL instead of
 // inlining it, so both language variants stay separate files.
@@ -594,8 +600,14 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
   await authStore.refreshFromAuthMe()
   await nextTick()
   if (skipRedirect) return
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+  router.replace(loginRedirectTarget())
 }
+
+// 登录后的去向：优先回到登录前想去的站内页面（例如未登录时打开的邀请链接），
+// 其次是 OIDC 跳转前暂存的返回地址；两者都没有、或用户还没有工作空间时，
+// 保持原来的默认跳转。暂存地址读后即清。
+const loginRedirectTarget = () =>
+  postLoginTarget(safeRedirect(route.query.redirect) ?? consumePendingLoginRedirect(sessionStorage), authStore.hasValidTenant)
 
 const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
 
@@ -637,6 +649,8 @@ const handleOIDCLogin = async () => {
     if (inviteToken.value) {
       sessionStorage.setItem('primind_pending_invite_token', inviteToken.value)
     }
+    // 同理暂存登录后的返回地址（邀请链接），回调成功后由 App.vue 读取并清除。
+    stashPendingLoginRedirect(route.query.redirect, sessionStorage)
     window.location.href = authorizationURL
   } catch (error: any) {
     console.error('OIDC 登录跳转失败:', error)
@@ -805,7 +819,7 @@ onMounted(async () => {
   }
 
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    router.replace(postLoginTarget(safeRedirect(route.query.redirect), authStore.hasValidTenant))
     return
   }
 

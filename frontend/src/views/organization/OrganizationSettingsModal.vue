@@ -85,8 +85,12 @@
                   <div class="invite-method-header">
                     <t-icon name="qrcode" class="invite-icon" />
                     <span class="invite-method-title">{{ $t('organization.inviteCode') }}</span>
+                    <!-- 已过期的邀请码在发出链接之前就要让管理员看到 -->
+                    <t-tag v-if="inviteCodeExpired" size="small" variant="light" theme="danger" class="invite-expired-tag">
+                      {{ $t('organization.settings.remainingValidityExpired') }}
+                    </t-tag>
                   </div>
-                  <div class="invite-code-box">
+                  <div class="invite-code-box" :class="{ 'is-expired': inviteCodeExpired }">
                     <span class="invite-code-value">{{ inviteCode }}</span>
                     <div class="invite-code-actions">
                       <t-tooltip :content="$t('common.copy')">
@@ -102,7 +106,9 @@
                       </t-tooltip>
                     </div>
                   </div>
-                  <p v-if="inviteCode" class="invite-remaining">{{ remainingValidityText }}</p>
+                  <p v-if="inviteCode" class="invite-remaining" :class="{ 'is-expired': inviteCodeExpired }">
+                    {{ remainingValidityText }}
+                  </p>
                 </div>
 
                 <div class="invite-divider"></div>
@@ -127,8 +133,11 @@
                   <div class="invite-method-header">
                     <t-icon name="link" class="invite-icon" />
                     <span class="invite-method-title">{{ $t('organization.settings.inviteLink') }}</span>
+                    <t-tag v-if="inviteCodeExpired" size="small" variant="light" theme="danger" class="invite-expired-tag">
+                      {{ $t('organization.settings.remainingValidityExpired') }}
+                    </t-tag>
                   </div>
-                  <div class="invite-link-box">
+                  <div class="invite-link-box" :class="{ 'is-expired': inviteCodeExpired }">
                     <span class="invite-link-value">{{ inviteLink }}</span>
                     <t-tooltip :content="$t('common.copy')">
                       <t-button variant="text" size="small" @click="copyInviteLink">
@@ -751,7 +760,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useModalShell } from '@/composables/useModalShell'
 import SettingsModalShell from '@/components/SettingsModalShell.vue'
 import { useI18n } from 'vue-i18n'
@@ -1219,13 +1228,19 @@ const inviteValidityOptions = computed(() => [
   { label: t('organization.settings.validityNever'), value: 0 }
 ])
 
+// 与 remainingValidityText 共用同一个过期判断：有到期时间，且不晚于现在。永不过期（无到期时间）不算过期。
+const inviteCodeExpired = computed(() => {
+  const at = inviteCodeExpiresAt.value
+  if (!at) return false
+  const expiresAt = new Date(at).getTime()
+  return !Number.isNaN(expiresAt) && expiresAt <= Date.now()
+})
+
 const remainingValidityText = computed(() => {
   const at = inviteCodeExpiresAt.value
   if (!at) return t('organization.settings.remainingValidityNever')
-  const exp = new Date(at)
-  const now = new Date()
-  if (exp.getTime() <= now.getTime()) return t('organization.settings.remainingValidityExpired')
-  const days = Math.ceil((exp.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+  if (inviteCodeExpired.value) return t('organization.settings.remainingValidityExpired')
+  const days = Math.ceil((new Date(at).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
   return t('organization.settings.remainingValidity', { n: days })
 })
 
@@ -1616,27 +1631,59 @@ const resetAddMemberDialog = () => {
 }
 
 const copyInviteCode = async () => {
+  if (inviteCodeExpired.value) {
+    confirmExpiredInviteCopy('code')
+    return
+  }
   await copyWithToast(inviteCode.value, 'common.copied')
 }
 
 const copyInviteLink = async () => {
+  if (inviteCodeExpired.value) {
+    confirmExpiredInviteCopy('link')
+    return
+  }
   await copyWithToast(inviteLink.value, 'common.copied')
 }
 
-const refreshInviteCode = async () => {
-  if (!props.orgId) return
+// 邀请码已过期时，直接复制等于发出一条用不了的链接：先确认，确认后刷新再复制新值。
+// 旧码本来就已过期，刷新不会让任何仍然有效的链接失效。
+const confirmExpiredInviteCopy = (target: 'code' | 'link') => {
+  const dialog = DialogPlugin.confirm({
+    header: t('organization.settings.inviteCodeExpiredTitle'),
+    body: t('organization.settings.inviteCodeExpiredCopyBody'),
+    confirmBtn: t('organization.settings.refreshAndCopy'),
+    cancelBtn: t('common.cancel'),
+    onConfirm: async () => {
+      dialog.destroy()
+      // 刷新失败就停止，不复制：剪贴板里留着旧链接比什么都没有更糟。
+      const refreshed = await refreshInviteCode()
+      if (!refreshed) return
+      await copyWithToast(target === 'link' ? inviteLink.value : inviteCode.value, 'common.copied')
+    },
+    onCancel: () => dialog.destroy(),
+    onClose: () => dialog.destroy(),
+  })
+}
+
+// 刷新邀请码。返回是否刷新成功，供「刷新并复制」决定是否继续复制。
+const refreshInviteCode = async (): Promise<boolean> => {
+  if (!props.orgId) return false
   refreshingCode.value = true
   try {
     const code = await orgStore.refreshInviteCode(props.orgId)
     if (code) {
       inviteCode.value = code
       MessagePlugin.success(t('organization.inviteCodeRefreshed'))
+      // 重新拉取详情，拿到新邀请码的到期时间，「已过期」标记随之消失。
       await fetchOrgDetail()
-    } else {
-      MessagePlugin.error(orgStore.error || t('organization.inviteCodeRefreshFailed'))
+      return true
     }
+    MessagePlugin.error(orgStore.error || t('organization.inviteCodeRefreshFailed'))
+    return false
   } catch (error: any) {
     MessagePlugin.error(error?.message || t('organization.inviteCodeRefreshFailed'))
+    return false
   } finally {
     refreshingCode.value = false
   }
@@ -2200,6 +2247,10 @@ watch(addMemberPopupVisible, (visible) => {
         font-weight: 600;
         color: var(--td-text-color-primary);
       }
+
+      .invite-expired-tag {
+        flex-shrink: 0;
+      }
     }
   }
 
@@ -2226,10 +2277,21 @@ watch(addMemberPopupVisible, (visible) => {
     }
   }
 
+  // 已过期的邀请码和链接：值变灰，不再像可用凭证；旁边和下方都有红字「已过期」。
+  .invite-code-box.is-expired .invite-code-value,
+  .invite-link-box.is-expired .invite-link-value {
+    color: var(--td-text-color-placeholder);
+  }
+
   .invite-remaining {
     margin: 8px 0 0;
     font-size: var(--app-text-sm);
     color: var(--td-text-color-secondary);
+
+    &.is-expired {
+      color: var(--td-error-color);
+      font-weight: 600;
+    }
   }
 
   .invite-validity-desc {

@@ -243,8 +243,9 @@
                         <div class="join-form-item">
                           <label class="join-form-label">{{ $t('organization.inviteCode') }}</label>
                           <p class="join-form-desc">{{ $t('organization.invite.inputDesc') }}</p>
+                          <!-- 整条邀请链接比 32 位长：上限放宽，解析出邀请码后再请求 -->
                           <t-input v-model="joinInputCode" :placeholder="$t('organization.inviteCodePlaceholder')"
-                            size="medium" :maxlength="32" clearable @keyup.enter="doPreviewFromInput" />
+                            size="medium" :maxlength="512" clearable @keyup.enter="doPreviewFromInput" />
                           <p class="join-form-tip">{{ $t('organization.editor.inviteCodeTip') }}</p>
                         </div>
                       </template>
@@ -256,7 +257,7 @@
                         <div class="join-form-item">
                           <label class="join-form-label">{{ $t('organization.inviteCode') }}</label>
                           <t-input v-model="joinInputCode" :placeholder="$t('organization.inviteCodePlaceholder')"
-                            size="medium" :maxlength="32" clearable @keyup.enter="doPreviewFromInput" />
+                            size="medium" :maxlength="512" clearable @keyup.enter="doPreviewFromInput" />
                         </div>
                       </template>
                       <div class="invite-preview-footer invite-preview-footer-single">
@@ -441,6 +442,7 @@ import { useOrganizationStore } from '@/stores/organization'
 import { useAuthStore } from '@/stores/auth'
 import type { Organization, OrganizationPreview, SearchableOrganizationItem } from '@/api/organization'
 import { previewOrganization, submitJoinRequest } from '@/api/organization'
+import { extractInviteCode, inviteFailureMessage, type InviteFailure } from './inviteCode'
 import { useI18n } from 'vue-i18n'
 import { copyWithToast } from '@/utils/clipboard'
 import OrganizationSettingsModal from './OrganizationSettingsModal.vue'
@@ -842,10 +844,15 @@ async function handleInvitePreview(code: string) {
         invitePreviewError.value = t('organization.invite.alreadyMember')
       }
     } else {
-      invitePreviewError.value = result.message || t('organization.invite.invalidCode')
+      // 邀请码过期、不存在或服务异常时显示对应中文文案（不显示后端英文原文）；
+      // 预览失败后把邀请码回填到输入框，从链接进来时直接点「查看」即可重试。
+      invitePreviewError.value = inviteFailureMessage(result, 'organization.invite.previewFailed', t)
+      joinInputCode.value = code
     }
-  } catch (e: any) {
-    invitePreviewError.value = e?.message || t('organization.invite.previewFailed')
+  } catch {
+    // 接口封装不会抛出；万一抛出也只给中文兜底，不显示英文原文。
+    invitePreviewError.value = t('organization.invite.previewFailed')
+    joinInputCode.value = code
   } finally {
     invitePreviewLoading.value = false
   }
@@ -885,7 +892,8 @@ async function confirmJoinOrganization() {
         // 清除 URL 中的 invite_code 参数
         router.replace({ path: route.path, query: {} })
       } else {
-        MessagePlugin.error(result.message || t('organization.invite.requestFailed'))
+        // 邀请码在「预览成功后、点申请前」过期时，同样提示「已过期」。
+        MessagePlugin.error(inviteFailureMessage(result, 'organization.invite.requestFailed', t))
       }
     } else {
       // 直接加入
@@ -898,19 +906,25 @@ async function confirmJoinOrganization() {
         // 清除 URL 中的 invite_code 参数
         router.replace({ path: route.path, query: {} })
       } else {
-        MessagePlugin.error(orgStore.error || t('organization.invite.joinFailed'))
+        // 邀请码在「预览成功后、点加入前」过期时，同样提示「已过期」。
+        const failure: InviteFailure = {
+          code: orgStore.errorCode ?? undefined,
+          status: orgStore.errorStatus ?? undefined,
+          message: orgStore.error ?? undefined,
+        }
+        MessagePlugin.error(inviteFailureMessage(failure, 'organization.invite.joinFailed', t))
       }
     }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || t('organization.invite.joinFailed'))
+  } catch {
+    MessagePlugin.error(t('organization.invite.joinFailed'))
   } finally {
     inviteJoining.value = false
   }
 }
 
-// 从输入步骤点击「预览」：用输入的邀请码拉取预览
+// 从输入步骤点击「预览」：输入可以是邀请码，也可以是整条邀请链接
 async function doPreviewFromInput() {
-  const code = joinInputCode.value?.trim()
+  const code = extractInviteCode(joinInputCode.value || '')
   if (!code) {
     MessagePlugin.warning(t('organization.inviteCodeRequired'))
     return

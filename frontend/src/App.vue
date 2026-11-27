@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { getCurrentUser, userInfoFromApi } from '@/api/auth'
 import { consumePendingTenantSwitchToast } from '@/utils/tenantSwitch'
+import { consumePendingLoginRedirect, postLoginTarget } from '@/utils/safeRedirect'
 import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
 import { renderWorkspaceNotifyContent } from '@/utils/workspaceNotifyContent'
@@ -124,7 +125,8 @@ const persistOIDCLoginResponse = async (response: any) => {
   }
 
   await nextTick()
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+  // 发起 OIDC 前暂存的返回地址（如未登录时打开的邀请链接）：读到站内路径就回到原处，读后即清。
+  router.replace(postLoginTarget(consumePendingLoginRedirect(sessionStorage), authStore.hasValidTenant))
 }
 
 const handleGlobalOIDCCallback = async () => {

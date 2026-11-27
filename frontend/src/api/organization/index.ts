@@ -1,4 +1,5 @@
 import { get, post, put, del } from '@/utils/request'
+import { requestFailure } from './requestFailure'
 
 // Organization types
 export interface Organization {
@@ -183,6 +184,13 @@ export interface ApiResponse<T> {
   success: boolean
   data?: T
   message?: string
+  /**
+   * Business error code from the response body (`error.code`). Set only on
+   * failure and only when the backend sent one (see requestFailure).
+   */
+  code?: number
+  /** HTTP status of the failed request; absent when there was no response (network error). */
+  status?: number
   /** 服务端错误体（仅在调用方需要读取结构化错误时保留，如共享被拒的缺项） */
   error?: ApiErrorBody
 }
@@ -428,7 +436,7 @@ export async function joinOrganization(req: JoinOrganizationRequest): Promise<Ap
     const response = await post('/api/v1/organizations/join', req)
     return response as unknown as ApiResponse<Organization>
   } catch (error: any) {
-    return { success: false, message: error.message || 'Failed to join organization' }
+    return requestFailure(error, 'Failed to join organization')
   }
 }
 
@@ -441,7 +449,7 @@ export async function submitJoinRequest(req: SubmitJoinRequestRequest): Promise<
     const response = await post('/api/v1/organizations/join-request', req)
     return response as unknown as ApiResponse<void>
   } catch (error: any) {
-    return { success: false, message: error.message || 'Failed to submit join request' }
+    return requestFailure(error, 'Failed to submit join request')
   }
 }
 
@@ -453,7 +461,7 @@ export async function previewOrganization(inviteCode: string): Promise<ApiRespon
     const response = await get(`/api/v1/organizations/preview/${inviteCode}`)
     return response as unknown as ApiResponse<OrganizationPreview>
   } catch (error: any) {
-    return { success: false, message: error.message || 'Failed to preview organization' }
+    return requestFailure(error, 'Failed to preview organization')
   }
 }
 

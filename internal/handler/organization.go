@@ -556,6 +556,69 @@ func (h *OrganizationHandler) GenerateInviteCode(c *gin.Context) {
 	})
 }
 
+// inviteCodeLogPrefixLen is how many leading characters of an invite code a
+// log line may keep. Four hex digits are enough to match a line against a
+// code an administrator reports, and too few to replay as a credential.
+const inviteCodeLogPrefixLen = 4
+
+// maskInviteCode keeps the first inviteCodeLogPrefixLen characters of an
+// invite code and replaces every remaining one with "*". Anything at or
+// below the prefix length is masked entirely. The result then goes through
+// SanitizeForLog so a crafted code cannot forge log entries.
+func maskInviteCode(inviteCode string) string {
+	if len(inviteCode) <= inviteCodeLogPrefixLen {
+		return secutils.SanitizeForLog(strings.Repeat("*", len(inviteCode)))
+	}
+	masked := inviteCode[:inviteCodeLogPrefixLen] + strings.Repeat("*", len(inviteCode)-inviteCodeLogPrefixLen)
+	return secutils.SanitizeForLog(masked)
+}
+
+// inviteLookupError maps an invite-code lookup failure to the API error
+// and logs the reason with a masked code. op is preview / join / join_request.
+//
+// "Not found" and "expired" both stay 404 "Invalid invite code" so clients
+// released before the typed codes existed read the same response; only the
+// business code tells them apart. Any other failure used to be reported as
+// an invalid code too, which sent operators after the invite instead of the
+// database; it is now a 500, worded per op (see inviteInternalErrorMessages).
+func inviteLookupError(ctx context.Context, op, inviteCode string, tenantID uint64, err error) *apperrors.AppError {
+	fields := logger.Fields{
+		"op":          op,
+		"tenant_id":   tenantID,
+		"invite_code": maskInviteCode(inviteCode),
+	}
+	switch {
+	case errors.Is(err, service.ErrOrgNotFound):
+		fields["reason"] = "not_found"
+		logger.WarnWithFields(ctx, fields, "Invite code lookup failed")
+		return apperrors.NewInviteCodeNotFoundError()
+	case errors.Is(err, service.ErrInviteCodeExpired):
+		fields["reason"] = "expired"
+		logger.WarnWithFields(ctx, fields, "Invite code lookup failed")
+		return apperrors.NewInviteCodeExpiredError()
+	default:
+		fields["reason"] = "internal"
+		logger.ErrorWithFields(ctx, err, fields)
+		message, ok := inviteInternalErrorMessages[op]
+		if !ok {
+			message = inviteLookupInternalMessage
+		}
+		return apperrors.NewInternalServerError(message)
+	}
+}
+
+// inviteLookupInternalMessage is the 500 message when only the invite-code
+// lookup can have failed (preview, join request).
+const inviteLookupInternalMessage = "Failed to look up invite code"
+
+// inviteInternalErrorMessages words the 500 per op. The join service call
+// both looks up the code and inserts the membership, and the handler cannot
+// tell which step failed, so its message names the whole operation instead
+// of pointing operators at the lookup.
+var inviteInternalErrorMessages = map[string]string{
+	"join": "Failed to join organization",
+}
+
 // PreviewByInviteCode previews organization info by invite code (without joining)
 // @Summary      通过邀请码预览组织
 // @Description  通过邀请码获取组织基本信息（不加入）
@@ -564,6 +627,7 @@ func (h *OrganizationHandler) GenerateInviteCode(c *gin.Context) {
 // @Param        code  path  string  true  "邀请码"
 // @Success      200   {object}  map[string]interface{}
 // @Failure      404   {object}  apperrors.AppError
+// @Failure      500   {object}  apperrors.AppError
 // @Security     Bearer
 // @Router       /organizations/preview/{code} [get]
 func (h *OrganizationHandler) PreviewByInviteCode(c *gin.Context) {
@@ -575,7 +639,7 @@ func (h *OrganizationHandler) PreviewByInviteCode(c *gin.Context) {
 	// Get organization by invite code
 	org, err := h.orgService.GetOrganizationByInviteCode(ctx, inviteCode)
 	if err != nil {
-		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
+		_ = c.Error(inviteLookupError(ctx, "preview", inviteCode, tenantID, err))
 		return
 	}
 
@@ -619,7 +683,9 @@ func (h *OrganizationHandler) PreviewByInviteCode(c *gin.Context) {
 // @Produce      json
 // @Param        request  body      types.JoinOrganizationRequest  true  "邀请码"
 // @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  apperrors.AppError
 // @Failure      404      {object}  apperrors.AppError
+// @Failure      500      {object}  apperrors.AppError
 // @Security     Bearer
 // @Router       /organizations/join [post]
 func (h *OrganizationHandler) JoinByInviteCode(c *gin.Context) {
@@ -636,12 +702,21 @@ func (h *OrganizationHandler) JoinByInviteCode(c *gin.Context) {
 
 	org, err := h.orgService.JoinByInviteCode(ctx, req.InviteCode, userID, tenantID)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to join organization: %v", err)
 		if errors.Is(err, service.ErrOrgMemberLimitReached) {
-			c.Error(apperrors.NewValidationError("该空间成员已满，无法加入"))
+			logger.Errorf(ctx, "Failed to join organization: %v", err)
+			_ = c.Error(apperrors.NewValidationError("该空间成员已满，无法加入"))
 			return
 		}
-		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
+		// The invite code was valid; the space just admits members through
+		// the review flow. This mirrors the message the join-request
+		// endpoint returns for a space that does NOT require approval.
+		if errors.Is(err, service.ErrOrgPermissionDenied) {
+			logger.Warnf(ctx, "Direct join rejected: organization requires approval (tenant %d)", tenantID)
+			_ = c.Error(apperrors.NewValidationError(
+				"This organization requires approval. Use the join-request endpoint instead."))
+			return
+		}
+		_ = c.Error(inviteLookupError(ctx, "join", req.InviteCode, tenantID, err))
 		return
 	}
 
@@ -661,6 +736,8 @@ func (h *OrganizationHandler) JoinByInviteCode(c *gin.Context) {
 // @Param        request  body      types.SubmitJoinRequestRequest  true  "申请信息"
 // @Success      200      {object}  map[string]interface{}
 // @Failure      400      {object}  apperrors.AppError
+// @Failure      404      {object}  apperrors.AppError
+// @Failure      500      {object}  apperrors.AppError
 // @Security     Bearer
 // @Router       /organizations/join-request [post]
 func (h *OrganizationHandler) SubmitJoinRequest(c *gin.Context) {
@@ -678,7 +755,7 @@ func (h *OrganizationHandler) SubmitJoinRequest(c *gin.Context) {
 	// Get organization by invite code
 	org, err := h.orgService.GetOrganizationByInviteCode(ctx, req.InviteCode)
 	if err != nil {
-		c.Error(apperrors.NewNotFoundError("Invalid invite code"))
+		_ = c.Error(inviteLookupError(ctx, "join_request", req.InviteCode, tenantID, err))
 		return
 	}
 
