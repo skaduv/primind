@@ -332,6 +332,11 @@ func TestSubmitJoinRequestInviteLookupFailures(t *testing.T) {
 func TestJoinByInviteCodeLookupFailures(t *testing.T) {
 	for _, tc := range inviteLookupFailures {
 		t.Run(tc.name, func(t *testing.T) {
+			// The join service call also inserts the membership, so a 500
+			// names the whole join instead of blaming the lookup.
+			if tc.wantReason == "internal" {
+				tc.wantMessage = "Failed to join organization"
+			}
 			status, body, logs := serveInvite(t, &inviteLookupOrg{joinErr: tc.err}, joinInviteCall())
 			assertInviteLookupFailure(t, status, body, logs, "join", tc)
 		})

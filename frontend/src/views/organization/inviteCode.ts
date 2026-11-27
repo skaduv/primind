@@ -18,7 +18,11 @@ const INVITE_ERROR_KEYS: Readonly<Record<number, string>> = {
 const INVITE_STATUS_KEYS = {
   /** A 404 without a typed code: a backend older than the typed codes, which could not tell the two apart. */
   legacyNotFound: 'organization.invite.invalidCode',
-  /** 5xx or no response at all: the service, not the invite, is the problem. */
+  /**
+   * 5xx or no response at all: the service, not the invite, is the problem.
+   * Default only; callers pass the "try again" key of the action that failed
+   * (join and join request must not read 「预览失败」).
+   */
   unavailable: 'organization.invite.previewFailed',
 } as const
 
@@ -35,8 +39,14 @@ export interface InviteFailure {
  *
  * The backend's own message is never returned: it is English, and for the
  * known cases it is also less specific than the translation.
+ *
+ * `unavailableKey` is returned for 5xx and network errors, so each action
+ * says what failed: preview, join or join request.
  */
-export function knownInviteErrorKey(result: InviteFailure): string | null {
+export function knownInviteErrorKey(
+  result: InviteFailure,
+  unavailableKey: string = INVITE_STATUS_KEYS.unavailable,
+): string | null {
   if (result.code !== undefined) {
     const typed = INVITE_ERROR_KEYS[result.code]
     if (typed) return typed
@@ -45,19 +55,20 @@ export function knownInviteErrorKey(result: InviteFailure): string | null {
   // Checked after the typed codes: the old backend answered 404 with the
   // generic not-found code, the new one with 2400 / 2401.
   if (status === 404) return INVITE_STATUS_KEYS.legacyNotFound
-  if (status === undefined || status >= 500) return INVITE_STATUS_KEYS.unavailable
+  if (status === undefined || status >= 500) return unavailableKey
   return null
 }
 
 /**
  * Maps a failed invite-code request to the i18n key the page should show.
  *
- * Falls back to `fallbackKey` for everything that is not an invite-code
+ * `fallbackKey` is the action's own "failed, try again" key. It is used for
+ * 5xx and network errors, and for everything that is not an invite-code
  * problem (space full, request already pending, ...): those keep the backend
  * message, see inviteFailureMessage.
  */
 export function inviteErrorKey(result: InviteFailure, fallbackKey: string): string {
-  return knownInviteErrorKey(result) ?? fallbackKey
+  return knownInviteErrorKey(result, fallbackKey) ?? fallbackKey
 }
 
 /**
@@ -69,7 +80,8 @@ export function inviteErrorKey(result: InviteFailure, fallbackKey: string): stri
  * `t` is passed in so this module stays free of the i18n instance.
  */
 export function inviteFailureMessage(result: InviteFailure, fallbackKey: string, t: (key: string) => string): string {
-  const known = knownInviteErrorKey(result)
+  // 5xx and network errors: the action's own translated "try again" text.
+  const known = knownInviteErrorKey(result, fallbackKey)
   if (known) return t(known)
   return result.message || t(fallbackKey)
 }

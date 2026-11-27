@@ -580,7 +580,7 @@ func maskInviteCode(inviteCode string) string {
 // released before the typed codes existed read the same response; only the
 // business code tells them apart. Any other failure used to be reported as
 // an invalid code too, which sent operators after the invite instead of the
-// database; it is now a 500.
+// database; it is now a 500, worded per op (see inviteInternalErrorMessages).
 func inviteLookupError(ctx context.Context, op, inviteCode string, tenantID uint64, err error) *apperrors.AppError {
 	fields := logger.Fields{
 		"op":          op,
@@ -599,8 +599,24 @@ func inviteLookupError(ctx context.Context, op, inviteCode string, tenantID uint
 	default:
 		fields["reason"] = "internal"
 		logger.ErrorWithFields(ctx, err, fields)
-		return apperrors.NewInternalServerError("Failed to look up invite code")
+		message, ok := inviteInternalErrorMessages[op]
+		if !ok {
+			message = inviteLookupInternalMessage
+		}
+		return apperrors.NewInternalServerError(message)
 	}
+}
+
+// inviteLookupInternalMessage is the 500 message when only the invite-code
+// lookup can have failed (preview, join request).
+const inviteLookupInternalMessage = "Failed to look up invite code"
+
+// inviteInternalErrorMessages words the 500 per op. The join service call
+// both looks up the code and inserts the membership, and the handler cannot
+// tell which step failed, so its message names the whole operation instead
+// of pointing operators at the lookup.
+var inviteInternalErrorMessages = map[string]string{
+	"join": "Failed to join organization",
 }
 
 // PreviewByInviteCode previews organization info by invite code (without joining)

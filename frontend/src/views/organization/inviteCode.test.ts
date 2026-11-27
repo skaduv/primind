@@ -41,11 +41,17 @@ test('inviteErrorKey falls back by status against an older backend', () => {
   // The old backend answered every lookup failure with 404 and the generic not-found code.
   assert.equal(inviteErrorKey({ code: 1003, status: 404, message: 'Invalid invite code' }, FALLBACK), 'organization.invite.invalidCode')
   assert.equal(inviteErrorKey({ status: 404 }, FALLBACK), 'organization.invite.invalidCode')
-  assert.equal(inviteErrorKey({ status: 500 }, FALLBACK), 'organization.invite.previewFailed')
-  assert.equal(inviteErrorKey({ status: 503 }, FALLBACK), 'organization.invite.previewFailed')
+})
+
+test("inviteErrorKey reports 5xx and network errors with the action's own retry key", () => {
+  // The service failed, not the invite: say which action failed, so a failed
+  // join does not read 「预览失败」.
+  assert.equal(inviteErrorKey({ status: 500 }, FALLBACK), FALLBACK)
+  assert.equal(inviteErrorKey({ status: 503 }, 'organization.invite.requestFailed'), 'organization.invite.requestFailed')
+  assert.equal(inviteErrorKey({ status: 500 }, 'organization.invite.previewFailed'), 'organization.invite.previewFailed')
   // No response at all is a network error.
-  assert.equal(inviteErrorKey({ message: 'Network Error' }, FALLBACK), 'organization.invite.previewFailed')
-  assert.equal(inviteErrorKey({}, FALLBACK), 'organization.invite.previewFailed')
+  assert.equal(inviteErrorKey({ message: 'Network Error' }, FALLBACK), FALLBACK)
+  assert.equal(inviteErrorKey({}, FALLBACK), FALLBACK)
 })
 
 test('inviteErrorKey leaves everything else to the caller', () => {
@@ -61,6 +67,7 @@ test('knownInviteErrorKey tells a service failure from a fallback even when both
   const serviceFailure = { code: 1007, status: 500, message: 'Failed to look up invite code' }
   assert.equal(inviteErrorKey(serviceFailure, 'organization.invite.previewFailed'), 'organization.invite.previewFailed')
   assert.equal(knownInviteErrorKey(serviceFailure), 'organization.invite.previewFailed')
+  assert.equal(knownInviteErrorKey(serviceFailure, FALLBACK), FALLBACK)
   assert.equal(knownInviteErrorKey({ code: 1010, status: 400, message: '该空间成员已满，无法加入' }), null)
   assert.equal(knownInviteErrorKey({ status: 403 }), null)
 })
@@ -78,6 +85,15 @@ test('a service failure is translated, never shown as the backend English messag
     inviteFailureMessage({ message: 'Network Error' }, 'organization.invite.previewFailed', keyAsText),
     'organization.invite.previewFailed',
   )
+  // Join and join request: the same failures read as their own action.
+  assert.equal(
+    inviteFailureMessage({ code: 1007, status: 500, message: 'Failed to join organization' }, FALLBACK, keyAsText),
+    FALLBACK,
+  )
+  assert.equal(
+    inviteFailureMessage({ message: 'Network Error' }, 'organization.invite.requestFailed', keyAsText),
+    'organization.invite.requestFailed',
+  )
   assert.equal(
     inviteFailureMessage({ code: 2401, status: 404, message: 'Invalid invite code' }, FALLBACK, keyAsText),
     'organization.invite.codeExpired',
@@ -94,8 +110,8 @@ test('other failures keep the backend message and fall back to the translation w
     '该空间成员已满，无法加入',
   )
   assert.equal(inviteFailureMessage({ status: 400 }, FALLBACK, keyAsText), FALLBACK)
-  // No status at all is a network error, which is a known failure (C3), not a fallback.
-  assert.equal(inviteFailureMessage({}, FALLBACK, keyAsText), 'organization.invite.previewFailed')
+  // No status at all is a network error, a known failure (C3): translated, never the backend text.
+  assert.equal(inviteFailureMessage({ message: 'Network Error' }, FALLBACK, keyAsText), FALLBACK)
 })
 
 // ---- extractInviteCode ----
