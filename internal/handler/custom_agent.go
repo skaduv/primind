@@ -694,12 +694,6 @@ func (h *CustomAgentHandler) GetAgentTools(c *gin.Context) {
 	})
 }
 
-// suggestedQuestionsSourceTenantIDParam is the optional source-workspace
-// selector of GET /agents/:id/suggested-questions. Without it the ID names the
-// caller's own agent first and a share second, as on the chat path; with it,
-// only a share from that workspace.
-const suggestedQuestionsSourceTenantIDParam = "source_tenant_id"
-
 // GetSuggestedQuestions godoc
 // @Summary      获取推荐问题
 // @Description  基于智能体关联的知识库，返回推荐问题供用户快捷提问。共享智能体通过来源空间解析，推荐只来自该共享授权的知识库范围
@@ -707,7 +701,7 @@ const suggestedQuestionsSourceTenantIDParam = "source_tenant_id"
 // @Accept       json
 // @Produce      json
 // @Param        id                  path      string  true   "智能体ID"
-// @Param        source_tenant_id    query     int     false  "共享智能体的来源空间ID；传入后只按共享关系解析，不传时先查本空间再查共享"
+// @Param        agent_source_tenant_id  query  int  false  "共享智能体的来源空间ID；传入后只按共享关系解析，不传时先查本空间再查共享"
 // @Param        knowledge_base_ids  query     string  false  "知识库ID列表（逗号分隔），覆盖智能体默认配置"
 // @Param        knowledge_ids       query     string  false  "知识ID列表（逗号分隔），限定到具体文档"
 // @Param        tag_scopes          query     string  false  "带知识库归属的标签范围（JSON）"
@@ -729,8 +723,12 @@ func (h *CustomAgentHandler) GetSuggestedQuestions(c *gin.Context) {
 		return
 	}
 
-	// Parse optional query parameters
-	sourceTenantID, err := parseSuggestedQuestionsSourceTenantID(c.Query(suggestedQuestionsSourceTenantIDParam))
+	// Parse optional query parameters.
+	// agent_source_tenant_id is the shared-agent selector every other agent-scoped
+	// request uses (chat, attachments, KB, skill and MCP pickers). Without it the
+	// ID names the caller's own agent first and a share second, as on the chat
+	// path; with it, only a share from that workspace.
+	sourceTenantID, err := types.ParseAgentSourceTenantID(c.Query(types.AgentSourceTenantIDParam))
 	if err != nil {
 		_ = c.Error(errors.NewBadRequestError(err.Error()))
 		return
@@ -846,21 +844,6 @@ func writeSuggestedQuestions(c *gin.Context, questions []types.SuggestedQuestion
 			"questions": questions,
 		},
 	})
-}
-
-// parseSuggestedQuestionsSourceTenantID reads the optional source-workspace
-// selector. Blank means absent; anything else must be a workspace ID, so a
-// malformed value fails the request instead of silently choosing another agent.
-func parseSuggestedQuestionsSourceTenantID(raw string) (uint64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s: must be a workspace ID", suggestedQuestionsSourceTenantIDParam)
-	}
-	return value, nil
 }
 
 // resolveAgentForRead resolves the agent an agent-by-ID read names through the

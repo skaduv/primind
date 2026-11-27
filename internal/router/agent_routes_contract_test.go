@@ -265,21 +265,21 @@ func TestAgentRoutesThatSupportSharedAgents(t *testing.T) {
 
 			// A member of the workspace the agent is shared to.
 			e.agents.own, e.agents.ownErr = nil, service.ErrAgentNotFound
-			rec = e.get(method, path+"?source_tenant_id=84")
+			rec = e.get(method, path+"?agent_source_tenant_id=84")
 			require.Equal(t, http.StatusOK, rec.Code, "shared member: %s", rec.Body.String())
 			require.Contains(t, rec.Body.String(), contractQuestion)
 
 			// No share relation.
 			e.shares.refuse = service.ErrAgentShareNotFound
-			rec = e.get(method, path+"?source_tenant_id=84")
+			rec = e.get(method, path+"?agent_source_tenant_id=84")
 			require.Equal(t, http.StatusNotFound, rec.Code, "no share: %s", rec.Body.String())
 			require.NotContains(t, rec.Body.String(), contractQuestion)
 
 			// The share is revoked after the member had access.
 			e.shares.refuse = nil
-			require.Equal(t, http.StatusOK, e.get(method, path+"?source_tenant_id=84").Code)
+			require.Equal(t, http.StatusOK, e.get(method, path+"?agent_source_tenant_id=84").Code)
 			e.shares.refuse = service.ErrAgentSharePermission
-			rec = e.get(method, path+"?source_tenant_id=84")
+			rec = e.get(method, path+"?agent_source_tenant_id=84")
 			require.Equal(t, http.StatusNotFound, rec.Code, "revoked: %s", rec.Body.String())
 			require.NotContains(t, rec.Body.String(), contractQuestion)
 		})
@@ -292,7 +292,7 @@ func TestAgentDetailRouteDoesNotServeSharedAgents(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := newContractEngine()
 
-	rec := e.get(http.MethodGet, "/api/v1/agents/"+contractAgentID+"?source_tenant_id=84")
+	rec := e.get(http.MethodGet, "/api/v1/agents/"+contractAgentID+"?agent_source_tenant_id=84")
 
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	require.NotContains(t, rec.Body.String(), contractAgentID, "the response must not carry the shared agent")

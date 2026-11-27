@@ -229,7 +229,7 @@ func TestGetSuggestedQuestions_ResolvesSharedAgent(t *testing.T) {
 	}{
 		{
 			name:         "source named, a same-ID own agent is not used",
-			query:        "?source_tenant_id=84",
+			query:        "?agent_source_tenant_id=84",
 			own:          &types.CustomAgent{ID: suggestionAgentID, TenantID: suggestionCallerTenant},
 			wantOwnCalls: 0,
 			wantSource:   suggestionSourceTenant,
@@ -269,7 +269,7 @@ func TestGetSuggestedQuestions_APIKeyPrincipalUsesSharesLikeChat(t *testing.T) {
 	shares := &suggestionAgentShares{agent: suggestionSharedAgent()}
 	h := newSuggestionHandler(svc, shares, nil, nil)
 
-	rec, questions := getSuggestions(t, suggestionRouter(h, "system-1"), "?source_tenant_id=84")
+	rec, questions := getSuggestions(t, suggestionRouter(h, "system-1"), "?agent_source_tenant_id=84")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, suggestionSuggestions(), questions)
@@ -296,18 +296,18 @@ func TestGetSuggestedQuestions_RefusesWhatTheCallerMayNotUse(t *testing.T) {
 		},
 		{
 			name:     "agent exists elsewhere but is not shared to this workspace",
-			query:    "?source_tenant_id=84",
+			query:    "?agent_source_tenant_id=84",
 			shareErr: service.ErrAgentShareNotFound,
 		},
 		{
 			name:     "own workspace named as the source",
-			query:    "?source_tenant_id=1",
+			query:    "?agent_source_tenant_id=1",
 			own:      own,
 			shareErr: service.ErrAgentShareNotFound,
 		},
 		{
 			name:     "share revoked",
-			query:    "?source_tenant_id=84",
+			query:    "?agent_source_tenant_id=84",
 			own:      own,
 			shareErr: service.ErrAgentSharePermission,
 		},
@@ -317,7 +317,7 @@ func TestGetSuggestedQuestions_RefusesWhatTheCallerMayNotUse(t *testing.T) {
 		},
 		{
 			name:     "share disabled in this workspace",
-			query:    "?source_tenant_id=84",
+			query:    "?agent_source_tenant_id=84",
 			disabled: []*types.TenantDisabledSharedAgent{disabledRecord},
 		},
 	} {
@@ -358,7 +358,7 @@ func TestGetSuggestedQuestions_NarrowsTheRangeToTheShare(t *testing.T) {
 	}{
 		{
 			name: "outside knowledge bases, documents and tags are dropped",
-			query: "?source_tenant_id=84&knowledge_base_ids=kb-in,kb-out&knowledge_ids=doc-in,doc-out,doc-own" +
+			query: "?agent_source_tenant_id=84&knowledge_base_ids=kb-in,kb-out&knowledge_ids=doc-in,doc-out,doc-own" +
 				"&tag_scopes=" + bothTags,
 			wantKBs:   []string{"kb-in"},
 			wantDocs:  []string{"doc-in"},
@@ -367,22 +367,22 @@ func TestGetSuggestedQuestions_NarrowsTheRangeToTheShare(t *testing.T) {
 		},
 		{
 			name:      "knowledge bases entirely outside the share give an empty list",
-			query:     "?source_tenant_id=84&knowledge_base_ids=kb-out",
+			query:     "?agent_source_tenant_id=84&knowledge_base_ids=kb-out",
 			wantCalls: 0,
 		},
 		{
 			name:      "documents entirely outside the share give an empty list",
-			query:     "?source_tenant_id=84&knowledge_ids=doc-out,doc-own",
+			query:     "?agent_source_tenant_id=84&knowledge_ids=doc-out,doc-own",
 			wantCalls: 0,
 		},
 		{
 			name:      "tag scopes entirely outside the share give an empty list",
-			query:     "?source_tenant_id=84&tag_scopes=" + outsideTag,
+			query:     "?agent_source_tenant_id=84&tag_scopes=" + outsideTag,
 			wantCalls: 0,
 		},
 		{
 			name:      "no range named keeps the agent configuration",
-			query:     "?source_tenant_id=84",
+			query:     "?agent_source_tenant_id=84",
 			wantCalls: 1,
 		},
 	} {
@@ -415,10 +415,10 @@ func TestGetSuggestedQuestions_RejectsMalformedSourceTenantID(t *testing.T) {
 			svc := &suggestionAgentService{own: suggestionOwnAgent()}
 			h := newSuggestionHandler(svc, nil, nil, nil)
 
-			rec, _ := getSuggestions(t, suggestionRouter(h, "member"), "?source_tenant_id="+raw)
+			rec, _ := getSuggestions(t, suggestionRouter(h, "member"), "?agent_source_tenant_id="+raw)
 
 			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-			require.Contains(t, rec.Body.String(), "source_tenant_id")
+			require.Contains(t, rec.Body.String(), "agent_source_tenant_id")
 			require.Zero(t, svc.calls)
 		})
 	}
@@ -430,7 +430,7 @@ func TestGetSuggestedQuestions_TreatsBlankSourceAsAbsent(t *testing.T) {
 	shares := &suggestionAgentShares{agent: suggestionSharedAgent()}
 	h := newSuggestionHandler(svc, shares, nil, nil)
 
-	rec, questions := getSuggestions(t, suggestionRouter(h, "member"), "?source_tenant_id=%20")
+	rec, questions := getSuggestions(t, suggestionRouter(h, "member"), "?agent_source_tenant_id=%20")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, suggestionSuggestions(), questions)
@@ -458,7 +458,7 @@ func TestGetSuggestedQuestions_ReportsLookupFailuresAsServerErrors(t *testing.T)
 		},
 		{
 			name:  "share lookup failing",
-			query: "?source_tenant_id=84",
+			query: "?agent_source_tenant_id=84",
 			h: newSuggestionHandler(
 				&suggestionAgentService{ownErr: service.ErrAgentNotFound},
 				&suggestionAgentShares{err: errors.New("share store down: password=hunter2")}, nil, nil,
@@ -466,7 +466,7 @@ func TestGetSuggestedQuestions_ReportsLookupFailuresAsServerErrors(t *testing.T)
 		},
 		{
 			name:  "disabled list failing",
-			query: "?source_tenant_id=84",
+			query: "?agent_source_tenant_id=84",
 			h: newSuggestionHandler(
 				&suggestionAgentService{ownErr: service.ErrAgentNotFound, questions: suggestionSuggestions()},
 				&suggestionAgentShares{agent: suggestionSharedAgent()},

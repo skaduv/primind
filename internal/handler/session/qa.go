@@ -622,11 +622,16 @@ func (h *Handler) resolveAgent(
 		return nil, 0, false
 	}
 
+	if h.agentAccessResolver == nil {
+		logger.Errorf(ctx, "Agent access resolver is not configured, agent ID: %s, using default config",
+			secutils.SanitizeForLog(agentID))
+		return nil, 0, false
+	}
+
 	// ResolveForChat: chat does not refuse a share this workspace has disabled.
 	// That predates the disabled list and stays as it is until the recorded
 	// defect (docs/bug/2026-11-26-本空间停用的共享智能体仍可在对话中使用.md) is fixed.
-	resolver := service.NewAgentAccessResolver(h.customAgentService, h.agentShareService, nil, nil)
-	resolved, err := resolver.ResolveForChat(ctx, agentCallerFromGin(c), agentID, sourceTenantID)
+	resolved, err := h.agentAccessResolver.ResolveForChat(ctx, agentCallerFromGin(c), agentID, sourceTenantID)
 	if err != nil {
 		logger.Warnf(ctx, "Failed to get agent, agent ID: %s, source tenant: %d, error: %v, using default config",
 			secutils.SanitizeForLog(agentID), sourceTenantID, err)

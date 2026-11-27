@@ -61,7 +61,7 @@ test('选中共享智能体：推荐请求带上来源空间', async () => {
   await getSuggestedQuestions(store.selectedAgentRef, { knowledge_base_ids: ['kb-1', 'kb-2'], limit: 6 })
 
   assert.deepEqual(requests.map((r) => r.url), [
-    '/api/v1/agents/agent-1/suggested-questions?source_tenant_id=84&knowledge_base_ids=kb-1%2Ckb-2&limit=6',
+    '/api/v1/agents/agent-1/suggested-questions?agent_source_tenant_id=84&knowledge_base_ids=kb-1%2Ckb-2&limit=6',
   ])
 })
 
@@ -104,11 +104,11 @@ test('两个智能体 ID 相同、来源不同，互相切换：每次切换都�
 
   assert.deepEqual(requests.map((r) => r.url), [
     '/api/v1/agents/builtin-quick-answer/suggested-questions',
-    '/api/v1/agents/agent-1/suggested-questions?source_tenant_id=84',
-    '/api/v1/agents/agent-1/suggested-questions?source_tenant_id=85',
+    '/api/v1/agents/agent-1/suggested-questions?agent_source_tenant_id=84',
+    '/api/v1/agents/agent-1/suggested-questions?agent_source_tenant_id=85',
     '/api/v1/agents/agent-1/suggested-questions',
-    '/api/v1/agents/agent-1/suggested-questions?source_tenant_id=84',
-    '/api/v1/agents/agent-2/suggested-questions?source_tenant_id=84',
+    '/api/v1/agents/agent-1/suggested-questions?agent_source_tenant_id=84',
+    '/api/v1/agents/agent-2/suggested-questions?agent_source_tenant_id=84',
   ])
 })
 

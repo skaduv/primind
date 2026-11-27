@@ -119,10 +119,10 @@ func newResolveAgentTestContext(tenantID uint64) (*gin.Context, context.Context)
 func TestResolveAgent_RejectsInvalidSharedSelectorWithoutLocalFallback(t *testing.T) {
 	c, ctx := newResolveAgentTestContext(7)
 	localAgent := &types.CustomAgent{ID: "builtin-smart-reasoning", TenantID: 7, Name: "Local"}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService:  &resolveAgentShareStub{},
 		customAgentService: &resolveOwnAgentStub{agent: localAgent},
-	}
+	})
 
 	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, "builtin-smart-reasoning", 84)
 
@@ -134,10 +134,10 @@ func TestResolveAgent_RejectsInvalidSharedSelectorWithoutLocalFallback(t *testin
 func TestResolveAgent_UsesSharedAgentWhenSourceSelectorMatches(t *testing.T) {
 	c, ctx := newResolveAgentTestContext(7)
 	sharedAgent := &types.CustomAgent{ID: "builtin-smart-reasoning", TenantID: 84, Name: "Shared"}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService:  &resolveAgentShareStub{agent: sharedAgent},
 		customAgentService: &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "builtin-smart-reasoning", TenantID: 7}},
-	}
+	})
 
 	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, "builtin-smart-reasoning", 84)
 
@@ -149,10 +149,10 @@ func TestResolveAgent_UsesSharedAgentWhenSourceSelectorMatches(t *testing.T) {
 func TestResolveAgent_FallsBackToLocalAgentWithoutSourceSelector(t *testing.T) {
 	c, ctx := newResolveAgentTestContext(7)
 	localAgent := &types.CustomAgent{ID: "builtin-smart-reasoning", TenantID: 7, Name: "Local"}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService:  &resolveAgentShareStub{},
 		customAgentService: &resolveOwnAgentStub{agent: localAgent},
-	}
+	})
 
 	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, "builtin-smart-reasoning", 0)
 
@@ -166,12 +166,12 @@ func TestResolveAgent_FallsBackToLocalAgentWithoutSourceSelector(t *testing.T) {
 func TestResolveAgent_PrefersOwnAgentOverSameIDShareWithoutSourceSelector(t *testing.T) {
 	c, ctx := newResolveAgentTestContext(7)
 	localAgent := &types.CustomAgent{ID: "builtin-quick-answer", TenantID: 7, Name: "Local"}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService: &resolveAgentShareStub{
 			agent: &types.CustomAgent{ID: "builtin-quick-answer", TenantID: 84, Name: "Shared"},
 		},
 		customAgentService: &resolveOwnAgentStub{agent: localAgent},
-	}
+	})
 
 	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, "builtin-quick-answer", 0)
 
@@ -185,10 +185,10 @@ func TestResolveAgent_PrefersOwnAgentOverSameIDShareWithoutSourceSelector(t *tes
 func TestResolveAgent_UsesShareWhenNoOwnAgentMatches(t *testing.T) {
 	c, ctx := newResolveAgentTestContext(7)
 	sharedAgent := &types.CustomAgent{ID: "3f0c2d9e-shared", TenantID: 84, Name: "Shared"}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService:  &resolveAgentShareStub{agent: sharedAgent},
 		customAgentService: &resolveOwnAgentStub{err: errors.New("agent not found")},
-	}
+	})
 
 	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, sharedAgent.ID, 0)
 
@@ -357,7 +357,31 @@ func (tc resolveAgentCase) handler() *Handler {
 	if tc.share != nil {
 		h.agentShareService = tc.share
 	}
+	return withAgentResolver(h)
+}
+
+// withAgentResolver wires the agent resolver from h's agent services, the way
+// the container hands NewHandler the AgentAccessResolver built from them.
+func withAgentResolver(h *Handler) *Handler {
+	h.agentAccessResolver = service.NewAgentAccessResolver(h.customAgentService, h.agentShareService, nil, nil)
 	return h
+}
+
+// Without a resolver the chat path resolves nothing and falls back to the
+// default agent config; it never reaches for a share on its own.
+func TestResolveAgent_WithoutResolverResolvesNothing(t *testing.T) {
+	tc := resolveAgentCase{identity: resolveAgentMember}
+	c, ctx := tc.request()
+	h := &Handler{
+		customAgentService: &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "agent", TenantID: 7}},
+		agentShareService:  &resolveAgentShareStub{agent: &types.CustomAgent{ID: "agent", TenantID: 84}},
+	}
+
+	agent, effectiveTenantID, sharedReadOnly := h.resolveAgent(ctx, c, "agent", 0)
+
+	require.Nil(t, agent)
+	require.Zero(t, effectiveTenantID)
+	require.False(t, sharedReadOnly)
 }
 
 func (tc resolveAgentCase) request() (*gin.Context, context.Context) {
@@ -422,14 +446,14 @@ func TestTerminalProvisionPin_UsesSharedAgentSandboxConfig(t *testing.T) {
 		TenantID: 84,
 		Config:   types.CustomAgentConfig{SandboxConfigID: "shared-cfg"},
 	}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		agentShareService: &resolveAgentShareStub{agent: sharedAgent},
 		customAgentService: &resolveOwnAgentStub{agent: &types.CustomAgent{
 			ID:       "builtin-smart-reasoning",
 			TenantID: 7,
 			Config:   types.CustomAgentConfig{SandboxConfigID: "local-cfg"},
 		}},
-	}
+	})
 
 	require.Equal(t, service.SandboxPin{}, h.terminalProvisionPin(ctx, c, false),
 		"lookup-only connects must not resolve an agent config")
@@ -453,13 +477,13 @@ func TestTerminalProvisionPin_OwnAgentCarriesNoWorkspace(t *testing.T) {
 	ctx := context.WithValue(c.Request.Context(), types.TenantIDContextKey, uint64(7))
 	c.Request = c.Request.WithContext(ctx)
 
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		customAgentService: &resolveOwnAgentStub{agent: &types.CustomAgent{
 			ID:       "builtin-smart-reasoning",
 			TenantID: 7,
 			Config:   types.CustomAgentConfig{SandboxConfigID: "local-cfg"},
 		}},
-	}
+	})
 
 	pin := h.terminalProvisionPin(ctx, c, true)
 	require.Equal(t, service.SandboxPin{ConfigID: "local-cfg"}, pin)

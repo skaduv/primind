@@ -737,7 +737,7 @@ const docTemplate = `{
                     {
                         "type": "integer",
                         "description": "共享智能体的来源空间ID；传入后只按共享关系解析，不传时先查本空间再查共享",
-                        "name": "source_tenant_id",
+                        "name": "agent_source_tenant_id",
                         "in": "query"
                     },
                     {

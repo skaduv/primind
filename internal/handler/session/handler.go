@@ -29,13 +29,17 @@ type Handler struct {
 	customAgentService   interfaces.CustomAgentService   // Service for managing custom agents
 	tenantService        interfaces.TenantService        // Service for loading tenant (shared agent context)
 	agentShareService    interfaces.AgentShareService    // Service for resolving shared agents (KB scope in retrieval)
-	kbShareService       interfaces.KBShareService       // Service for resolving shared KB permissions
-	fileService          interfaces.FileService          // Service for file storage (image uploads)
-	resourceCatalog      interfaces.ResourceCatalog
-	storageResolver      interfaces.StorageBackendResolver
-	modelService         interfaces.ModelService // Service for model management (VLM access)
-	attachmentProcessor  *AttachmentProcessor    // Processor for file attachments
-	temporaryDocuments   interfaces.TemporaryDocumentService
+	// agentAccessResolver decides which agent an agent ID names for this caller
+	// (own or shared). It is the container's single instance, the same one the
+	// agent-by-ID read routes resolve through.
+	agentAccessResolver service.AgentAccessResolver
+	kbShareService      interfaces.KBShareService // Service for resolving shared KB permissions
+	fileService         interfaces.FileService    // Service for file storage (image uploads)
+	resourceCatalog     interfaces.ResourceCatalog
+	storageResolver     interfaces.StorageBackendResolver
+	modelService        interfaces.ModelService // Service for model management (VLM access)
+	attachmentProcessor *AttachmentProcessor    // Processor for file attachments
+	temporaryDocuments  interfaces.TemporaryDocumentService
 	// artifactCollector drains skill-generated files from the session sandbox
 	// after an agent turn completes. May be nil when the sandbox backend does
 	// not support artifact collection; handlers must check before using.
@@ -108,6 +112,7 @@ func NewHandler(
 	forkService *service.SessionForkService,
 	rewindService *service.SessionRewindService,
 	approvedProjectDirs HostProjectDirsLoader,
+	agentAccessResolver service.AgentAccessResolver,
 ) *Handler {
 	h := &Handler{
 		browserSkill:          browserSkill,
@@ -120,6 +125,7 @@ func NewHandler(
 		customAgentService:    customAgentService,
 		tenantService:         tenantService,
 		agentShareService:     agentShareService,
+		agentAccessResolver:   agentAccessResolver,
 		kbShareService:        kbShareService,
 		fileService:           fileService,
 		resourceCatalog:       resourceCatalog,

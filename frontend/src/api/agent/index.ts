@@ -437,7 +437,7 @@ export function getSuggestedQuestions(
 ) {
   const query = new URLSearchParams();
   // 共享智能体带上来源空间：后端按共享关系解析，不会退回到同 ID 的本空间智能体。
-  if (agent.sourceTenantId) query.set('source_tenant_id', agent.sourceTenantId);
+  if (agent.sourceTenantId) query.set('agent_source_tenant_id', agent.sourceTenantId);
   if (params?.knowledge_base_ids?.length) query.set('knowledge_base_ids', params.knowledge_base_ids.join(','));
   if (params?.knowledge_ids?.length) query.set('knowledge_ids', params.knowledge_ids.join(','));
   if (params?.tag_scopes?.length) query.set('tag_scopes', JSON.stringify(params.tag_scopes));
