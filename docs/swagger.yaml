@@ -117,6 +117,8 @@ definitions:
     - 2200
     - 2201
     - 2300
+    - 2400
+    - 2401
     type: integer
     x-enum-varnames:
     - ErrBadRequest
@@ -143,6 +145,8 @@ definitions:
     - ErrVectorStoreBindingInvalid
     - ErrVectorStoreUnavailable
     - ErrModelInUse
+    - ErrInviteCodeNotFound
+    - ErrInviteCodeExpired
   github_com_primind_primind_internal_infrastructure_chunker.DocProfile:
     properties:
       all_caps_short_line_count:
@@ -15209,8 +15213,16 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
       security:
@@ -15271,6 +15283,14 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
       security:
       - Bearer: []
       summary: 提交加入申请
@@ -15295,6 +15315,10 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
       security:
@@ -18923,7 +18947,10 @@ paths:
       - VectorStore
   /vector-stores/{id}:
     delete:
-      description: Soft-delete a vector store. Env stores cannot be deleted.
+      description: |-
+        Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend
+        (e.g. OpenSearch indices `<index_name>_<store ID first 12 chars>_*`) is not removed and must be
+        cleaned up manually; the server logs the exact prefix.
       parameters:
       - description: Vector store ID
         in: path

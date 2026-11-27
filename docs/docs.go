@@ -11599,8 +11599,20 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
                         }
@@ -11696,6 +11708,18 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                        }
                     }
                 }
             }
@@ -11734,6 +11758,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
                         }
@@ -18186,7 +18216,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a vector store. Env stores cannot be deleted.",
+                "description": "Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend\n(e.g. OpenSearch indices ` + "`" + `\u003cindex_name\u003e_\u003cstore ID first 12 chars\u003e_*` + "`" + `) is not removed and must be\ncleaned up manually; the server logs the exact prefix.",
                 "produces": [
                     "application/json"
                 ],
@@ -18883,7 +18913,9 @@ const docTemplate = `{
                 2103,
                 2200,
                 2201,
-                2300
+                2300,
+                2400,
+                2401
             ],
             "x-enum-varnames": [
                 "ErrBadRequest",
@@ -18909,7 +18941,9 @@ const docTemplate = `{
                 "ErrAgentInvalidTemperature",
                 "ErrVectorStoreBindingInvalid",
                 "ErrVectorStoreUnavailable",
-                "ErrModelInUse"
+                "ErrModelInUse",
+                "ErrInviteCodeNotFound",
+                "ErrInviteCodeExpired"
             ]
         },
         "github_com_primind_primind_internal_infrastructure_chunker.DocProfile": {

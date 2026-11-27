@@ -64,6 +64,12 @@ export const useOrganizationStore = defineStore('organization', () => {
   const previewData = ref<OrganizationPreview | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  /**
+   * join() 失败时的业务错误码和 HTTP 状态码，与 `error` 同一次写入，供页面把
+   * 「邀请码已过期」(2401)、「不存在」(2400) 和服务异常区分开。网络错误两者皆为 null。
+   */
+  const errorCode = ref<number | null>(null)
+  const errorStatus = ref<number | null>(null)
   /** 各空间内知识库/智能体数量（由 GET /organizations 的 resource_counts 填充，供列表侧栏使用） */
   const resourceCounts = ref<ResourceCountsByOrg | null>(null)
   // 组织 / 共享资源列表不设 TTL：每次 fetch 都发请求（并发共用同一个），
@@ -287,6 +293,8 @@ export const useOrganizationStore = defineStore('organization', () => {
   async function join(inviteCode: string) {
     loading.value = true
     error.value = null
+    errorCode.value = null
+    errorStatus.value = null
     try {
       const response = await joinOrganizationApi({ invite_code: inviteCode })
       if (response.success && response.data) {
@@ -296,6 +304,8 @@ export const useOrganizationStore = defineStore('organization', () => {
         return response.data
       } else {
         error.value = response.message || 'Failed to join organization'
+        errorCode.value = response.code ?? null
+        errorStatus.value = response.status ?? null
         return null
       }
     } catch (e: any) {
@@ -787,6 +797,8 @@ export const useOrganizationStore = defineStore('organization', () => {
     resourceCounts.value = null
     previewData.value = null
     error.value = null
+    errorCode.value = null
+    errorStatus.value = null
     sharedAgentsLoadedLocale = ''
     sharedAgentsInflightLocale = ''
     searchableOrganizationsQuery = ''
@@ -808,6 +820,8 @@ export const useOrganizationStore = defineStore('organization', () => {
     previewData,
     loading,
     error,
+    errorCode,
+    errorStatus,
 
     // Computed
     myOrganizations,

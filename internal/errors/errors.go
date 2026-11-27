@@ -49,6 +49,12 @@ const (
 	// parsing the backwards-compatible English error message.
 	ErrModelInUse ErrorCode = 2300
 
+	// Organization invite errors (2400-2499).
+	// HTTP status and message stay "404 Invalid invite code" for backward
+	// compatibility; the typed code tells clients why the lookup failed.
+	ErrInviteCodeNotFound ErrorCode = 2400
+	ErrInviteCodeExpired  ErrorCode = 2401
+
 	// Add more error codes here
 )
 
@@ -88,6 +94,33 @@ func NewModelInUseError(message string, details any) *AppError {
 		Message:  message,
 		Details:  details,
 		HTTPCode: http.StatusBadRequest,
+	}
+}
+
+// inviteCodeInvalidMessage is the one sentence both invite-code failures
+// share. It must not change: clients released before the typed codes existed
+// still show it verbatim, and it deliberately does not reveal whether the
+// code ever existed.
+const inviteCodeInvalidMessage = "Invalid invite code"
+
+// NewInviteCodeNotFoundError is the typed 404 returned when an invite code
+// matches no organization. Status and message are identical to the untyped
+// error older clients expect; only the code differs.
+func NewInviteCodeNotFoundError() *AppError {
+	return &AppError{
+		Code:     ErrInviteCodeNotFound,
+		Message:  inviteCodeInvalidMessage,
+		HTTPCode: http.StatusNotFound,
+	}
+}
+
+// NewInviteCodeExpiredError is the typed 404 returned when an invite code
+// exists but its validity window has closed.
+func NewInviteCodeExpiredError() *AppError {
+	return &AppError{
+		Code:     ErrInviteCodeExpired,
+		Message:  inviteCodeInvalidMessage,
+		HTTPCode: http.StatusNotFound,
 	}
 }
 
