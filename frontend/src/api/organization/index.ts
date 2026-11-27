@@ -183,6 +183,15 @@ export interface ApiResponse<T> {
   success: boolean
   data?: T
   message?: string
+  /** 服务端错误体（仅在调用方需要读取结构化错误时保留，如共享被拒的缺项） */
+  error?: ApiErrorBody
+}
+
+/** 后端错误格式：{ success: false, error: { code, message, details } } */
+export interface ApiErrorBody {
+  code?: number
+  message?: string
+  details?: unknown
 }
 
 /** Per-org resource counts (included in list my organizations to avoid extra GET /me/resource-counts) */
@@ -315,8 +324,30 @@ export interface SharedAgentInfo {
   shared_by_username?: string
   /** 由后端在源空间解析，不与当前空间的搜索引擎列表比较 */
   web_search_ready: boolean
+  /**
+   * 已保存的配置是否完整（缺对话模型、启用检索时缺 ReRank 模型）。
+   * 只读已保存的数据，不检查模型是否仍可用；旧后端不返回该字段。
+   */
+  ready?: boolean
+  /** ready=false 时的具体缺项 */
+  issues?: AgentReadinessIssue[]
   /** 当前用户是否已停用该共享智能体（仅影响本人对话下拉显示） */
   disabled_by_me?: boolean
+}
+
+/** 智能体配置缺项（与后端 types.AgentReadinessIssue 对应） */
+export interface AgentReadinessIssue {
+  /** missing_chat_model / missing_rerank_model / chat_model_unavailable / rerank_model_unavailable */
+  code: string
+  /** config.model_id / config.rerank_model_id */
+  field: string
+}
+
+/** 保存智能体成功时附带的非阻断警告（与后端 types.AgentSaveWarning 对应） */
+export interface AgentSaveWarning {
+  /** shared_agent_not_ready */
+  code: string
+  issues?: AgentReadinessIssue[]
 }
 
 /** Item from GET /organizations/:id/shared-agents (space-scoped list including mine) */
@@ -656,12 +687,13 @@ export async function listOrgShares(orgId: string): Promise<ApiResponse<ListShar
 }
 
 // Agent sharing
+// 失败时保留服务端错误体：共享被拒的 details.issues 说明具体缺什么。
 export async function shareAgent(agentId: string, req: ShareKnowledgeBaseRequest): Promise<ApiResponse<AgentShareResponse>> {
   try {
     const response = await post(`/api/v1/agents/${agentId}/shares`, req)
     return response as unknown as ApiResponse<AgentShareResponse>
   } catch (error: any) {
-    return { success: false, message: error.message || 'Failed to share agent' }
+    return { success: false, message: error.message || 'Failed to share agent', error: error.error }
   }
 }
 

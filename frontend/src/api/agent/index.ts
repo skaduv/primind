@@ -1,4 +1,5 @@
 import { get, post, put, del } from "../../utils/request";
+import type { AgentSaveWarning } from "../organization";
 
 // 智能体配置
 // 智能推理下的智能体类型预设 ID
@@ -220,8 +221,9 @@ export function createAgent(data: CreateAgentRequest) {
 }
 
 // 更新智能体
+// warnings：保存成功但带有非阻断警告，如「该智能体已共享，当前配置会导致接收方无法使用」
 export function updateAgent(id: string, data: UpdateAgentRequest) {
-  return put<{ data: CustomAgent; allowed_tools_warnings?: AllowedToolsWarnings }>(`/api/v1/agents/${id}`, data);
+  return put<{ data: CustomAgent; allowed_tools_warnings?: AllowedToolsWarnings; warnings?: AgentSaveWarning[] }>(`/api/v1/agents/${id}`, data);
 }
 
 // 删除智能体
