@@ -342,7 +342,7 @@ func (c *Client) KnowledgeQAStream(
 					return err
 				}
 				if streamResponse.ResponseType == ResponseTypeError && streamResponse.Done {
-					return NewSSEStreamError(streamResponse.Content)
+					return NewSSEStreamErrorWithCode(streamResponse.Content, streamErrorCode(streamResponse.Data))
 				}
 			}
 			dataBuffer = ""
@@ -422,7 +422,7 @@ func (c *Client) ContinueStream(
 					return err
 				}
 				if streamResponse.ResponseType == ResponseTypeError && streamResponse.Done {
-					return NewSSEStreamError(streamResponse.Content)
+					return NewSSEStreamErrorWithCode(streamResponse.Content, streamErrorCode(streamResponse.Data))
 				}
 			}
 			dataBuffer = ""

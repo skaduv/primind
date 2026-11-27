@@ -65,6 +65,10 @@ func (s *transcriptStreams) ClaimLiveRun(context.Context, string, string, string
 	return nil
 }
 
+func (s *transcriptStreams) TouchLiveRun(context.Context, string, string) error {
+	return nil
+}
+
 func (s *transcriptStreams) GetLiveRun(context.Context, string) (string, string, error) {
 	return "", "", nil
 }

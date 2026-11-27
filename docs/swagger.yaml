@@ -2592,6 +2592,16 @@ definitions:
         allOf:
         - $ref: '#/definitions/gorm.DeletedAt'
         description: Soft delete timestamp
+      error_code:
+        description: |-
+          ErrorCode is the machine-readable reason a turn ended failed or
+          interrupted (TurnErrorCode*), empty otherwise.
+        type: string
+      error_message:
+        description: |-
+          ErrorMessage is a short, user-facing explanation with no internal
+          detail (no stacks, DSNs or upstream payloads).
+        type: string
       id:
         description: Unique identifier for the message
         type: string
@@ -2601,7 +2611,10 @@ definitions:
           $ref: '#/definitions/github_com_primind_primind_internal_types.MessageImage'
         type: array
       is_completed:
-        description: Whether message generation is complete
+        description: |-
+          IsCompleted reports whether message generation has stopped. Clients
+          that predate Status only read this, so every terminal write sets it
+          together with Status (BF-03 C1).
         type: boolean
       is_fallback:
         description: Whether this response is a fallback (no knowledge base match
@@ -2647,6 +2660,13 @@ definitions:
       session_id:
         description: ID of the session this message belongs to
         type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_primind_primind_internal_types.MessageStatus'
+        description: |-
+          Status is the turn's lifecycle state (MessageStatus). Empty on rows
+          written before the column existed; read it through EffectiveStatus.
+          Assistant messages only.
       updated_at:
         description: Last update timestamp
         type: string
@@ -2747,6 +2767,20 @@ definitions:
       url:
         type: string
     type: object
+  github_com_primind_primind_internal_types.MessageStatus:
+    enum:
+    - generating
+    - completed
+    - failed
+    - stopped
+    - interrupted
+    type: string
+    x-enum-varnames:
+    - MessageStatusGenerating
+    - MessageStatusCompleted
+    - MessageStatusFailed
+    - MessageStatusStopped
+    - MessageStatusInterrupted
   github_com_primind_primind_internal_types.MinIOEngineConfig:
     properties:
       access_key_id:
@@ -16768,7 +16802,11 @@ paths:
     get:
       consumes:
       - application/json
-      description: 继续获取正在进行的流式响应
+      description: |-
+        继续获取正在进行的流式响应
+        消息已是终态（completed / failed / stopped / interrupted）时返回 404，响应体带 status 字段；
+        消息仍为 generating、流事件已过期、且没有进行中的轮次时，把消息写为 interrupted（error_code=process_lost），
+        并以 SSE 返回一个 response_type=error、done=true、data.code=turn_interrupted 的事件后结束连接
       parameters:
       - description: 会话ID
         in: path
@@ -16797,9 +16835,10 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: 会话或消息不存在
+          description: 会话或消息不存在，或消息已不再生成（响应带 status）
           schema:
-            $ref: '#/definitions/github_com_primind_primind_internal_errors.AppError'
+            additionalProperties: true
+            type: object
       security:
       - Bearer: []
       - ApiKeyAuth: []
@@ -18923,7 +18962,10 @@ paths:
       - VectorStore
   /vector-stores/{id}:
     delete:
-      description: Soft-delete a vector store. Env stores cannot be deleted.
+      description: |-
+        Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend
+        (e.g. OpenSearch indices `<index_name>_<store ID first 12 chars>_*`) is not removed and must be
+        cleaned up manually; the server logs the exact prefix.
       parameters:
       - description: Vector store ID
         in: path

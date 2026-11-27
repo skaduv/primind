@@ -67,7 +67,12 @@ func TestAppendEventRefreshesLiveRunTTL(t *testing.T) {
 	require.Equal(t, "assist-1", id)
 }
 
-func TestGetEventsRefreshesLiveRunTTLWhileWaiting(t *testing.T) {
+// BF-03: reads must not vouch for a run. continue-stream polls GetEvents
+// every 100ms, /steer reads the steer list and the marker, and the turn
+// reconciler reads the marker every sweep; when those reads refreshed the TTL,
+// a killed engine's marker never expired while anyone looked, and the dead
+// turn was taken for a live one forever.
+func TestLiveRunReadsDoNotRefreshTTL(t *testing.T) {
 	ttl := 2 * time.Second
 	mgr, mini := newTestRedisStreamManager(t, ttl)
 	ctx := context.Background()
@@ -77,11 +82,52 @@ func TestGetEventsRefreshesLiveRunTTLWhileWaiting(t *testing.T) {
 
 	_, _, err := mgr.GetEvents(ctx, "sess-1", "assist-1", 0)
 	require.NoError(t, err)
+	_, _, err = mgr.GetSteerEvents(ctx, "sess-1", "assist-1", 0)
+	require.NoError(t, err)
+	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	require.NoError(t, err)
+	require.Equal(t, "assist-1", id, "still within the original TTL")
+
+	mini.FastForward(400 * time.Millisecond)
+	id, _, err = mgr.GetLiveRun(ctx, "sess-1")
+	require.NoError(t, err)
+	require.Empty(t, id, "the marker expires on its original TTL however often it was read")
+}
+
+// The generating process extends its own marker through TouchLiveRun.
+func TestTouchLiveRunRefreshesOwnMarker(t *testing.T) {
+	ttl := 2 * time.Second
+	mgr, mini := newTestRedisStreamManager(t, ttl)
+	ctx := context.Background()
+
+	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
+	mini.FastForward(ttl - 200*time.Millisecond)
+	require.NoError(t, mgr.TouchLiveRun(ctx, "sess-1", "assist-1"))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
 	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-1", id)
+}
+
+// A run that handed the session to a follow-up must not extend the
+// follow-up's marker, and touching a missing marker must not create one.
+func TestTouchLiveRunLeavesOtherOrMissingMarkersAlone(t *testing.T) {
+	ttl := 2 * time.Second
+	mgr, mini := newTestRedisStreamManager(t, ttl)
+	ctx := context.Background()
+
+	require.NoError(t, mgr.TouchLiveRun(ctx, "sess-none", "assist-1"))
+	require.False(t, mini.Exists(mgr.buildLiveRunKey("sess-none")))
+
+	require.NoError(t, mgr.ClaimLiveRun(ctx, "sess-1", "assist-2", "req-2"))
+	mini.FastForward(ttl - 200*time.Millisecond)
+	require.NoError(t, mgr.TouchLiveRun(ctx, "sess-1", "assist-1"))
+	mini.FastForward(400 * time.Millisecond)
+
+	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	require.NoError(t, err)
+	require.Empty(t, id, "the old run's heartbeat did not keep the follow-up's marker alive")
 }
 
 func TestAppendSteerEventsRefreshesLiveRunTTL(t *testing.T) {

@@ -286,6 +286,12 @@ func (m *MemoryStreamManager) GetLiveRun(
 	return marker.assistantMessageID, marker.requestID, nil
 }
 
+// TouchLiveRun is a no-op: in-memory markers have no TTL and die with the
+// process that owns them.
+func (m *MemoryStreamManager) TouchLiveRun(context.Context, string, string) error {
+	return nil
+}
+
 // ClearLiveRun drops the marker only when it still points at assistantMessageID.
 func (m *MemoryStreamManager) ClearLiveRun(
 	_ context.Context,

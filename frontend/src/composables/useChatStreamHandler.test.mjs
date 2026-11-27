@@ -75,11 +75,13 @@ test('agent chunks bind only to the in-flight assistant after a queued user mess
 
 test('incomplete assistant is found even when a later user message is the list tail', () => {
   const fnStart = source.indexOf('const getTrailingIncompleteAssistant = ')
-  const fnEnd = source.indexOf('const markAssistantStopped = ', fnStart)
+  const fnEnd = source.indexOf('const recordTurnStatus = ', fnStart)
   const fn = source.slice(fnStart, fnEnd)
   assert.notEqual(fnStart, -1)
   assert.notEqual(fnEnd, -1)
-  assert.match(fn, /item\?\.role === 'assistant'/)
+  // Keyed on the backend's turn state, not on is_completed alone: a failed
+  // turn is completed and must not be resumed (BF-03).
+  assert.match(fn, /isGeneratingTurn\(item\)/)
   assert.doesNotMatch(fn, /const last = messagesList\[messagesList\.length - 1\]/)
 })
 
@@ -155,7 +157,7 @@ test('agent and non-agent stop notify onGenerationStopped', () => {
 
   const nonAgent = source.indexOf("log('[Stop Event] Non-agent generation stopped')")
   assert.notEqual(nonAgent, -1)
-  assert.match(source.slice(nonAgent, nonAgent + 500), /onGenerationStopped\?\.\(\)/)
+  assert.match(source.slice(nonAgent, nonAgent + 800), /onGenerationStopped\?\.\(\)/)
 })
 
 // A new answer round with no tool_call between rounds (retry / length-continuation /

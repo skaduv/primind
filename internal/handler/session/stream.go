@@ -21,6 +21,9 @@ import (
 // ContinueStream godoc
 // @Summary      继续流式响应
 // @Description  继续获取正在进行的流式响应
+// @Description  消息已是终态（completed / failed / stopped / interrupted）时返回 404，响应体带 status 字段；
+// @Description  消息仍为 generating、流事件已过期、且没有进行中的轮次时，把消息写为 interrupted（error_code=process_lost），
+// @Description  并以 SSE 返回一个 response_type=error、done=true、data.code=turn_interrupted 的事件后结束连接
 // @Tags         问答
 // @Accept       json
 // @Produce      text/event-stream
@@ -28,7 +31,7 @@ import (
 // @Param        message_id     query     string  true   "消息ID"
 // @Param        resource_urls  query     string  false  "文件引用形式，public 返回可加载直链"  Enums(handle, public)  default(handle)
 // @Success      200            {object}  map[string]interface{}  "流式响应"
-// @Failure      404         {object}  errors.AppError         "会话或消息不存在"
+// @Failure      404         {object}  map[string]interface{}  "会话或消息不存在，或消息已不再生成（响应带 status）"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /sessions/continue-stream/{session_id} [get]
@@ -103,11 +106,20 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		return
 	}
 
-	if message == nil {
-		logger.Warnf(ctx, "Incomplete message not found, session ID: %s, message ID: %s", sessionID, messageID)
+	// A message that is no longer generating has nothing to resume. The 404
+	// carries which terminal state it is in so the client renders it as is
+	// instead of guessing (BF-03 §4.3 case 1).
+	if message == nil || message.EffectiveStatus() != types.MessageStatusGenerating {
+		status := ""
+		if message != nil {
+			status = string(message.EffectiveStatus())
+		}
+		logger.Warnf(ctx, "Incomplete message not found, session ID: %s, message ID: %s, status: %s",
+			sessionID, messageID, status)
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "Incomplete message not found",
+			"status":  status,
 		})
 		return
 	}
@@ -121,10 +133,17 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	}
 
 	if len(events) == 0 {
+		// The stream is gone (it expires an hour after the last event) and
+		// the message never finished. If nothing is driving the turn either,
+		// end it here instead of failing every future open (BF-03 §4.3 case 3).
+		if h.healAbandonedTurn(ctx, c, sessionID, message) {
+			return
+		}
 		logger.Warnf(ctx, "No events found in stream, session ID: %s, message ID: %s", sessionID, messageID)
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "No stream events found",
+			"status":  string(types.MessageStatusGenerating),
 		})
 		return
 	}
@@ -202,6 +221,86 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// turnInterruptedStage names the error event healAbandonedTurn emits.
+const turnInterruptedStage = "turn_interrupted"
+
+// healAbandonedTurn ends a turn whose message is still marked generating but
+// whose stream has expired and which nothing is driving any more, then
+// answers the client with a single error event (BF-03 §4.3 case 3).
+//
+// Four checks keep a live turn safe:
+//   - this process still generating the turn (quick answers publish no
+//     marker, so the in-process registry is their only witness here);
+//   - the live-run marker still naming this message means an engine is
+//     generating it and simply has not emitted anything yet. Only the
+//     generating process extends the marker (startLiveRunHeartbeat), so a
+//     killed engine's marker expires instead of being kept alive by the very
+//     reads that ask about it;
+//   - a message younger than the grace period may be between its persist and
+//     its first event or marker (R1);
+//   - an unreadable marker is not proof that nothing runs.
+//
+// It returns true when it took over the response. The write is the
+// conditional FinalizeMessage, so a turn that ends concurrently is untouched.
+func (h *Handler) healAbandonedTurn(
+	ctx context.Context, c *gin.Context, sessionID string, message *types.Message,
+) bool {
+	if h.turns.IsLive(sessionID, message.ID) {
+		logger.Infof(ctx, "continue-stream: turn still generating in this process, session ID: %s, message ID: %s",
+			sessionID, message.ID)
+		return false
+	}
+	liveID, _, err := h.streamManager.GetLiveRun(ctx, sessionID)
+	if err != nil {
+		logger.Warnf(ctx, "continue-stream: live-run lookup failed for session %s: %v", sessionID, err)
+		return false
+	}
+	if liveID != "" && liveID == message.ID {
+		logger.Infof(ctx, "continue-stream: turn still live without events yet, session ID: %s, message ID: %s",
+			sessionID, message.ID)
+		return false
+	}
+	if time.Since(message.UpdatedAt) < types.ContinueStreamGracePeriod {
+		return false
+	}
+
+	applied, err := h.messageService.FinalizeMessage(ctx, sessionID, message.ID,
+		types.MessageStatusInterrupted, types.TurnErrorCodeProcessLost,
+		types.TurnInterruptedMessage(types.LanguageFromContextOrDefault(ctx)), nil)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"session_id": sessionID,
+			"message_id": message.ID,
+		})
+		return false
+	}
+	if !applied {
+		// The turn ended between the read above and this write (its own
+		// process, a stop, another replica's heal). Report what it ended as
+		// instead of an interruption that did not happen here.
+		return h.reportEndedTurn(ctx, c, sessionID, message.ID)
+	}
+	logger.Warnf(ctx, "continue-stream: interrupted abandoned turn, session ID: %s, message ID: %s, idle_for: %s",
+		sessionID, message.ID, time.Since(message.UpdatedAt).Round(time.Second))
+
+	setSSEHeaders(c)
+	c.SSEvent("message", &types.StreamResponse{
+		ID:           message.RequestID,
+		ResponseType: types.ResponseTypeError,
+		Content:      types.TurnInterruptedMessage(types.LanguageFromContextOrDefault(ctx)),
+		Done:         true,
+		SessionID:    sessionID,
+		Data: map[string]interface{}{
+			"stage":      turnInterruptedStage,
+			"code":       types.TurnSSECodeInterrupted,
+			"error_code": types.TurnErrorCodeProcessLost,
+			"status":     string(types.MessageStatusInterrupted),
+		},
+	})
+	c.Writer.Flush()
+	return true
 }
 
 // StopSession godoc
@@ -472,4 +571,24 @@ func (h *Handler) handleAgentEventsForSSE(
 			}
 		}
 	}
+}
+
+// reportEndedTurn answers continue-stream for a turn that ended while it was
+// being healed: the same 404 a terminal message gets, with the stored status.
+// It returns false, leaving the response to the caller, when the row cannot
+// be read or still reads as generating.
+func (h *Handler) reportEndedTurn(ctx context.Context, c *gin.Context, sessionID, messageID string) bool {
+	current, err := h.messageService.GetMessage(ctx, sessionID, messageID)
+	if err != nil || current == nil || !current.IsTerminal() {
+		return false
+	}
+	status := string(current.EffectiveStatus())
+	logger.Infof(ctx, "continue-stream: turn ended before self-heal, session ID: %s, message ID: %s, status: %s",
+		sessionID, messageID, status)
+	c.JSON(http.StatusNotFound, gin.H{
+		"success": false,
+		"error":   "Incomplete message not found",
+		"status":  status,
+	})
+	return true
 }

@@ -13722,7 +13722,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "继续获取正在进行的流式响应",
+                "description": "继续获取正在进行的流式响应\n消息已是终态（completed / failed / stopped / interrupted）时返回 404，响应体带 status 字段；\n消息仍为 generating、流事件已过期、且没有进行中的轮次时，把消息写为 interrupted（error_code=process_lost），\n并以 SSE 返回一个 response_type=error、done=true、data.code=turn_interrupted 的事件后结束连接",
                 "consumes": [
                     "application/json"
                 ],
@@ -13769,9 +13769,10 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "会话或消息不存在",
+                        "description": "会话或消息不存在，或消息已不再生成（响应带 status）",
                         "schema": {
-                            "$ref": "#/definitions/github_com_primind_primind_internal_errors.AppError"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -18186,7 +18187,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a vector store. Env stores cannot be deleted.",
+                "description": "Soft-delete a vector store. Env stores cannot be deleted. Data already written to the backend\n(e.g. OpenSearch indices ` + "`" + `\u003cindex_name\u003e_\u003cstore ID first 12 chars\u003e_*` + "`" + `) is not removed and must be\ncleaned up manually; the server logs the exact prefix.",
                 "produces": [
                     "application/json"
                 ],
@@ -21834,6 +21835,14 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "error_code": {
+                    "description": "ErrorCode is the machine-readable reason a turn ended failed or\ninterrupted (TurnErrorCode*), empty otherwise.",
+                    "type": "string"
+                },
+                "error_message": {
+                    "description": "ErrorMessage is a short, user-facing explanation with no internal\ndetail (no stacks, DSNs or upstream payloads).",
+                    "type": "string"
+                },
                 "id": {
                     "description": "Unique identifier for the message",
                     "type": "string"
@@ -21846,7 +21855,7 @@ const docTemplate = `{
                     }
                 },
                 "is_completed": {
-                    "description": "Whether message generation is complete",
+                    "description": "IsCompleted reports whether message generation has stopped. Clients\nthat predate Status only read this, so every terminal write sets it\ntogether with Status (BF-03 C1).",
                     "type": "boolean"
                 },
                 "is_fallback": {
@@ -21894,6 +21903,14 @@ const docTemplate = `{
                 "session_id": {
                     "description": "ID of the session this message belongs to",
                     "type": "string"
+                },
+                "status": {
+                    "description": "Status is the turn's lifecycle state (MessageStatus). Empty on rows\nwritten before the column existed; read it through EffectiveStatus.\nAssistant messages only.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_primind_primind_internal_types.MessageStatus"
+                        }
+                    ]
                 },
                 "updated_at": {
                     "description": "Last update timestamp",
@@ -22016,6 +22033,23 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "github_com_primind_primind_internal_types.MessageStatus": {
+            "type": "string",
+            "enum": [
+                "generating",
+                "completed",
+                "failed",
+                "stopped",
+                "interrupted"
+            ],
+            "x-enum-varnames": [
+                "MessageStatusGenerating",
+                "MessageStatusCompleted",
+                "MessageStatusFailed",
+                "MessageStatusStopped",
+                "MessageStatusInterrupted"
+            ]
         },
         "github_com_primind_primind_internal_types.MinIOEngineConfig": {
             "type": "object",

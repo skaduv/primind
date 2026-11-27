@@ -67,6 +67,11 @@ app:
       maxSurge: 1
       maxUnavailable: 0
 
+  # -- Seconds a pod gets to finish shutting down: HTTP drain (the app's
+  # shutdown timeout, 30s) plus cleanup, which ends the assistant turns still
+  # generating in the pod as interrupted (BF-03 §4.5). Keep it above 30.
+  terminationGracePeriodSeconds: 45
+
   image:
     # -- Image repository
     repository: ghcr.io/skaduv/primind-app

@@ -502,8 +502,20 @@ type Message struct {
 	// repository loads it with every message it returns and writes it whenever it
 	// is non-nil on create or update. A nil slice leaves the stored rows alone.
 	Artifacts MessageArtifacts `json:"artifacts,omitempty" gorm:"-"`
-	// Whether message generation is complete
+	// IsCompleted reports whether message generation has stopped. Clients
+	// that predate Status only read this, so every terminal write sets it
+	// together with Status (BF-03 C1).
 	IsCompleted bool `json:"is_completed"`
+	// Status is the turn's lifecycle state (MessageStatus). Empty on rows
+	// written before the column existed; read it through EffectiveStatus.
+	// Assistant messages only.
+	Status MessageStatus `json:"status" gorm:"type:varchar(16);not null;default:''"`
+	// ErrorCode is the machine-readable reason a turn ended failed or
+	// interrupted (TurnErrorCode*), empty otherwise.
+	ErrorCode string `json:"error_code" gorm:"type:varchar(64);not null;default:''"`
+	// ErrorMessage is a short, user-facing explanation with no internal
+	// detail (no stacks, DSNs or upstream payloads).
+	ErrorMessage string `json:"error_message" gorm:"type:text;not null;default:''"`
 	// Whether this response is a fallback (no knowledge base match found)
 	IsFallback bool `json:"is_fallback,omitempty"`
 	// Agent total execution duration in milliseconds (from query start to answer start)

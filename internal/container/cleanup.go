@@ -125,3 +125,18 @@ func (c *ResourceCleaner) Reset() {
 
 	c.cleanups = make([]cleanupEntry, 0)
 }
+
+// promoteFirstShutdownHooks puts the hooks that must run before every other
+// cleanup at the end of the list (Cleanup runs in reverse), in reverse order
+// of how they must run:
+//   - BrowserSkill is registered when its manager is constructed, which is
+//     early, so reverse-order cleanup would run it last; a slow cron stop
+//     could then leave the daemon alive until the process is killed.
+//   - LiveTurns ends the assistant turns still generating here (BF-03 §4.5).
+//     It runs first of all: the turns need the database and the services
+//     that later hooks close, and generation should stop before anything
+//     else waits on it.
+func promoteFirstShutdownHooks(cleaner interfaces.ResourceCleaner) {
+	cleaner.Promote("BrowserSkill")
+	cleaner.Promote("LiveTurns")
+}

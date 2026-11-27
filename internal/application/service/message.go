@@ -252,6 +252,30 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 	return nil
 }
 
+// PersistTurnMessage writes the result of a finished assistant turn. See
+// interfaces.MessageRepository.PersistTurnMessage for the contract.
+func (s *messageService) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	if _, err := s.sessionRepo.Get(ctx, tenantID, sessionUserIDForLookup(ctx), message.SessionID); err != nil {
+		logger.Errorf(ctx, "Failed to get session: %v", err)
+		return false, err
+	}
+	applied, err := s.messageRepo.PersistTurnMessage(ctx, message)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"session_id": message.SessionID,
+			"message_id": message.ID,
+			"status":     message.Status,
+		})
+		return false, err
+	}
+	if !applied {
+		logger.Warnf(ctx, "Turn %s in session %s already ended in another state; %s result not written",
+			message.ID, message.SessionID, message.Status)
+	}
+	return applied, nil
+}
+
 // UpdateMessageImages updates only the images JSONB column for a message.
 func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
 	return s.messageRepo.UpdateMessageImages(ctx, sessionID, messageID, images)
@@ -260,6 +284,29 @@ func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, mes
 // UpdateMessageRenderedContent updates the rendered_content column for a user message.
 func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
 	return s.messageRepo.UpdateMessageRenderedContent(ctx, sessionID, messageID, renderedContent)
+}
+
+// FinalizeMessage ends the assistant turn behind messageID. See
+// interfaces.MessageRepository.FinalizeMessage for the contract. Unlike the
+// other write paths it is deliberately tenant-agnostic: the row is addressed
+// by (session, message) and the write is conditional, and it must also serve
+// background callers (reconciler, shutdown) whose ctx carries no tenant.
+func (s *messageService) FinalizeMessage(
+	ctx context.Context, sessionID, messageID string, status types.MessageStatus,
+	errorCode, errorMessage string, content *string,
+) (bool, error) {
+	applied, err := s.messageRepo.FinalizeMessage(ctx, sessionID, messageID, status, errorCode, errorMessage, content)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"session_id": sessionID,
+			"message_id": messageID,
+			"status":     status,
+		})
+		return false, err
+	}
+	logger.Infof(ctx, "Finalized assistant turn %s in session %s as %s (applied=%t)",
+		messageID, sessionID, status, applied)
+	return applied, nil
 }
 
 // DeleteMessage removes a message from a session, also cleaning up its Knowledge entry in the chat history KB.
