@@ -126,3 +126,10 @@ func TestNormalizeTemporaryAttachmentIDs(t *testing.T) {
 		assert.Equal(t, []string{"1", "2", "3", "4", "5"}, got)
 	})
 }
+
+func (s *attachmentMsgStub) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	if err := s.UpdateMessage(ctx, message); err != nil {
+		return false, err
+	}
+	return true, nil
+}

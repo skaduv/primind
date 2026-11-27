@@ -85,6 +85,11 @@ type MessageService interface {
 		ctx context.Context, sessionID, messageID string, status types.MessageStatus,
 		errorCode, errorMessage string, content *string,
 	) (bool, error)
+	// PersistTurnMessage writes the full result of a finished assistant turn
+	// (content, steps, references, artifacts and its terminal status). It
+	// reports false, writing nothing, when the turn already ended in another
+	// state. See MessageRepository.PersistTurnMessage.
+	PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error)
 }
 
 // MessageRepository defines the message repository interface
@@ -107,6 +112,12 @@ type MessageRepository interface {
 		ctx context.Context, sessionID, messageID string, status types.MessageStatus,
 		errorCode, errorMessage string, content *string,
 	) (bool, error)
+	// PersistTurnMessage is the full write of a finished assistant turn. It
+	// applies only while the row is still generating or already carries
+	// message.Status, so a turn another path ended differently (stop,
+	// shutdown, reconciler) is never relabelled; it then returns false.
+	// error_code and error_message are written even when empty.
+	PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error)
 	// ListGeneratingAssistantMessagesBefore returns up to limit assistant
 	// messages whose turn never ended (is_completed = false, status still
 	// generating or empty) and whose updated_at is older than cutoff, oldest

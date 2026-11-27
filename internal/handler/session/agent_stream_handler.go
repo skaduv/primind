@@ -640,8 +640,14 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 	}
 	// The turn's error code travels with the event so the client can show a
 	// precise explanation without waiting for a history reload (BF-03).
-	if data.ErrorCode != "" {
-		metadata["code"] = data.ErrorCode
+	// An event that carries no code (the agent engine's own) takes the one the
+	// turn was just stored with: watchTurnErrors runs before this handler.
+	code := data.ErrorCode
+	if code == "" && h.assistantMessage != nil {
+		code = h.assistantMessage.ErrorCode
+	}
+	if code != "" {
+		metadata["code"] = code
 	}
 
 	// Append error event to stream

@@ -69,6 +69,19 @@ func main() {
 	// Print the env banner before container build so operators see what
 	// config landed even when DB / storage init fails.
 	runtime.LogStartupEnv(context.Background())
+	if *flagBackfillTurns {
+		// A one-off repair, not a server: build only what it needs so it
+		// starts no workers, consumers or schedulers next to the serving
+		// replicas, and release the connections before exiting.
+		bc := container.BuildTurnBackfillContainer(runtime.GetContainer())
+		err := runTurnBackfill(bc, *flagBackfillDryRun, *flagBackfillOlderThan)
+		container.CloseTurnBackfillContainer(bc)
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	runtime.MarkServerStarted()
 
 	// Build dependency injection container
@@ -77,11 +90,6 @@ func main() {
 	// One-shot bootstrap hooks (e.g. promote env-named user to system
 	// admin). Best-effort: never aborts startup — see bootstrap.go.
 	runStartupBootstrap(c)
-
-	if *flagBackfillTurns {
-		runTurnBackfill(c, *flagBackfillDryRun, *flagBackfillOlderThan)
-		return
-	}
 
 	// Run application
 	err := c.Invoke(func(

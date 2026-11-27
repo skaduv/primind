@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestRegistryTracksGeneratingTurns(t *testing.T) {
 	cancel()
 }
 
-func TestInterruptAllWritesEveryLiveTurnThenCancelsIt(t *testing.T) {
+func TestInterruptAllCancelsAndWritesEveryLiveTurn(t *testing.T) {
 	r := NewRegistry()
 	events := make(chan string, 6)
 	contexts := make([]context.Context, 0, 3)
@@ -63,7 +64,7 @@ func TestInterruptAllWritesEveryLiveTurnThenCancelsIt(t *testing.T) {
 	for i, id := range []string{"a1", "a2", "a3"} {
 		assert.True(t, seen["interrupt:"+id], id)
 		assert.True(t, seen["cancel:"+id], id)
-		assert.Error(t, contexts[i].Err(), "generation of %s is stopped after it was interrupted", id)
+		assert.Error(t, contexts[i].Err(), "generation of %s is stopped", id)
 	}
 	assert.Len(t, r.Live(), 4, "interrupting does not unregister; the turn's own teardown does")
 }
@@ -121,4 +122,30 @@ func TestIsLiveStopsVouchingAfterMaxTurnAge(t *testing.T) {
 	assert.Equal(t, 1, r.Len(), "the registration itself is kept for shutdown")
 	assert.Equal(t, 1, r.InterruptAll(context.Background()))
 	assert.Equal(t, int32(1), interrupted.Load())
+}
+
+// Generation stops before any terminal write starts: a slow database must not
+// keep every turn calling the model until the writes finish.
+func TestInterruptAllCancelsEveryTurnBeforeAnyWrite(t *testing.T) {
+	r := NewRegistry()
+	var mu sync.Mutex
+	cancelled := 0
+	cancelledAtWrite := make([]int, 0, 3)
+	for _, id := range []string{"a1", "a2", "a3"} {
+		r.Register("s1", id, func(context.Context) {
+			mu.Lock()
+			cancelledAtWrite = append(cancelledAtWrite, cancelled)
+			mu.Unlock()
+		}, func() {
+			mu.Lock()
+			cancelled++
+			mu.Unlock()
+		})
+	}
+
+	assert.Equal(t, 3, r.InterruptAll(context.Background()))
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []int{3, 3, 3}, cancelledAtWrite, "every turn was cancelled before the first write")
 }

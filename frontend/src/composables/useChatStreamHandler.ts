@@ -132,6 +132,19 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     if (!code) message.error_message = ''
   }
 
+  /**
+   * A stream-level error ended the turn. Whatever was already generated stays
+   * as the content; the error text goes to error_message, which the turn
+   * status notice shows when the code has no translation (BF-03 §4.7).
+   */
+  const recordStreamFailure = (message: ChatMessage, errorMsg: string, code: string) => {
+    message.is_completed = true
+    message.thinking = false
+    message.artifactsCollecting = false
+    recordTurnStatus(message, 'failed', code)
+    if (effectiveTurnStatus(message) === 'failed') message.error_message = errorMsg
+  }
+
   /** The turn was found abandoned: show it as interrupted and offer to ask again. */
   const markTurnInterrupted = (message: ChatMessage | undefined, errorMessage = '') => {
     if (!message) return
@@ -923,9 +936,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           }
           if (responseType === 'error' && !toolName) {
             const errorMsg = String(data.content || t('chat.processError'))
-            message.content = errorMsg
-            message.is_completed = true
-            recordTurnStatus(message, 'failed', streamErrorCode)
+            recordStreamFailure(message, errorMsg, streamErrorCode)
             isReplying.value = false
             loading.value = false
             fullContent.value = ''
@@ -935,9 +946,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           }
         } else if (responseType === 'error') {
           const errorMsg = String(data.content || t('chat.processError'))
-          message.content = errorMsg
-          message.is_completed = true
-          recordTurnStatus(message, 'failed', streamErrorCode)
+          recordStreamFailure(message, errorMsg, streamErrorCode)
           isReplying.value = false
           loading.value = false
           fullContent.value = ''
@@ -1264,12 +1273,17 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       data.response_type === 'answer' && (isAgentStreamSession() || targetsActiveAgentRequest)
     const isAgentCompleteChunk =
       data.response_type === 'complete' && (isAgentStreamSession() || targetsActiveAgentRequest)
+    // An agent run's error frame (the engine's own, which may come before
+    // any other agent frame) belongs to the agent path like its answer.
+    const isAgentErrorChunk =
+      data.response_type === 'error' && (isAgentStreamSession() || targetsActiveAgentRequest)
 
     const shouldHandleAsAgent =
       isAgentOnlyResponse ||
       isCurrentlyAgentMode ||
       isAgentAnswerChunk ||
-      isAgentCompleteChunk
+      isAgentCompleteChunk ||
+      isAgentErrorChunk
 
     if (data.response_type === 'references') {
       applyKnowledgeReferences(data)
@@ -1321,6 +1335,25 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (item.request_id === data.id) return true
       return item.id === data.id
     })
+    // A quick-answer stream error ends the turn as failed, as on the agent
+    // path: the partial answer is kept and the turn is not reported complete.
+    if (data.response_type === 'error') {
+      const failed = existingMessage || resolveActiveAssistantMessage(data)
+      const errorMsg = String(data.content || t('chat.processError'))
+      const payload = data.data as ChatMessage | undefined
+      const code = String(payload?.code || payload?.error_code || '')
+      if (failed) {
+        recordStreamFailure(failed, errorMsg, code)
+        emitMessageUpdated(failed)
+      }
+      loading.value = false
+      isReplying.value = false
+      fullContent.value = ''
+      currentAssistantMessageId.value = ''
+      reportError(errorMsg)
+      console.error('[Chat Error]', errorMsg)
+      return
+    }
     if (data.response_type === 'complete' && existingMessage) {
       if (existingMessage.is_completed) return
       const metadata = data.data as ChatMessage | undefined

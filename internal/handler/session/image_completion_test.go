@@ -156,3 +156,10 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 		})
 	}
 }
+
+func (s *imageCompletionMessages) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	if err := s.UpdateMessage(ctx, message); err != nil {
+		return false, err
+	}
+	return true, nil
+}

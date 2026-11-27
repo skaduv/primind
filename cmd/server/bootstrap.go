@@ -25,8 +25,10 @@ import (
 // marker) is skipped rather than interrupted. olderThan must cover the stream
 // TTL when the app is serving: this process cannot see in-flight quick-answer
 // turns, which publish no marker. Deploying the reconciler makes this command
-// redundant; it exists so the repaired count is on record.
-func runTurnBackfill(c *dig.Container, dryRun bool, olderThan time.Duration) {
+// redundant; it exists so the repaired count is on record. c is the minimal
+// container from container.BuildTurnBackfillContainer: the command runs no
+// service of the server.
+func runTurnBackfill(c *dig.Container, dryRun bool, olderThan time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	err := c.Invoke(func(reconciler *service.TurnReconciler) error {
@@ -55,8 +57,9 @@ func runTurnBackfill(c *dig.Container, dryRun bool, olderThan time.Duration) {
 		return nil
 	})
 	if err != nil {
-		logger.Fatalf(ctx, "[BF-03 backfill] failed: %v", err)
+		logger.Errorf(ctx, "[BF-03 backfill] failed: %v", err)
 	}
+	return err
 }
 
 // bootstrapEnvVar is the env var that names the email of the user who

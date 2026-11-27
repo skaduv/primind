@@ -114,29 +114,43 @@ func (r *Registry) Len() int {
 	return len(r.live)
 }
 
-// InterruptAll writes the terminal state of every turn still registered in
-// this process, then stops their generation. It is the graceful-shutdown
-// counterpart of a kill -9: nothing else gets a chance to run after it, so it
-// waits for every interrupt and returns how many it ran. A turn whose
-// interrupt is nil is only cancelled.
+// InterruptAll ends every turn still registered in this process. It is the
+// graceful-shutdown counterpart of a kill -9. Generation stops first, for
+// every turn at once, so no turn keeps calling the model while the database
+// writes run; the cancel callback is how a turn learns the cancellation is a
+// shutdown and not a user stop. The terminal-state writes then run in
+// parallel. InterruptAll waits for them (the hooks after it close the
+// database) and returns how many turns it ended; each write bounds itself,
+// and ctx bounds the wait. A turn whose interrupt is nil is only cancelled.
 func (r *Registry) InterruptAll(ctx context.Context) int {
 	if r == nil {
 		return 0
 	}
 	live := r.Live()
-	var wg sync.WaitGroup
 	for _, t := range live {
-		wg.Add(1)
-		go func(t Turn) {
-			defer wg.Done()
-			if t.interrupt != nil {
-				t.interrupt(ctx)
-			}
-			if t.cancel != nil {
-				t.cancel()
-			}
-		}(t)
+		if t.cancel != nil {
+			t.cancel()
+		}
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for _, t := range live {
+			if t.interrupt == nil {
+				continue
+			}
+			wg.Add(1)
+			go func(t Turn) {
+				defer wg.Done()
+				t.interrupt(ctx)
+			}(t)
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 	return len(live)
 }

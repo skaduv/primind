@@ -266,14 +266,21 @@ func (h *Handler) healAbandonedTurn(
 		return false
 	}
 
-	if _, err := h.messageService.FinalizeMessage(ctx, sessionID, message.ID,
+	applied, err := h.messageService.FinalizeMessage(ctx, sessionID, message.ID,
 		types.MessageStatusInterrupted, types.TurnErrorCodeProcessLost,
-		types.TurnInterruptedMessage(types.LanguageFromContextOrDefault(ctx)), nil); err != nil {
+		types.TurnInterruptedMessage(types.LanguageFromContextOrDefault(ctx)), nil)
+	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": sessionID,
 			"message_id": message.ID,
 		})
 		return false
+	}
+	if !applied {
+		// The turn ended between the read above and this write (its own
+		// process, a stop, another replica's heal). Report what it ended as
+		// instead of an interruption that did not happen here.
+		return h.reportEndedTurn(ctx, c, sessionID, message.ID)
 	}
 	logger.Warnf(ctx, "continue-stream: interrupted abandoned turn, session ID: %s, message ID: %s, idle_for: %s",
 		sessionID, message.ID, time.Since(message.UpdatedAt).Round(time.Second))
@@ -564,4 +571,24 @@ func (h *Handler) handleAgentEventsForSSE(
 			}
 		}
 	}
+}
+
+// reportEndedTurn answers continue-stream for a turn that ended while it was
+// being healed: the same 404 a terminal message gets, with the stored status.
+// It returns false, leaving the response to the caller, when the row cannot
+// be read or still reads as generating.
+func (h *Handler) reportEndedTurn(ctx context.Context, c *gin.Context, sessionID, messageID string) bool {
+	current, err := h.messageService.GetMessage(ctx, sessionID, messageID)
+	if err != nil || current == nil || !current.IsTerminal() {
+		return false
+	}
+	status := string(current.EffectiveStatus())
+	logger.Infof(ctx, "continue-stream: turn ended before self-heal, session ID: %s, message ID: %s, status: %s",
+		sessionID, messageID, status)
+	c.JSON(http.StatusNotFound, gin.H{
+		"success": false,
+		"error":   "Incomplete message not found",
+		"status":  status,
+	})
+	return true
 }

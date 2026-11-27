@@ -54,6 +54,34 @@ func (m *turnMemory) UpdateMessage(_ context.Context, message *types.Message) er
 	return nil
 }
 
+// PersistTurnMessage mirrors repository.PersistTurnMessage: the full write
+// lands while the row is generating or already in the same terminal state.
+func (m *turnMemory) PersistTurnMessage(_ context.Context, message *types.Message) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return false, m.updateErr
+	}
+	if current, ok := m.rows[message.ID]; ok && current.IsTerminal() && current.Status != message.Status {
+		return false, nil
+	}
+	row := *message
+	m.rows[message.ID] = &row
+	m.updates = append(m.updates, row)
+	return true, nil
+}
+
+func (m *turnMemory) GetMessage(_ context.Context, _ string, id string) (*types.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[id]
+	if !ok {
+		return nil, stderrors.New("message not found")
+	}
+	copied := *row
+	return &copied, nil
+}
+
 func (m *turnMemory) FinalizeMessage(
 	ctx context.Context, sessionID, messageID string, status types.MessageStatus,
 	code, message string, content *string,
@@ -105,12 +133,18 @@ type turnStream struct {
 	cleared  []string
 	live     string
 	liveErr  error
+	// onAppend, when set, sees each event as it is written to the stream.
+	onAppend func(interfaces.StreamEvent)
 }
 
 func (s *turnStream) AppendEvent(_ context.Context, _, _ string, e interfaces.StreamEvent) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.appended = append(s.appended, e)
+	hook := s.onAppend
+	s.mu.Unlock()
+	if hook != nil {
+		hook(e)
+	}
 	return nil
 }
 
@@ -214,8 +248,11 @@ func newTurnRig(t *testing.T, mode qaMode) *turnRig {
 		asyncCtx:         asyncCtx,
 		cancel:           cancel,
 		assistantMessage: message,
-		streamHandler:    h.setupStreamHandler(asyncCtx, "s1", "a1", "req", 1, time.Now(), message, bus),
 	}
+	// Same order as setupSSEStream: the error listener stores the failure
+	// before the stream handler forwards the frame.
+	h.watchTurnErrors(streamCtx)
+	streamCtx.streamHandler = h.setupStreamHandler(asyncCtx, "s1", "a1", "req", 1, time.Now(), message, bus)
 	t.Cleanup(cancel)
 
 	rig := &turnRig{
@@ -343,7 +380,8 @@ func TestQuickAnswerSuccessEndsTurnAsCompletedAndBackstopChangesNothing(t *testi
 	row = rig.memory.row("a1")
 	assert.Equal(t, types.MessageStatusCompleted, row.Status, "a success is never relabelled by the backstop")
 	assert.Empty(t, row.ErrorCode)
-	assert.Equal(t, types.MessageStatusInterrupted, rig.memory.finalizeCalls()[0].status)
+	assert.Empty(t, rig.memory.finalizeCalls(),
+		"this process already ended the turn, so the backstop does not even write")
 }
 
 func TestUserStopKeepsPartialContentAsStopped(t *testing.T) {
@@ -390,10 +428,8 @@ func TestAgentTurnSuccessThenBackstopStaysCompleted(t *testing.T) {
 	assert.True(t, row.IsCompleted)
 	assert.Contains(t, rig.streams.cleared, "a1",
 		"the finished turn releases its live-run marker (the backstop repeats the idempotent clear)")
-	calls := rig.memory.finalizeCalls()
-	require.Len(t, calls, 1, "the agent backstop ran once")
-	assert.Equal(t, types.MessageStatusInterrupted, calls[0].status)
-	assert.Equal(t, types.TurnErrorCodeProcessLost, calls[0].code)
+	assert.Empty(t, rig.memory.finalizeCalls(),
+		"the backstop sees the turn already ended in this process and writes nothing")
 }
 
 func TestAgentTurnServiceErrorEndsAsFailed(t *testing.T) {
@@ -545,4 +581,90 @@ func TestFailureOutcomeMapsStagesToCodes(t *testing.T) {
 	wrapped := &types.QAStageError{Stage: "chunk_merge", Kind: "search_failed", Err: sentinel}
 	assert.True(t, stderrors.Is(wrapped, sentinel))
 	assert.Equal(t, "sentinel", wrapped.Error())
+}
+
+// An agent engine failure is reported by the engine's own error event, which
+// carries no code. The failure is stored before the client sees the frame, the
+// frame carries the stored code, it is sent once, and the turn is not
+// announced as complete.
+func TestAgentEngineErrorIsStoredBeforeTheClientSeesIt(t *testing.T) {
+	rig := newTurnRig(t, qaModeAgent)
+	var statusAtFrame types.MessageStatus
+	rig.streams.onAppend = func(e interfaces.StreamEvent) {
+		if e.Type == types.ResponseTypeError {
+			statusAtFrame = rig.memory.row("a1").Status
+		}
+	}
+	engineErr := stderrors.New("engine: model returned 500")
+	rig.sessions.agentQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventError,
+			Data: event.ErrorData{Error: engineErr.Error(), Stage: stageAgentExecution, SessionID: "s1"},
+		}))
+		return engineErr
+	}
+
+	rig.h.runTurn(rig.reqCtx, rig.streamCtx, qaModeAgent)
+
+	assert.Equal(t, types.MessageStatusFailed, statusAtFrame, "a reload right after the frame shows the failure")
+	row := rig.memory.row("a1")
+	assert.Equal(t, types.MessageStatusFailed, row.Status)
+	assert.Equal(t, types.TurnErrorCodeAgentError, row.ErrorCode)
+	assert.True(t, row.IsCompleted)
+	frames := rig.streams.eventsOfType(types.ResponseTypeError)
+	require.Len(t, frames, 1, "the failure is reported once")
+	assert.Equal(t, types.TurnErrorCodeAgentError, frames[0].Data["code"])
+	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete), "a failed turn is not announced as complete")
+}
+
+// A turn another path already ended (a shutdown, the reconciler, another
+// replica) is not relabelled by a late success, and this process takes the
+// stored state instead of announcing a completion.
+func TestAgentSuccessDoesNotRelabelATurnEndedElsewhere(t *testing.T) {
+	rig := newTurnRig(t, qaModeAgent)
+	rig.sessions.agentQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
+		rig.memory.mu.Lock()
+		row := rig.memory.rows["a1"]
+		row.Status, row.ErrorCode = types.MessageStatusInterrupted, types.TurnErrorCodeProcessLost
+		row.IsCompleted = true
+		rig.memory.mu.Unlock()
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentComplete,
+			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "late answer"},
+		}))
+		return nil
+	}
+
+	rig.h.runTurn(rig.reqCtx, rig.streamCtx, qaModeAgent)
+
+	row := rig.memory.row("a1")
+	assert.Equal(t, types.MessageStatusInterrupted, row.Status)
+	assert.Equal(t, types.TurnErrorCodeProcessLost, row.ErrorCode)
+	assert.Equal(t, types.MessageStatusInterrupted, rig.streamCtx.assistantMessage.Status,
+		"memory follows the stored state")
+	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete))
+}
+
+// Graceful shutdown cancels a running agent turn before it writes the
+// terminal state. The run's own teardown sees a cancelled context, as after a
+// user stop, but must record the shutdown: interrupted, not stopped.
+func TestShutdownCancelledAgentTurnEndsAsInterruptedNotStopped(t *testing.T) {
+	rig := newTurnRig(t, qaModeAgent)
+	rig.sessions.agentQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentComplete,
+			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "half an answer"},
+		}))
+		// SIGTERM arrives while the engine is still running.
+		rig.registry.InterruptAll(context.Background())
+		return ctx.Err()
+	}
+
+	rig.h.runTurn(rig.reqCtx, rig.streamCtx, qaModeAgent)
+
+	row := rig.memory.row("a1")
+	assert.Equal(t, types.MessageStatusInterrupted, row.Status)
+	assert.Equal(t, types.TurnErrorCodeProcessLost, row.ErrorCode)
+	assert.Equal(t, "half an answer", row.Content, "what was generated is kept")
+	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete))
 }

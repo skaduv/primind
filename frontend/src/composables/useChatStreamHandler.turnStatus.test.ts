@@ -183,3 +183,36 @@ test('a normal completion records completed', t => {
   assert.equal(message.is_completed, true)
   assert.equal(turnStatus.effectiveTurnStatus(message), 'completed')
 })
+
+test('an agent error keeps what was already generated', t => {
+  const h = setup(t, true)
+  const message = h.assistant()
+  message.content = 'partial answer'
+  h.handler.processStreamChunk({
+    id: 'request', response_type: 'error', content: 'model exploded', done: true,
+    data: { code: 'agent_error', stage: 'agent_execution' },
+  })
+  assert.equal(message.content, 'partial answer', 'the error text does not replace the answer')
+  assert.equal(message.error_message, 'model exploded')
+  assert.equal(message.status, 'failed')
+  assert.equal(turnStatus.isFailedOrInterruptedTurn(message), true)
+})
+
+test('a quick-answer stream error ends the turn as failed, not completed', t => {
+  const h = setup(t, false)
+  const message = h.assistant()
+  h.handler.processStreamChunk({ id: 'request', response_type: 'answer', content: 'half', done: false })
+  h.handler.processStreamChunk({
+    id: 'request', response_type: 'error', content: 'model stream broke', done: true,
+    data: { code: 'model_error', stage: 'chat_completion_stream' },
+  })
+  const row = h.messagesList.find(m => m.role === 'assistant')!
+  assert.equal(row, message)
+  assert.equal(turnStatus.effectiveTurnStatus(row), 'failed')
+  assert.equal(row.error_code, 'model_error')
+  assert.equal(row.error_message, 'model stream broke')
+  assert.equal(row.content, 'half', 'the partial answer stays')
+  assert.equal(row.is_completed, true)
+  assert.equal(h.isReplying.value, false)
+  assert.deepEqual(h.errors, ['model stream broke'])
+})

@@ -271,6 +271,47 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 	})
 }
 
+// PersistTurnMessage is the full write of a finished assistant turn. It
+// applies only while the row is still generating or already carries the same
+// terminal status (a turn that ended as failed still gets its steps and
+// partial content written). A row another path ended differently — a stop,
+// a shutdown interrupt, the reconciler — is left alone and false is returned.
+// error_code and error_message are written even when empty so a completed or
+// stopped turn never keeps a stale failure reason.
+func (r *messageRepository) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	if message.Status == "" || message.Status == types.MessageStatusGenerating {
+		return false, fmt.Errorf("persist turn message %s: %q is not a terminal status", message.ID, message.Status)
+	}
+	applied := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&types.Message{}).
+			Where("id = ? AND session_id = ? AND role = 'assistant'", message.ID, message.SessionID).
+			Where("(status = ? OR (is_completed = ? AND (status IN (?, ?) OR status IS NULL)))",
+				message.Status, false, "", types.MessageStatusGenerating).
+			Updates(message)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		applied = true
+		if err := tx.Model(&types.Message{}).
+			Where("id = ? AND session_id = ?", message.ID, message.SessionID).
+			Updates(map[string]interface{}{
+				"error_code":    message.ErrorCode,
+				"error_message": message.ErrorMessage,
+			}).Error; err != nil {
+			return err
+		}
+		return writeMessageArtifacts(tx, message)
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
 // DeleteMessagesFrom soft-deletes every message of a session at or after the
 // (boundary, boundaryID) composite cursor and returns the deleted rows, oldest
 // first, so the caller can clean up what hangs off them.

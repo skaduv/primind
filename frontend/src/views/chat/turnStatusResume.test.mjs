@@ -89,3 +89,20 @@ test('history with a failed turn never starts a resume for it', () => {
   assert.match(hook, /isGeneratingTurn\(message\)/)
   assert.doesNotMatch(hook, /!message\.is_completed/)
 })
+
+test('a backend that keeps reporting generating past every retry is not declared interrupted', () => {
+  const watcher = slice('watch(error, (newError) => {', 'onChunk((data) => {')
+  const quiet = watcher.slice(watcher.indexOf("if (resumeFailure.value?.kind === 'not_found')"))
+  const exhausted = quiet.indexOf("if (action === 'retry') return;")
+  assert.ok(exhausted >= 0 && exhausted < quiet.indexOf('markTurnInterrupted(target)'),
+    'only an old backend without a status gets the interrupted guess')
+})
+
+test('a failed or interrupted turn with nothing else to render keeps its row', () => {
+  // The row wrapper hides assistant segments with nothing to render; the
+  // status notice lives inside it and must stay visible.
+  assert.match(source,
+    /'is-empty-segment': session\.role === 'assistant' && !shouldRenderAssistantMessage\(session\) && !isFailedOrInterruptedTurn\(session\)/)
+  const template = slice('<TurnStatusNotice v-if="isFailedOrInterruptedTurn(session)"', '@retry=')
+  assert.match(template, /:embeddedMode="embeddedMode"/, 'the embedded chat styles the notice too')
+})

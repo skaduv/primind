@@ -621,12 +621,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
 
-	// BrowserSkill is registered when its manager is constructed, which is
-	// early, so reverse-order cleanup would run it last. Force the manager
-	// to exist, then run that hook first so a slow cron stop cannot leave
-	// the daemon alive until the process is killed.
+	// Force the browser-skill manager to exist so its hook is registered,
+	// then put the hooks that must run first at the end of the list. This is
+	// the last wiring step: a hook registered after a Promote would run
+	// before the promoted one.
 	must(container.Invoke(func(cleaner interfaces.ResourceCleaner, _ *browserskill.Manager) {
-		cleaner.Promote("BrowserSkill")
+		promoteFirstShutdownHooks(cleaner)
 	}))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
@@ -2057,5 +2057,6 @@ func registerLiveTurnShutdown(registry *turn.Registry, cleaner interfaces.Resour
 		}
 		return nil
 	})
-	cleaner.Promote("LiveTurns")
+	// Promoted at the end of BuildContainer (promoteFirstShutdownHooks): hooks
+	// registered after this one would otherwise run before it.
 }

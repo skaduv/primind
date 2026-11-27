@@ -252,6 +252,30 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 	return nil
 }
 
+// PersistTurnMessage writes the result of a finished assistant turn. See
+// interfaces.MessageRepository.PersistTurnMessage for the contract.
+func (s *messageService) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	if _, err := s.sessionRepo.Get(ctx, tenantID, sessionUserIDForLookup(ctx), message.SessionID); err != nil {
+		logger.Errorf(ctx, "Failed to get session: %v", err)
+		return false, err
+	}
+	applied, err := s.messageRepo.PersistTurnMessage(ctx, message)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"session_id": message.SessionID,
+			"message_id": message.ID,
+			"status":     message.Status,
+		})
+		return false, err
+	}
+	if !applied {
+		logger.Warnf(ctx, "Turn %s in session %s already ended in another state; %s result not written",
+			message.ID, message.SessionID, message.Status)
+	}
+	return applied, nil
+}
+
 // UpdateMessageImages updates only the images JSONB column for a message.
 func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
 	return s.messageRepo.UpdateMessageImages(ctx, sessionID, messageID, images)

@@ -331,7 +331,6 @@ func (h *Handler) setupStopEventHandler(
 		return
 	}
 	sessionID := streamCtx.assistantMessage.SessionID
-	assistantMessage := streamCtx.assistantMessage
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
 		if streamCtx.cancel != nil {
@@ -346,7 +345,7 @@ func (h *Handler) setupStopEventHandler(
 			types.TenantIDContextKey, sessionTenantID,
 		)
 		// Empty query: stopped conversations are not indexed.
-		err := h.completeAssistantMessage(updateCtx, assistantMessage, "", "", types.MessageStatusStopped)
+		_, err := h.persistStreamTurn(updateCtx, streamCtx, "", "", types.MessageStatusStopped)
 		if err != nil {
 			// The full persist failed; at least end the turn so it is not
 			// left generating (BF-03 §4.2).

@@ -232,3 +232,69 @@ func TestMessageEffectiveStatusInfersLegacyRows(t *testing.T) {
 	assert.False(t, (&types.Message{}).IsTerminal())
 	assert.True(t, (*types.Message)(nil).IsTerminal())
 }
+
+// PersistTurnMessage is the full write of a finished turn: it lands on a row
+// still generating or already in the same state, never on a row another path
+// ended differently, and it clears error columns a completed turn must not keep.
+func TestPersistTurnMessageGuardsEndedTurns(t *testing.T) {
+	repo, db := newFinalizeRepository(t)
+	ctx := context.Background()
+
+	t.Run("generating row takes the result and drops a stale reason", func(t *testing.T) {
+		seedMessage(t, db, "g1", "s1", "assistant", time.Now())
+		require.NoError(t, db.Model(&types.Message{}).Where("id = ?", "g1").
+			Updates(map[string]interface{}{"error_code": "stale", "error_message": "stale"}).Error)
+
+		applied, err := repo.PersistTurnMessage(ctx, &types.Message{
+			ID: "g1", SessionID: "s1", Content: "answer", IsCompleted: true, Status: types.MessageStatusCompleted,
+		})
+		require.NoError(t, err)
+		require.True(t, applied)
+		row := loadRawMessage(t, db, "g1")
+		assert.Equal(t, types.MessageStatusCompleted, row.Status)
+		assert.Equal(t, "answer", row.Content)
+		assert.True(t, row.IsCompleted)
+		assert.Empty(t, row.ErrorCode)
+		assert.Empty(t, row.ErrorMessage)
+	})
+
+	t.Run("same terminal state still stores the steps", func(t *testing.T) {
+		seedMessage(t, db, "f1", "s1", "assistant", time.Now())
+		_, err := repo.FinalizeMessage(ctx, "s1", "f1", types.MessageStatusFailed,
+			types.TurnErrorCodeAgentError, "failed", nil)
+		require.NoError(t, err)
+
+		applied, err := repo.PersistTurnMessage(ctx, &types.Message{
+			ID: "f1", SessionID: "s1", Content: "partial", IsCompleted: true, Status: types.MessageStatusFailed,
+			ErrorCode: types.TurnErrorCodeAgentError, ErrorMessage: "failed",
+		})
+		require.NoError(t, err)
+		require.True(t, applied)
+		row := loadRawMessage(t, db, "f1")
+		assert.Equal(t, "partial", row.Content)
+		assert.Equal(t, types.MessageStatusFailed, row.Status)
+		assert.Equal(t, types.TurnErrorCodeAgentError, row.ErrorCode)
+	})
+
+	t.Run("a row ended differently is left alone", func(t *testing.T) {
+		seedMessage(t, db, "i1", "s1", "assistant", time.Now())
+		_, err := repo.FinalizeMessage(ctx, "s1", "i1", types.MessageStatusInterrupted,
+			types.TurnErrorCodeProcessLost, "interrupted", nil)
+		require.NoError(t, err)
+
+		applied, err := repo.PersistTurnMessage(ctx, &types.Message{
+			ID: "i1", SessionID: "s1", Content: "late answer", IsCompleted: true, Status: types.MessageStatusCompleted,
+		})
+		require.NoError(t, err)
+		assert.False(t, applied)
+		row := loadRawMessage(t, db, "i1")
+		assert.Equal(t, types.MessageStatusInterrupted, row.Status)
+		assert.Equal(t, types.TurnErrorCodeProcessLost, row.ErrorCode)
+		assert.NotEqual(t, "late answer", row.Content)
+	})
+
+	t.Run("a non-terminal status is refused", func(t *testing.T) {
+		_, err := repo.PersistTurnMessage(ctx, &types.Message{ID: "g1", SessionID: "s1"})
+		assert.Error(t, err)
+	})
+}

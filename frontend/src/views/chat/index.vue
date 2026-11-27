@@ -103,7 +103,7 @@
                     -->
                         <div v-for="(session, index) in messagesList"
                             :key="session.id || `${session.role}-${session.created_at}-${index}`" class="msg-item-wrapper"
-                            :class="{ 'is-steer-prefix': session.steerForked, 'is-empty-segment': session.role === 'assistant' && !shouldRenderAssistantMessage(session) }">
+                            :class="{ 'is-steer-prefix': session.steerForked, 'is-empty-segment': session.role === 'assistant' && !shouldRenderAssistantMessage(session) && !isFailedOrInterruptedTurn(session) }">
                             <MessageTimestamp v-if="shouldShowConversationTimestamp(messagesList, index)"
                                 :value="session.created_at" />
 
@@ -140,6 +140,7 @@
                                 </botmsg>
                                 <!-- A turn that failed or was interrupted shows why and offers to ask again (BF-03). -->
                                 <TurnStatusNotice v-if="isFailedOrInterruptedTurn(session)" :session="session"
+                                    :embeddedMode="embeddedMode"
                                     :disabled="isReplying || composerLocked"
                                     @retry="handleRetryTurn(session, index)" />
                                 <FollowUpSuggestions v-if="session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
@@ -1718,8 +1719,13 @@ watch(error, (newError) => {
             reloadHistoryAfterResume();
             return;
         }
-        // No status, or the backend kept reporting "generating" past every
-        // retry: the best we know is that this turn is not coming back.
+        // The backend kept reporting "generating" past every retry. It still
+        // owns the turn and ends it itself once nothing drives it, so the
+        // bubble stays as the server reports it; only the auto-retry stops,
+        // and the next history load resumes or shows the stored ending.
+        if (action === 'retry') return;
+        // No status (an older backend): the best we know is that this turn is
+        // not coming back.
         markTurnInterrupted(target);
         return;
     }

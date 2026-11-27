@@ -28,6 +28,9 @@ type healMessages struct {
 	message     *types.Message
 	finalized   []finalizedCall
 	finalizeErr error
+	// endedAs, when set, is the state another path wrote between the
+	// handler's read and its finalize: the write then does not apply.
+	endedAs types.MessageStatus
 }
 
 func (m *healMessages) GetMessage(context.Context, string, string) (*types.Message, error) {
@@ -45,6 +48,10 @@ func (m *healMessages) FinalizeMessage(
 	})
 	if m.finalizeErr != nil {
 		return false, m.finalizeErr
+	}
+	if m.endedAs != "" {
+		m.message.Status, m.message.IsCompleted = m.endedAs, true
+		return false, nil
 	}
 	m.message.Status, m.message.ErrorCode, m.message.ErrorMessage, m.message.IsCompleted = status, code, message, true
 	return true, nil
@@ -242,4 +249,19 @@ func TestContinueStreamReplaysOldGeneratingMessageWithEvents(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "kept")
 	assert.Empty(t, messages.finalized)
+}
+
+// The turn ended between the read and the repair (its own process finished,
+// a stop, another replica healed it): no interruption is claimed, and the
+// client is told the state it actually ended in.
+func TestContinueStreamReportsTurnThatEndedDuringRepair(t *testing.T) {
+	r, messages := newHealRouter(t, generatingMessage(3*time.Minute), &healStream{})
+	messages.endedAs = types.MessageStatusCompleted
+
+	w := getContinueStream(t, r)
+
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	assert.NotContains(t, w.Body.String(), types.TurnSSECodeInterrupted)
+	assert.Contains(t, w.Body.String(), `"status":"completed"`)
+	assert.Len(t, messages.finalized, 1)
 }

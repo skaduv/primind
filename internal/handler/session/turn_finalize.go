@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"strings"
+	"time"
 
 	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/types"
@@ -56,6 +57,17 @@ func failureOutcome(ctx context.Context, stage string, err error) turnOutcome {
 	}
 }
 
+// turnWriteTimeout bounds a terminal-state write. The write must outlive a
+// cancelled request, but not hang a shutdown or a goroutine on a stuck
+// database: the reconciler ends a row whose write never landed.
+var turnWriteTimeout = 10 * time.Second
+
+// turnWriteContext detaches ctx from its cancellation (the turn is over
+// whatever happens to the request) and gives the write its own deadline.
+func turnWriteContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
 // finalizeTurn is how an assistant turn ends in any state other than a
 // successful answer or a user stop, and the last resort for both of those.
 //
@@ -67,9 +79,12 @@ func failureOutcome(ctx context.Context, stage string, err error) turnOutcome {
 // The write is conditional (see repository.FinalizeMessage): a turn that
 // already reached a terminal state is not touched, so calling this after a
 // success, a stop, an earlier failure or from the deferred backstop is always
-// safe — the first ending wins. The outcome is still remembered on the
-// in-memory message so a later full persist of the same message carries this
-// decision instead of a default. It returns whether this call ended the turn.
+// safe — the first ending wins. The in-memory message follows the stored
+// result: it takes the outcome when this call ended the turn, and also when
+// the write failed, so the later full persist carries this decision instead
+// of a default (if that write fails too, the reconciler ends the row). A call
+// that lost the race leaves memory alone; the full persist then reads back
+// the state that won. It returns whether this call ended the turn.
 func (h *Handler) finalizeTurn(ctx context.Context, streamCtx *sseStreamContext, outcome turnOutcome) bool {
 	if streamCtx == nil || streamCtx.assistantMessage == nil || h.messageService == nil {
 		return false
@@ -77,9 +92,16 @@ func (h *Handler) finalizeTurn(ctx context.Context, streamCtx *sseStreamContext,
 	msg := streamCtx.assistantMessage
 	streamCtx.endTurn()
 
-	// The turn is over whatever happens to the request: a cancelled or
-	// closed request must not cancel the terminal write.
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := turnWriteContext(ctx, turnWriteTimeout)
+	defer cancel()
+
+	streamCtx.turnMu.Lock()
+	defer streamCtx.turnMu.Unlock()
+	if turnStatusDecided(msg) {
+		// This process already ended the turn; the stored row says so or a
+		// full persist is about to write it.
+		return false
+	}
 	var content *string
 	if strings.TrimSpace(msg.Content) != "" {
 		partial := msg.Content
@@ -101,7 +123,7 @@ func (h *Handler) finalizeTurn(ctx context.Context, streamCtx *sseStreamContext,
 			msg.ID, msg.SessionID, outcome.status, outcome.code, applied)
 	}
 
-	if msg.Status == "" {
+	if err != nil || applied {
 		msg.Status, msg.ErrorCode, msg.ErrorMessage = outcome.status, outcome.code, outcome.message
 		msg.IsCompleted = true
 	}
@@ -115,4 +137,30 @@ func (h *Handler) finalizeTurn(ctx context.Context, streamCtx *sseStreamContext,
 		}
 	}
 	return err == nil && applied
+}
+
+// turnEndedWithoutAnswer reports whether the turn already ended as failed or
+// interrupted, i.e. it has no answer to complete. Read under turnMu: a
+// shutdown interrupt may write it from another goroutine.
+func (sc *sseStreamContext) turnEndedWithoutAnswer() bool {
+	if sc == nil || sc.assistantMessage == nil {
+		return false
+	}
+	sc.turnMu.Lock()
+	defer sc.turnMu.Unlock()
+	switch sc.assistantMessage.Status {
+	case types.MessageStatusFailed, types.MessageStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+// turnStatusDecided reports whether this process already decided how the
+// in-flight turn ends. Only Status counts: the stream handler sets
+// IsCompleted on the in-memory message as soon as the answer is complete,
+// before anything is stored, so EffectiveStatus would misread a turn that is
+// still being persisted (or about to be stopped) as completed.
+func turnStatusDecided(msg *types.Message) bool {
+	return msg.Status != "" && msg.Status != types.MessageStatusGenerating
 }
