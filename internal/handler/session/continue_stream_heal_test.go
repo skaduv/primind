@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/primind/primind/internal/middleware"
+	"github.com/primind/primind/internal/turn"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,13 @@ func (s *healStream) GetLiveRun(context.Context, string) (string, string, error)
 
 func newHealRouter(t *testing.T, message *types.Message, streams *healStream) (*gin.Engine, *healMessages) {
 	t.Helper()
+	return newHealRouterWithTurns(t, message, streams, nil)
+}
+
+func newHealRouterWithTurns(
+	t *testing.T, message *types.Message, streams *healStream, turns *turn.Registry,
+) (*gin.Engine, *healMessages) {
+	t.Helper()
 	messages := &healMessages{message: message}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -68,6 +76,7 @@ func newHealRouter(t *testing.T, message *types.Message, streams *healStream) (*
 		messageService: messages,
 		streamManager:  streams,
 		fileService:    &stubResourceFileService{},
+		turns:          turns,
 	}
 	r.GET("/sessions/continue-stream/:session_id", h.ContinueStream)
 	return r, messages
@@ -151,6 +160,21 @@ func TestContinueStreamHealsAbandonedTurn(t *testing.T) {
 // has not emitted anything yet: the existing behaviour is kept.
 func TestContinueStreamKeepsWaitingForLiveRunWithoutEvents(t *testing.T) {
 	r, messages := newHealRouter(t, generatingMessage(3*time.Minute), &healStream{live: "msg1"})
+
+	w := getContinueStream(t, r)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "No stream events found")
+	assert.Empty(t, messages.finalized)
+}
+
+// A quick answer publishes no marker; this process still generating it is
+// the only witness, and it must win over the row's age.
+func TestContinueStreamLeavesTurnGeneratingInThisProcessAlone(t *testing.T) {
+	registry := turn.NewRegistry()
+	unregister := registry.Register("sess1", "msg1", nil, nil)
+	defer unregister()
+	r, messages := newHealRouterWithTurns(t, generatingMessage(3*time.Minute), &healStream{}, registry)
 
 	w := getContinueStream(t, r)
 

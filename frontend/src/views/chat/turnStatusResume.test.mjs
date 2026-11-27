@@ -43,6 +43,32 @@ test('a resume 404 ends "replying" quietly instead of toasting "stream failed"',
   assert.doesNotMatch(quiet, /MessagePlugin\./, 'no error toast for a turn that simply ended')
 })
 
+test('a resume 404 acts on the turn status the backend reported', () => {
+  const watcher = slice('watch(error, (newError) => {', 'onChunk((data) => {')
+  const resume = watcher.indexOf("if (resumeFailure.value?.kind === 'not_found')")
+  const quiet = watcher.slice(resume, watcher.indexOf('MessagePlugin.error(newError)'))
+  assert.match(quiet, /resumeNotFoundAction\(resumeFailure\.value\.status\)/)
+  // Still generating on the server: keep "replying" and retry, before anything is cleared.
+  const retry = quiet.indexOf("if (action === 'retry' && resumeId && scheduleResumeRetry(resumeId)) return;")
+  assert.ok(retry >= 0 && retry < quiet.indexOf('isReplying.value = false'))
+  // Ended on the server meanwhile: reload what was saved, never mark it interrupted.
+  const reload = quiet.indexOf("if (action === 'reload')")
+  assert.ok(reload >= 0 && reload < quiet.indexOf('markTurnInterrupted(target)'))
+  assert.match(quiet.slice(reload), /reloadHistoryAfterResume\(\);\s*return;/)
+})
+
+test('resume retries are bounded and cancelled with the turn', () => {
+  const schedule = slice('const scheduleResumeRetry = (resumeId) => {', 'const reloadHistoryAfterResume')
+  assert.match(schedule, /resumeRetry\.attempts > RESUME_RETRY_MAX_ATTEMPTS\) return false/)
+  assert.match(schedule, /session_id\.value !== targetSession \|\| !isReplying\.value/)
+  assert.match(schedule, /currentAssistantMessageId\.value !== resumeId\) return/)
+  assert.match(schedule, /url: '\/api\/v1\/sessions\/continue-stream'/)
+  const stop = slice('const handleStopGeneration = () => {', 'markInFlightAssistantStopped')
+  assert.match(stop, /clearResumeRetry\(\)/, 'stopping cancels a pending resume')
+  const unmount = slice('onUnmounted(() => {', 'onBeforeRouteLeave')
+  assert.match(unmount, /clearResumeRetry\(\)/)
+})
+
 test('"ask again" resends the question of the failed turn with its mentions', () => {
   const retry = slice('const handleRetryTurn = (session, index) => {', 'watch([() => route.params]')
   assert.match(retry, /row\.request_id === session\.request_id/)

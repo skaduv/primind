@@ -253,7 +253,13 @@ import SandboxSidePanel from '@/components/chat/SandboxSidePanel.vue';
 import BrowserTaskPreview from './components/BrowserTaskPreview.vue';
 import { collectSessionArtifacts, markSessionArtifactDeleted } from '@/utils/sessionArtifacts';
 import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
-import { isFailedOrInterruptedTurn, isGeneratingTurn } from '@/utils/messageTurnStatus';
+import {
+    RESUME_RETRY_INTERVAL_MS,
+    RESUME_RETRY_MAX_ATTEMPTS,
+    isFailedOrInterruptedTurn,
+    isGeneratingTurn,
+    resumeNotFoundAction,
+} from '@/utils/messageTurnStatus';
 const referencesDrawer = provideChatReferencesDrawer();
 provideChatAttachmentPreviewDrawer();
 const sandboxPanel = provideChatSandboxPanel();
@@ -1104,6 +1110,7 @@ const handleStopGeneration = () => {
     loading.value = false;
     isReplying.value = false;
     if (recoverPollTimer) { clearTimeout(recoverPollTimer); recoverPollTimer = null; }
+    clearResumeRetry();
     isImRecovering.value = false;
     markInFlightAssistantStopped(currentAssistantMessageId.value);
 };
@@ -1637,6 +1644,45 @@ const recoverIncompleteMessage = () => {
     recoverPollTimer = setTimeout(poll, RECOVER_POLL_INTERVAL);
 };
 
+// continue-stream 404 with status=generating (BF-03): the backend still owns
+// the turn but has nothing to stream yet. Retry the resume a bounded number
+// of times instead of declaring a live turn dead.
+let resumeRetryTimer = null;
+let resumeRetry = { id: '', attempts: 0 };
+const clearResumeRetry = () => {
+    if (resumeRetryTimer) { clearTimeout(resumeRetryTimer); resumeRetryTimer = null; }
+    resumeRetry = { id: '', attempts: 0 };
+};
+// Returns false once the attempts are used up.
+const scheduleResumeRetry = (resumeId) => {
+    if (resumeRetry.id !== resumeId) resumeRetry = { id: resumeId, attempts: 0 };
+    resumeRetry.attempts++;
+    if (resumeRetry.attempts > RESUME_RETRY_MAX_ATTEMPTS) return false;
+    const targetSession = session_id.value;
+    if (resumeRetryTimer) clearTimeout(resumeRetryTimer);
+    resumeRetryTimer = setTimeout(() => {
+        resumeRetryTimer = null;
+        // Navigated away, stopped, or another turn took over: nothing to resume.
+        if (session_id.value !== targetSession || !isReplying.value
+            || currentAssistantMessageId.value !== resumeId) return;
+        void startStream({
+            session_id: targetSession,
+            query: resumeId,
+            method: 'GET',
+            url: '/api/v1/sessions/continue-stream',
+        });
+    }, RESUME_RETRY_INTERVAL_MS);
+    return true;
+};
+// The turn ended on the server between the history load and the resume:
+// show what it saved (answer, stop, failure) rather than a guessed state.
+const reloadHistoryAfterResume = () => {
+    const targetSession = session_id.value;
+    created_at.value = '';
+    messagesList.splice(0);
+    getmsgList({ session_id: targetSession, limit: limit.value, created_at: '' });
+};
+
 // Watch for stream errors and show message
 watch(error, (newError) => {
     if (!newError) return;
@@ -1649,22 +1695,32 @@ watch(error, (newError) => {
         recoverIncompleteMessage();
         return;
     }
-    // continue-stream answered 404 for a message we tried to resume (BF-03):
-    // the backend has no stream for it — the turn already ended, or it was
-    // abandoned and just got marked interrupted. Either way there is nothing
-    // to resume and nothing wrong with the connection: end the "replying"
-    // state, show the turn as interrupted with a way to ask again, and stay
-    // quiet instead of toasting "stream failed" on every open.
+    // continue-stream answered 404 for a message we tried to resume (BF-03).
+    // Nothing is wrong with the connection, so never toast "stream failed";
+    // what to show depends on the turn status the backend put in the 404:
+    //   - generating: still the backend's — keep "replying" and retry;
+    //   - completed / stopped / failed / interrupted: ended meanwhile — reload
+    //     the history to show what was saved;
+    //   - none (older backend): show the turn as interrupted with "ask again".
     if (resumeFailure.value?.kind === 'not_found') {
         const resumeId = currentAssistantMessageId.value;
+        const action = resumeNotFoundAction(resumeFailure.value.status);
+        if (action === 'retry' && resumeId && scheduleResumeRetry(resumeId)) return;
+        clearResumeRetry();
         const target = messagesList.find((m) => m.role === 'assistant' && (
             m.id === resumeId || m.assistant_message_id === resumeId || m.request_id === resumeId
         )) || messagesList.find((m) => m.role === 'assistant' && isGeneratingTurn(m));
-        markTurnInterrupted(target);
         isReplying.value = false;
         loading.value = false;
         // 清空当前 assistant message ID
         currentAssistantMessageId.value = '';
+        if (action === 'reload') {
+            reloadHistoryAfterResume();
+            return;
+        }
+        // No status, or the backend kept reporting "generating" past every
+        // retry: the best we know is that this turn is not coming back.
+        markTurnInterrupted(target);
         return;
     }
     MessagePlugin.error(newError);
@@ -1774,6 +1830,7 @@ const clearData = () => {
     fullContent.value = '';
     // Stop any IM-reply recovery poll for the session we're leaving/switching.
     if (recoverPollTimer) { clearTimeout(recoverPollTimer); recoverPollTimer = null; }
+    clearResumeRetry();
     isImRecovering.value = false;
 }
 onUnmounted(() => {
@@ -1781,6 +1838,7 @@ onUnmounted(() => {
     activitySessionId.value = '';
     window.removeEventListener(SESSION_MUTATION_EVENT, handleSessionMutation);
     if (recoverPollTimer) { clearTimeout(recoverPollTimer); recoverPollTimer = null; }
+    clearResumeRetry();
 });
 onBeforeRouteLeave((to, from, next) => {
     clearData()

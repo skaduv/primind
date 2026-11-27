@@ -65,8 +65,16 @@ type StreamManager interface {
 	ClaimLiveRun(ctx context.Context, sessionID, assistantMessageID, requestID string) error
 
 	// GetLiveRun returns the session's generating assistant message, or empty
-	// strings when no run is marked live.
+	// strings when no run is marked live. It is a pure read: it never extends
+	// the marker, so a marker whose engine died expires on its own (BF-03).
 	GetLiveRun(ctx context.Context, sessionID string) (assistantMessageID, requestID string, err error)
+
+	// TouchLiveRun extends the live-run marker's lifetime, but only while it
+	// still names assistantMessageID. Only the process generating that run
+	// calls it (a heartbeat): readers such as continue-stream, /steer or the
+	// turn reconciler must not keep a dead run's marker alive by looking at
+	// it. A missing or different marker is left alone and is not an error.
+	TouchLiveRun(ctx context.Context, sessionID, assistantMessageID string) error
 
 	// ClearLiveRun drops the marker, but only when it still points at
 	// assistantMessageID: a follow-up run may already have replaced it.

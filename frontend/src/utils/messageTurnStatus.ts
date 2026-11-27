@@ -52,6 +52,45 @@ export function isTurnInterruptedEvent(
     && (data.data as { code?: unknown } | undefined)?.code === TURN_INTERRUPTED_SSE_CODE
 }
 
+/**
+ * What a continue-stream 404 means for the turn we tried to resume, from the
+ * `status` the backend puts in the 404 body (BF-03):
+ *  - `retry`: still `generating` on the server — the run has not emitted its
+ *    first event yet, or the backend's grace period has not passed. Try again
+ *    shortly; once the grace period is over the backend either streams or ends
+ *    the turn with a `turn_interrupted` event.
+ *  - `reload`: the turn already ended on the server (completed, stopped,
+ *    failed, interrupted) between the history load and the resume. Reload the
+ *    history so the bubble shows what was actually saved, instead of guessing.
+ *  - `interrupted`: no status (an older backend). Nothing is known beyond
+ *    "there is no stream", so show the turn as interrupted.
+ */
+export type ResumeNotFoundAction = 'retry' | 'reload' | 'interrupted'
+
+export function resumeNotFoundAction(status: string | null | undefined): ResumeNotFoundAction {
+  switch (status) {
+    case 'generating':
+      return 'retry'
+    case 'completed':
+    case 'stopped':
+    case 'failed':
+    case 'interrupted':
+      return 'reload'
+    default:
+      return 'interrupted'
+  }
+}
+
+/** Delay between resume attempts while the backend still reports `generating`. */
+export const RESUME_RETRY_INTERVAL_MS = 5000
+
+/**
+ * Attempts before giving up on a turn the backend keeps reporting as
+ * `generating` without a stream: 30 × 5s outlasts the backend's 2-minute
+ * grace period, after which it heals an abandoned turn itself.
+ */
+export const RESUME_RETRY_MAX_ATTEMPTS = 30
+
 /** The machine-readable reason stored on a failed or interrupted message. */
 export function turnErrorCode(message: TurnStatusMessage | null | undefined): string {
   return typeof message?.error_code === 'string' ? message.error_code : ''

@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  RESUME_RETRY_INTERVAL_MS,
+  RESUME_RETRY_MAX_ATTEMPTS,
   TURN_INTERRUPTED_SSE_CODE,
   applyTurnOutcome,
   effectiveTurnStatus,
   isFailedOrInterruptedTurn,
   isGeneratingTurn,
   isTurnInterruptedEvent,
+  resumeNotFoundAction,
   turnErrorCode,
   turnErrorMessage,
 } from './messageTurnStatus.ts'
@@ -78,4 +81,22 @@ test('reads the stored reason defensively', () => {
   assert.equal(turnErrorCode(undefined), '')
   assert.equal(turnErrorMessage({ error_message: 'broke' }), 'broke')
   assert.equal(turnErrorMessage({}), '')
+})
+
+// BF-03 review: a continue-stream 404 used to mean "interrupted" whatever the
+// backend said. A turn that completed meanwhile then showed "interrupted +
+// ask again", and a turn still starting showed dead while it ran on.
+test('a resume 404 follows the turn status the backend reported', () => {
+  assert.equal(resumeNotFoundAction('generating'), 'retry')
+  for (const status of ['completed', 'stopped', 'failed', 'interrupted']) {
+    assert.equal(resumeNotFoundAction(status), 'reload', status)
+  }
+  assert.equal(resumeNotFoundAction(''), 'interrupted', 'older backend: no status in the 404')
+  assert.equal(resumeNotFoundAction(undefined), 'interrupted')
+  assert.equal(resumeNotFoundAction('something-new'), 'interrupted')
+})
+
+test('resume retries outlast the backend grace period', () => {
+  // The backend heals an abandoned turn once it is 2 minutes idle.
+  assert.ok(RESUME_RETRY_INTERVAL_MS * RESUME_RETRY_MAX_ATTEMPTS > 2 * 60 * 1000)
 })

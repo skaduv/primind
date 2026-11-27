@@ -230,9 +230,14 @@ const turnInterruptedStage = "turn_interrupted"
 // whose stream has expired and which nothing is driving any more, then
 // answers the client with a single error event (BF-03 §4.3 case 3).
 //
-// Three checks keep a live turn safe:
+// Four checks keep a live turn safe:
+//   - this process still generating the turn (quick answers publish no
+//     marker, so the in-process registry is their only witness here);
 //   - the live-run marker still naming this message means an engine is
-//     generating it and simply has not emitted anything yet;
+//     generating it and simply has not emitted anything yet. Only the
+//     generating process extends the marker (startLiveRunHeartbeat), so a
+//     killed engine's marker expires instead of being kept alive by the very
+//     reads that ask about it;
 //   - a message younger than the grace period may be between its persist and
 //     its first event or marker (R1);
 //   - an unreadable marker is not proof that nothing runs.
@@ -242,6 +247,11 @@ const turnInterruptedStage = "turn_interrupted"
 func (h *Handler) healAbandonedTurn(
 	c *gin.Context, ctx context.Context, sessionID string, message *types.Message,
 ) bool {
+	if h.turns.IsLive(sessionID, message.ID) {
+		logger.Infof(ctx, "continue-stream: turn still generating in this process, session ID: %s, message ID: %s",
+			sessionID, message.ID)
+		return false
+	}
 	liveID, _, err := h.streamManager.GetLiveRun(ctx, sessionID)
 	if err != nil {
 		logger.Warnf(ctx, "continue-stream: live-run lookup failed for session %s: %v", sessionID, err)

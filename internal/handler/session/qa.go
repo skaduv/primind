@@ -27,6 +27,7 @@ import (
 	"github.com/primind/primind/internal/storageurl"
 	"github.com/primind/primind/internal/stream"
 	"github.com/primind/primind/internal/tracing/langfuse"
+	"github.com/primind/primind/internal/turn"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	secutils "github.com/primind/primind/internal/utils"
@@ -724,6 +725,9 @@ type sseStreamContext struct {
 	// unregisterOnce guards unregisterTurn: several paths can end a turn
 	// (success, error, stop, backstop) and all of them call endTurn.
 	unregisterOnce sync.Once
+	// stopLiveRunHeartbeat ends the goroutine that keeps this run's live-run
+	// marker alive (see startLiveRunHeartbeat). Nil when no marker was set.
+	stopLiveRunHeartbeat chan struct{}
 }
 
 // endTurn marks the turn as no longer generating in this process. Safe to
@@ -736,7 +740,55 @@ func (sc *sseStreamContext) endTurn() {
 		if sc.unregisterTurn != nil {
 			sc.unregisterTurn()
 		}
+		if sc.stopLiveRunHeartbeat != nil {
+			close(sc.stopLiveRunHeartbeat)
+		}
 	})
+}
+
+// liveRunHeartbeatInterval is how often a generating agent run re-extends
+// its live-run marker. It must stay well below the stream TTL (1h) so a
+// run that is silent for a long time (a slow tool call, a long thinking
+// phase) keeps its marker. A variable so tests can shorten it.
+var liveRunHeartbeatInterval = 5 * time.Minute
+
+// startLiveRunHeartbeat keeps the run's live-run marker alive for as long as
+// this process is generating it (BF-03).
+//
+// The marker used to be extended by every read of the session's stream, so a
+// killed engine's marker never expired while anyone watched the session, and
+// continue-stream self-heal and the turn reconciler both took the dead run for
+// a live one. Reads are now pure; only the generating process extends its own
+// marker, here, and stops when the turn ends. If the process dies, the
+// heartbeat dies with it and the marker expires one TTL after the last beat.
+// turn.MaxTurnAge bounds a run whose teardown never ran.
+func (h *Handler) startLiveRunHeartbeat(ctx context.Context, streamCtx *sseStreamContext, sessionID, messageID string) {
+	if h.streamManager == nil || streamCtx == nil || streamCtx.stopLiveRunHeartbeat != nil {
+		return
+	}
+	stop := make(chan struct{})
+	streamCtx.stopLiveRunHeartbeat = stop
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(liveRunHeartbeatInterval)
+		defer ticker.Stop()
+		deadline := time.NewTimer(turn.MaxTurnAge)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-deadline.C:
+				logger.Warnf(ctx, "live run heartbeat for session %s stopped after %s without the turn ending",
+					sessionID, turn.MaxTurnAge)
+				return
+			case <-ticker.C:
+				if err := h.streamManager.TouchLiveRun(ctx, sessionID, messageID); err != nil {
+					logger.Warnf(ctx, "live run heartbeat failed for session %s: %v", sessionID, err)
+				}
+			}
+		}
+	}()
 }
 
 // setupSSEStream sets up the SSE streaming context
@@ -812,6 +864,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 			streamCtx.liveRunErr = err
 			return streamCtx
 		}
+		// Only this process may keep the marker alive; reads no longer do.
+		h.startLiveRunHeartbeat(baseCtx, streamCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID)
 	}
 
 	if !reqCtx.skipSSE {

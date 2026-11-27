@@ -46,7 +46,7 @@ test('resume and stop address the persisted assistant id, not a fork id', () => 
   // already `is_completed` and must never be resumed.
   assert.match(hook, /findLastMessage\(\s*\(message\) => message\.role === 'assistant' && isGeneratingTurn\(message\)\s*\)/)
   assert.doesNotMatch(hook, /messagesList\[messagesList\.length - 1\]/)
-  assert.match(source, /import \{ isFailedOrInterruptedTurn, isGeneratingTurn \} from '@\/utils\/messageTurnStatus'/)
+  assert.match(source, /import \{[^}]*\bisGeneratingTurn\b[^}]*\} from '@\/utils\/messageTurnStatus'/)
 })
 
 // Stopping means stopping. Firing off the queued messages as a fresh run is
