@@ -96,6 +96,60 @@ func sanitizeQuery(raw string) string {
 	return values.Encode()
 }
 
+// inviteCodeLogPrefixLen 是日志里一个邀请码最多保留的前缀长度。4 位十六进制
+// 足够让管理员把日志行和自己发出的码对上，又短到无法拿来重放加入空间。
+// 与 internal/handler/organization.go（BF-06）里 maskInviteCode 的规则一致。
+const inviteCodeLogPrefixLen = 4
+
+const (
+	// inviteCodePreviewPathPrefix 之后的那一段路径就是邀请码（GET /preview/:code）。
+	inviteCodePreviewPathPrefix = "/api/v1/organizations/preview/"
+	inviteCodeJoinPath          = "/api/v1/organizations/join"
+	inviteCodeJoinRequestPath   = "/api/v1/organizations/join-request"
+)
+
+// inviteCodeFieldRegex 匹配 JSON 里的 "invite_code":"..." 。字段名不区分大小写，
+// 因为 encoding/json 绑定字段时也不区分；值允许出现转义引号，避免被 \" 截断后漏掉后半段。
+var inviteCodeFieldRegex = regexp.MustCompile(`(?i)("invite_code"\s*:\s*")((?:[^"\\]|\\.)*)"`)
+
+// maskInviteCode 保留邀请码前 inviteCodeLogPrefixLen 个字符，其余每个替换为 "*"；
+// 长度不超过前缀的整体打码。最终写日志时 Logger 还会对整个字段做 SanitizeForLog。
+func maskInviteCode(inviteCode string) string {
+	if len(inviteCode) <= inviteCodeLogPrefixLen {
+		return strings.Repeat("*", len(inviteCode))
+	}
+	return inviteCode[:inviteCodeLogPrefixLen] + strings.Repeat("*", len(inviteCode)-inviteCodeLogPrefixLen)
+}
+
+// maskInviteCodeInPath 把 /api/v1/organizations/preview/<code> 里的邀请码打码，
+// 其他路径原样返回。
+func maskInviteCodeInPath(path string) string {
+	rest, ok := strings.CutPrefix(path, inviteCodePreviewPathPrefix)
+	if !ok || rest == "" {
+		return path
+	}
+	code, tail, hasTail := strings.Cut(rest, "/")
+	masked := inviteCodePreviewPathPrefix + maskInviteCode(code)
+	if hasTail {
+		masked += "/" + tail
+	}
+	return masked
+}
+
+// isInviteCodeRoute 判断该路由的路径或 body 是否带邀请码：预览、加入空间、提交加入申请。
+func isInviteCodeRoute(path string) bool {
+	return path == inviteCodeJoinPath || path == inviteCodeJoinRequestPath ||
+		strings.HasPrefix(path, inviteCodePreviewPathPrefix)
+}
+
+// maskInviteCodeInBody 把 JSON body 里 invite_code 的值打码，保留字段名和其余内容。
+func maskInviteCodeInBody(body string) string {
+	return inviteCodeFieldRegex.ReplaceAllStringFunc(body, func(m string) string {
+		parts := inviteCodeFieldRegex.FindStringSubmatch(m)
+		return parts[1] + maskInviteCode(parts[2]) + `"`
+	})
+}
+
 // readRequestBody 读取请求体（限制大小用于日志，但把剩余字节原样交还后续handler）
 func readRequestBody(c *gin.Context) string {
 	if c.Request.Body == nil {
@@ -197,6 +251,12 @@ func Logger() gin.HandlerFunc {
 		if !browserTraffic && (c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH") {
 			requestBody = readRequestBody(c)
 		}
+		// 邀请码是加入共享空间的凭据：这几个路由照常记访问日志，但码只留前缀。
+		inviteCodeRoute := isInviteCodeRoute(path)
+		if inviteCodeRoute {
+			requestBody = maskInviteCodeInBody(requestBody)
+			path = maskInviteCodeInPath(path)
+		}
 
 		// 创建响应体捕获器
 		responseBody := &bytes.Buffer{}
@@ -248,6 +308,9 @@ func Logger() gin.HandlerFunc {
 					responseBodyStr = string(bodyBytes)
 				}
 				responseBodyStr = sanitizeBody(responseBodyStr)
+				if inviteCodeRoute {
+					responseBodyStr = maskInviteCodeInBody(responseBodyStr)
+				}
 			} else {
 				responseBodyStr = "[非文本类型，已跳过]"
 			}
