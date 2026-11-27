@@ -186,8 +186,10 @@ func TestUpdateAgentWarnsWhenASharedAgentIsNotReady(t *testing.T) {
 		)
 	}
 	rerankWarning := []saveWarning{{
-		Code:   types.AgentWarningSharedNotReady,
-		Issues: []types.AgentReadinessIssue{{Code: types.AgentIssueMissingRerankModel, Field: types.AgentFieldRerankModel}},
+		Code: types.AgentWarningSharedNotReady,
+		Issues: []types.AgentReadinessIssue{
+			{Code: types.AgentIssueMissingRerankModel, Field: types.AgentFieldRerankModel},
+		},
 	}}
 
 	t.Run("shared agent, rerank model cleared", func(t *testing.T) {
@@ -209,8 +211,10 @@ func TestUpdateAgentWarnsWhenASharedAgentIsNotReady(t *testing.T) {
 	t.Run("shared agent, saved chat model deleted", func(t *testing.T) {
 		response := putAgent(t, newService(shared, map[string]*types.Model{"rerank-1": active["rerank-1"]}), complete)
 		require.Equal(t, []saveWarning{{
-			Code:   types.AgentWarningSharedNotReady,
-			Issues: []types.AgentReadinessIssue{{Code: types.AgentIssueChatModelUnavailable, Field: types.AgentFieldChatModel}},
+			Code: types.AgentWarningSharedNotReady,
+			Issues: []types.AgentReadinessIssue{
+				{Code: types.AgentIssueChatModelUnavailable, Field: types.AgentFieldChatModel},
+			},
 		}}, warningsOf(t, response))
 	})
 

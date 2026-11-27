@@ -1382,6 +1382,11 @@ func (h *OrganizationHandler) ListSharedKnowledgeBases(c *gin.Context) {
 	})
 }
 
+// errMsgAgentNotConfigured is the message of a share refused for an incomplete
+// agent. Older clients show it verbatim, so it must not change (BF-05 C1).
+const errMsgAgentNotConfigured = "Agent is not fully configured. Please set the chat model, " +
+	"and set the rerank model if the knowledge_search tool is enabled in agent settings."
+
 // ShareAgent shares an agent to an organization
 func (h *OrganizationHandler) ShareAgent(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -1405,12 +1410,12 @@ func (h *OrganizationHandler) ShareAgent(c *gin.Context) {
 		if errors.Is(err, service.ErrAgentNotConfigured) {
 			// Status and message stay as they were for older clients (C1);
 			// details.issues lets a new client name what is missing.
-			notConfigured := apperrors.NewValidationError("Agent is not fully configured. Please set the chat model, and set the rerank model if the knowledge_search tool is enabled in agent settings.")
+			notConfigured := apperrors.NewValidationError(errMsgAgentNotConfigured)
 			var notReady *service.AgentNotReadyError
 			if errors.As(err, &notReady) && len(notReady.Issues) > 0 {
 				notConfigured = notConfigured.WithDetails(gin.H{"issues": notReady.Issues})
 			}
-			c.Error(notConfigured)
+			_ = c.Error(notConfigured)
 			return
 		}
 		if errors.Is(err, service.ErrBuiltinAgentNotShareable) {

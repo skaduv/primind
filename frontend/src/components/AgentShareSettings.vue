@@ -306,7 +306,12 @@ async function saveAndShare() {
   try {
     const saved = await props.saveDraft()
     confirmingOrgId.value = null
-    if (!saved) return
+    if (!saved) {
+      // 校验没过时编辑窗口会切到出错的页，这个弹层挂在页面顶层，不关会浮在别的页上。
+      // 选择保留，重新打开弹层即可继续共享。
+      addPopupVisible.value = false
+      return
+    }
     await shareSelected()
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : t('organization.share.shareFailed')

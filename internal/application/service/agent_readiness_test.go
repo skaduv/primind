@@ -51,6 +51,11 @@ func readinessAgent(mutate func(*types.CustomAgentConfig)) *types.CustomAgent {
 	return &types.CustomAgent{ID: "agent-1", TenantID: 42, Config: config}
 }
 
+// oneReadinessIssue is the issue list of a check that found exactly one problem.
+func oneReadinessIssue(code, field string) []types.AgentReadinessIssue {
+	return []types.AgentReadinessIssue{readinessIssue(code, field)}
+}
+
 func readinessIssue(code, field string) types.AgentReadinessIssue {
 	return types.AgentReadinessIssue{Code: code, Field: field}
 }
@@ -82,13 +87,13 @@ func TestCheckAgentReadiness(t *testing.T) {
 			name:   "no chat model",
 			agent:  readinessAgent(noChat),
 			models: withModels(activeModels),
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueMissingChatModel, types.AgentFieldChatModel)},
+			want:   oneReadinessIssue(types.AgentIssueMissingChatModel, types.AgentFieldChatModel),
 		},
 		{
 			name:   "knowledge search without a rerank model",
 			agent:  readinessAgent(noRerank),
 			models: withModels(activeModels),
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel)},
+			want:   oneReadinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel),
 		},
 		{
 			name:   "knowledge bases disabled: the rerank model is optional",
@@ -107,7 +112,7 @@ func TestCheckAgentReadiness(t *testing.T) {
 			name:   "chat model no longer exists",
 			agent:  readinessAgent(nil),
 			models: withModels(map[string]*types.Model{"rerank-1": activeModels["rerank-1"]}),
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel)},
+			want:   oneReadinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel),
 		},
 		{
 			name:  "chat model is not active",
@@ -116,13 +121,13 @@ func TestCheckAgentReadiness(t *testing.T) {
 				"chat-1":   {ID: "chat-1", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusDownloadFailed},
 				"rerank-1": activeModels["rerank-1"],
 			}),
-			want: []types.AgentReadinessIssue{readinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel)},
+			want: oneReadinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel),
 		},
 		{
 			name:   "rerank model no longer exists",
 			agent:  readinessAgent(nil),
 			models: withModels(map[string]*types.Model{"chat-1": activeModels["chat-1"]}),
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueRerankModelUnavailable, types.AgentFieldRerankModel)},
+			want:   oneReadinessIssue(types.AgentIssueRerankModelUnavailable, types.AgentFieldRerankModel),
 		},
 		{
 			name:   "a stale rerank model is ignored where nothing reranks",
@@ -150,7 +155,7 @@ func TestCheckAgentReadiness(t *testing.T) {
 				models: map[string]*types.Model{},
 				err:    errors.New("db unavailable"),
 			},
-			want: []types.AgentReadinessIssue{readinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel)},
+			want: oneReadinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel),
 		},
 		{
 			name:   "without a lookup only missing ids are checked",
@@ -160,7 +165,7 @@ func TestCheckAgentReadiness(t *testing.T) {
 		{
 			name:  "nil agent",
 			agent: nil,
-			want:  []types.AgentReadinessIssue{readinessIssue(types.AgentIssueMissingChatModel, types.AgentFieldChatModel)},
+			want:  oneReadinessIssue(types.AgentIssueMissingChatModel, types.AgentFieldChatModel),
 		},
 	}
 	for _, tc := range cases {
@@ -221,7 +226,9 @@ type readinessKBRepo struct {
 	interfaces.KnowledgeBaseRepository
 }
 
-func shareReadinessService(agent *types.CustomAgent, models *readinessModelRepo) (*agentShareService, *readinessShareRepo) {
+func shareReadinessService(
+	agent *types.CustomAgent, models *readinessModelRepo,
+) (*agentShareService, *readinessShareRepo) {
 	shares := &readinessShareRepo{}
 	return &agentShareService{
 		agentRepo: &builtinShareAgentRepo{agent: agent},
@@ -250,7 +257,7 @@ func TestShareAgentReportsWhatIsNotConfigured(t *testing.T) {
 			name:   "rerank model never saved",
 			agent:  readinessAgent(func(c *types.CustomAgentConfig) { c.RerankModelID = "" }),
 			models: active,
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel)},
+			want:   oneReadinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel),
 		},
 		{
 			name:   "no model at all",
@@ -265,7 +272,7 @@ func TestShareAgentReportsWhatIsNotConfigured(t *testing.T) {
 			name:   "the saved chat model was deleted",
 			agent:  readinessAgent(nil),
 			models: map[string]*types.Model{"rerank-1": active["rerank-1"]},
-			want:   []types.AgentReadinessIssue{readinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel)},
+			want:   oneReadinessIssue(types.AgentIssueChatModelUnavailable, types.AgentFieldChatModel),
 		},
 	}
 	for _, tc := range cases {
@@ -365,7 +372,7 @@ func TestSharedAgentsListReadiness(t *testing.T) {
 // The fields a client reads off a shared-agent list item.
 func TestSharedAgentInfoReadinessJSON(t *testing.T) {
 	notReady, err := json.Marshal(types.SharedAgentInfo{
-		Issues: []types.AgentReadinessIssue{{Code: types.AgentIssueMissingRerankModel, Field: types.AgentFieldRerankModel}},
+		Issues: oneReadinessIssue(types.AgentIssueMissingRerankModel, types.AgentFieldRerankModel),
 	})
 	require.NoError(t, err)
 	require.Contains(t, string(notReady), `"ready":false`)
@@ -446,6 +453,7 @@ func TestSharedAgentReadinessIssuesAfterSave(t *testing.T) {
 		ID: types.BuiltinQuickAnswerID, IsBuiltin: true, TenantID: 42,
 		Config: types.CustomAgentConfig{ModelID: ""},
 	}
-	require.Empty(t, shared.SharedAgentReadinessIssues(ctx, legacyBuiltinShare), "built-in agents are never resolved for receivers")
+	require.Empty(t, shared.SharedAgentReadinessIssues(ctx, legacyBuiltinShare),
+		"built-in agents are never resolved for receivers")
 	require.Empty(t, shared.SharedAgentReadinessIssues(ctx, nil))
 }

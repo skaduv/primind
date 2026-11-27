@@ -30,6 +30,6 @@ type AgentSaveWarning struct {
 	Issues []AgentReadinessIssue `json:"issues,omitempty"`
 }
 
-// AgentWarningSharedNotReady: the saved agent is shared, and the saved
+// AgentWarningSharedNotReady means the saved agent is shared, and the saved
 // configuration leaves the receiving workspaces unable to use it.
 const AgentWarningSharedNotReady = "shared_agent_not_ready"

@@ -175,6 +175,7 @@ test('"保存并共享" stops when the save fails: no share request', async () =
   })
   try {
     await settle()
+    vm.addPopupVisible = true
     vm.selectedOrgId = 'org-1'
     await vm.handleShare()
 
@@ -184,6 +185,9 @@ test('"保存并共享" stops when the save fails: no share request', async () =
     assert.equal(f.shareCalls.length, 0)
     assert.equal(vm.selectedOrgId, 'org-1', 'the selection survives a failed save')
     assert.equal(vm.confirmingUnsaved, false)
+    // A failed validation moves the editor to another section; the popup is
+    // teleported to the page and would float over it.
+    assert.equal(vm.addPopupVisible, false, 'the popup closes when the save fails')
   } finally { unmount() }
 })
 
