@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ import (
 	"github.com/primind/primind/internal/storageurl"
 	"github.com/primind/primind/internal/stream"
 	"github.com/primind/primind/internal/tracing/langfuse"
+	"github.com/primind/primind/internal/turn"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	secutils "github.com/primind/primind/internal/utils"
@@ -714,6 +716,83 @@ type sseStreamContext struct {
 	// mode releases on completion (the pipeline returns before the stream
 	// finishes); agent mode releases when AgentQA returns.
 	releaseTurn func()
+	// unregisterTurn removes the turn from the in-process registry once it
+	// reached a terminal state (see finalizeTurn / Handler.turns).
+	unregisterTurn func()
+	// unregisterOnce guards unregisterTurn: several paths can end a turn
+	// (success, error, stop, backstop) and all of them call endTurn.
+	unregisterOnce sync.Once
+	// stopLiveRunHeartbeat ends the goroutine that keeps this run's live-run
+	// marker alive (see startLiveRunHeartbeat). Nil when no marker was set.
+	stopLiveRunHeartbeat chan struct{}
+	// turnMu serialises the turn-state decisions on assistantMessage (status,
+	// error code, is_completed) and the writes that store them: the engine
+	// goroutine, a stop and a shutdown interrupt can end the same turn at once.
+	turnMu sync.Mutex
+	// shutdownInterrupted is set when graceful shutdown cancelled the turn:
+	// the cancellation then ends it as interrupted, not stopped.
+	shutdownInterrupted atomic.Bool
+}
+
+// endTurn marks the turn as no longer generating in this process. Safe to
+// call from any path and more than once.
+func (sc *sseStreamContext) endTurn() {
+	if sc == nil {
+		return
+	}
+	sc.unregisterOnce.Do(func() {
+		if sc.unregisterTurn != nil {
+			sc.unregisterTurn()
+		}
+		if sc.stopLiveRunHeartbeat != nil {
+			close(sc.stopLiveRunHeartbeat)
+		}
+	})
+}
+
+// liveRunHeartbeatInterval is how often a generating agent run re-extends
+// its live-run marker. It must stay well below the stream TTL (1h) so a
+// run that is silent for a long time (a slow tool call, a long thinking
+// phase) keeps its marker. A variable so tests can shorten it.
+var liveRunHeartbeatInterval = 5 * time.Minute
+
+// startLiveRunHeartbeat keeps the run's live-run marker alive for as long as
+// this process is generating it (BF-03).
+//
+// The marker used to be extended by every read of the session's stream, so a
+// killed engine's marker never expired while anyone watched the session, and
+// continue-stream self-heal and the turn reconciler both took the dead run for
+// a live one. Reads are now pure; only the generating process extends its own
+// marker, here, and stops when the turn ends. If the process dies, the
+// heartbeat dies with it and the marker expires one TTL after the last beat.
+// turn.MaxTurnAge bounds a run whose teardown never ran.
+func (h *Handler) startLiveRunHeartbeat(ctx context.Context, streamCtx *sseStreamContext, sessionID, messageID string) {
+	if h.streamManager == nil || streamCtx == nil || streamCtx.stopLiveRunHeartbeat != nil {
+		return
+	}
+	stop := make(chan struct{})
+	streamCtx.stopLiveRunHeartbeat = stop
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(liveRunHeartbeatInterval)
+		defer ticker.Stop()
+		deadline := time.NewTimer(turn.MaxTurnAge)
+		defer deadline.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-deadline.C:
+				logger.Warnf(ctx, "live run heartbeat for session %s stopped after %s without the turn ending",
+					sessionID, turn.MaxTurnAge)
+				return
+			case <-ticker.C:
+				if err := h.streamManager.TouchLiveRun(ctx, sessionID, messageID); err != nil {
+					logger.Warnf(ctx, "live run heartbeat failed for session %s: %v", sessionID, err)
+				}
+			}
+		}
+	}()
 }
 
 // setupSSEStream sets up the SSE streaming context
@@ -789,6 +868,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 			streamCtx.liveRunErr = err
 			return streamCtx
 		}
+		// Only this process may keep the marker alive; reads no longer do.
+		h.startLiveRunHeartbeat(baseCtx, streamCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID)
 	}
 
 	if !reqCtx.skipSSE {
@@ -804,7 +885,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	)
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
+	h.setupStopEventHandler(eventBus, reqCtx.session.TenantID, streamCtx)
 
 	// Watch for stop events independently of the client SSE connection so a
 	// user-requested stop reliably cancels generation even when the client
@@ -816,6 +897,11 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// connection-independent context derived from baseCtx so it survives the
 	// client disconnect.
 	h.startStopWatcher(logger.CloneContext(baseCtx), reqCtx.sessionID, reqCtx.assistantMessage.ID, eventBus)
+
+	// Registered before the stream handler: the bus runs listeners in order,
+	// so the failed state is stored before the error frame reaches the
+	// client and a reload right after it never shows a generating turn.
+	h.watchTurnErrors(streamCtx)
 
 	// Setup stream handler
 	streamCtx.streamHandler = h.setupStreamHandler(asyncCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID,
@@ -1329,179 +1415,22 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		return
 	}
 
+	// The turn is live in this process from here until it reaches a terminal
+	// state: shutdown can then end it as interrupted, and the reconciler
+	// knows not to touch a row this process is still generating.
+	h.trackTurn(reqCtx, streamCtx)
+
 	// Normal mode: register completion handler on EventAgentFinalAnswer
 	// (Agent mode handles completion in the defer block instead)
 	if mode == qaModeNormal {
-		var completionHandled bool
-
-		// Persist the pipeline's retrieval/attachment stages so a reloaded
-		// conversation redraws the timeline it showed while streaming, including
-		// turns that searched and cited nothing.
-		registerQuickAnswerTimelineRecorder(streamCtx.eventBus, streamCtx.assistantMessage)
-
-		// Persist reasoning_content into agent_steps so historical reload can
-		// reconstruct the thinking card (same shape as Agent-mode steps).
-		// Accumulate on assistantMessage directly so user-initiated stop also
-		// keeps whatever reasoning had streamed before the cancel.
-		streamCtx.eventBus.On(event.EventAgentThought, func(ctx context.Context, evt event.Event) error {
-			data, ok := evt.Data.(event.AgentThoughtData)
-			if !ok || data.Content == "" {
-				return nil
-			}
-			appendQuickAnswerReasoning(streamCtx.assistantMessage, data.Content)
-			return nil
-		})
-
-		streamCtx.eventBus.On(event.EventAgentFinalAnswer, func(ctx context.Context, evt event.Event) error {
-			data, ok := evt.Data.(event.AgentFinalAnswerData)
-			if !ok {
-				return nil
-			}
-			streamCtx.assistantMessage.Content += data.Content
-			if data.IsFallback {
-				streamCtx.assistantMessage.IsFallback = true
-			}
-			if data.Truncated {
-				markQuickAnswerTruncated(streamCtx.assistantMessage)
-			}
-			if data.Done {
-				if completionHandled {
-					return nil
-				}
-				completionHandled = true
-
-				logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", sessionID)
-				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
-				h.completeQuickAnswerTurn(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID)
-			}
-			return nil
-		})
+		h.watchQuickAnswerTurn(streamCtx, reqCtx)
 	}
 
 	// Execute QA asynchronously
 	asyncDone := make(chan struct{})
 	go func() {
 		defer close(asyncDone)
-		defer func() {
-			if r := recover(); r != nil {
-				if streamCtx.releaseTurn != nil {
-					streamCtx.releaseTurn()
-				}
-				buf := make([]byte, 10240)
-				runtime.Stack(buf, true)
-				stageName := "Knowledge QA"
-				if mode == qaModeAgent {
-					stageName = "Agent QA"
-				}
-				logger.ErrorWithFields(streamCtx.asyncCtx,
-					errors.NewInternalServerError(fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf))),
-					map[string]interface{}{"session_id": sessionID})
-			}
-			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
-			if mode == qaModeAgent {
-				if streamCtx.releaseTurn != nil {
-					streamCtx.releaseTurn()
-				}
-				// Use WithoutCancel so a user-triggered stop (which cancels
-				// asyncCtx) doesn't also cancel the GORM UPDATE that persists
-				// AgentSteps/Content. Without this, cancelled-ctx makes
-				// GORM skip the write and the agent's intermediate steps
-				// (thinking / tool_call history) are lost on page refresh.
-				updateCtx := context.WithValue(
-					context.WithoutCancel(streamCtx.asyncCtx),
-					types.TenantIDContextKey, reqCtx.session.TenantID,
-				)
-
-				// Claim any follow-up before completing this row. liveAgentRun
-				// treats a completed assistant as idle and would ClearLiveRun
-				// the old marker — exactly the new_run window. The follow-up
-				// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
-				if streamCtx.asyncCtx.Err() != nil {
-					// The turn was cancelled — a user stop. Stopping means
-					// stopping: queued follow-ups are dropped rather than
-					// fired off as a brand-new run the user did not ask for.
-					injected := map[string]struct{}{}
-					if streamCtx.steerSink != nil {
-						injected = streamCtx.steerSink.InjectedIDs()
-					}
-					h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-					)
-				} else {
-					kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-					)
-					// A /steer that landed while we were completing still sits
-					// on this run. Claim it before ClearLiveRun so it is not
-					// stranded on a list nobody will drain.
-					if !kicked {
-						h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					}
-				}
-				if err := h.streamManager.ClearLiveRun(
-					updateCtx, sessionID, streamCtx.assistantMessage.ID,
-				); err != nil {
-					logger.Warnf(updateCtx, "live run cleanup failed for session %s: %v", sessionID, err)
-				}
-				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
-			}
-			// Knowledge mode normally releases on EventAgentFinalAnswer Done.
-			// If that event never fires, release here so rewind is not blocked
-			// until the Redis turn TTL expires.
-			if mode == qaModeNormal && streamCtx.releaseTurn != nil {
-				streamCtx.releaseTurn()
-			}
-		}()
-
-		// Resolve pre-uploaded attachments (may still be parsing): waits with a
-		// timeline step so the send is not blocked, then injects content/images.
-		if mode == qaModeAgent {
-			h.describeTemporaryAttachmentsForAgent(streamCtx, reqCtx)
-		} else {
-			h.resolveTemporaryAttachments(streamCtx, reqCtx)
-		}
-
-		// Run VLM image analysis if applicable
-		h.runVLMAnalysisIfNeeded(streamCtx, reqCtx, mode)
-
-		// Build QA request and invoke the appropriate service
-		qaReq := reqCtx.buildQARequest()
-
-		var serviceErr error
-		var stageName string
-		if mode == qaModeNormal {
-			stageName = "knowledge_qa_execution"
-			serviceErr = h.sessionService.KnowledgeQA(streamCtx.asyncCtx, qaReq, streamCtx.eventBus)
-		} else {
-			stageName = "agent_execution"
-			serviceErr = h.sessionService.AgentQA(streamCtx.asyncCtx, qaReq, streamCtx.eventBus)
-		}
-
-		if serviceErr != nil {
-			if mode == qaModeNormal && streamCtx.releaseTurn != nil {
-				streamCtx.releaseTurn()
-			}
-			// A user-requested stop cancels asyncCtx, which surfaces here as a
-			// context cancellation. That is an expected outcome, not a failure:
-			// the stop event already notifies the client, so don't emit a
-			// spurious error event (which would otherwise show an error toast).
-			if streamCtx.asyncCtx.Err() != nil {
-				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
-			} else {
-				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
-				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
-					Type:      event.EventError,
-					SessionID: sessionID,
-					Data: event.ErrorData{
-						Error:     serviceErr.Error(),
-						Stage:     stageName,
-						SessionID: sessionID,
-					},
-				})
-			}
-		}
+		h.runTurn(reqCtx, streamCtx, mode)
 	}()
 
 	if reqCtx.skipSSE {
@@ -1513,6 +1442,289 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	shouldWaitForTitle := generateTitle && reqCtx.session.Title == ""
 	h.handleAgentEventsForSSE(ctx, reqCtx.c, sessionID, reqCtx.assistantMessage.ID,
 		reqCtx.requestID, streamCtx.eventBus, shouldWaitForTitle, reqCtx.resourceRewriter)
+}
+
+// trackTurn indexes the turn as generating in this process until it reaches
+// a terminal state (see Handler.turns). Shutdown then ends it as interrupted
+// through the same finalizeTurn every other ending uses.
+func (h *Handler) trackTurn(reqCtx *qaRequestContext, streamCtx *sseStreamContext) {
+	if h.turns == nil {
+		return
+	}
+	streamCtx.unregisterTurn = h.turns.Register(
+		reqCtx.sessionID, reqCtx.assistantMessage.ID,
+		func(ctx context.Context) { h.finalizeTurn(ctx, streamCtx, interruptedOutcome(ctx)) },
+		func() {
+			// Shutdown cancels before it writes `interrupted`; the flag keeps
+			// the run's own teardown from recording that as a user stop.
+			streamCtx.shutdownInterrupted.Store(true)
+			if streamCtx.cancel != nil {
+				streamCtx.cancel()
+			}
+		},
+	)
+}
+
+// watchQuickAnswerTurn registers the event handlers that end a quick-answer
+// turn from its stream: the final answer chunk completes it, a stream-level
+// error fails it.
+func (h *Handler) watchQuickAnswerTurn(streamCtx *sseStreamContext, reqCtx *qaRequestContext) {
+	var completionHandled bool
+
+	// Persist the pipeline's retrieval/attachment stages so a reloaded
+	// conversation redraws the timeline it showed while streaming, including
+	// turns that searched and cited nothing.
+	registerQuickAnswerTimelineRecorder(streamCtx.eventBus, streamCtx.assistantMessage)
+
+	// Persist reasoning_content into agent_steps so historical reload can
+	// reconstruct the thinking card (same shape as Agent-mode steps).
+	// Accumulate on assistantMessage directly so user-initiated stop also
+	// keeps whatever reasoning had streamed before the cancel.
+	streamCtx.eventBus.On(event.EventAgentThought, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentThoughtData)
+		if !ok || data.Content == "" {
+			return nil
+		}
+		appendQuickAnswerReasoning(streamCtx.assistantMessage, data.Content)
+		return nil
+	})
+
+	streamCtx.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentFinalAnswerData)
+		if !ok {
+			return nil
+		}
+		streamCtx.assistantMessage.Content += data.Content
+		if data.IsFallback {
+			streamCtx.assistantMessage.IsFallback = true
+		}
+		if data.Truncated {
+			markQuickAnswerTruncated(streamCtx.assistantMessage)
+		}
+		if data.Done {
+			if completionHandled {
+				return nil
+			}
+			completionHandled = true
+
+			logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", reqCtx.sessionID)
+			updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
+			h.completeQuickAnswerTurn(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID)
+		}
+		return nil
+	})
+}
+
+// runTurn drives one assistant turn to its end: attachment resolution, the
+// QA service call, and every way the turn can finish (BF-03 §4.2). It runs in
+// its own goroutine from executeQA and is kept free of gin so the endings can
+// be tested directly.
+//
+// How each ending writes its terminal state:
+//   - quick-answer success: the EventAgentFinalAnswer handler → completed;
+//   - agent success: the defer below → completed;
+//   - user stop: the stop handler → stopped (a cancelled agent run persists
+//     `stopped` again here, which changes nothing);
+//   - agent engine error: the engine's error event → watchTurnErrors →
+//     failed (before the client sees the frame); the defer then persists the
+//     steps without completing the turn and drops queued follow-ups;
+//   - service error: finalizeTurn → failed, then the error event (once:
+//     not again when the engine already emitted it);
+//   - panic: finalizeTurn → interrupted before anything else persists;
+//   - agent mode backstop: finalizeTurn → interrupted, which is a no-op when
+//     the turn already ended. KnowledgeQA returns while its stream is still
+//     running, so no such backstop exists for quick answers: their stream
+//     errors are caught by watchTurnErrors and anything else is
+//     left to the reconciler.
+func (h *Handler) runTurn(reqCtx *qaRequestContext, streamCtx *sseStreamContext, mode qaMode) {
+	sessionID := reqCtx.sessionID
+	defer func() {
+		panicked := false
+		if r := recover(); r != nil {
+			panicked = true
+			if streamCtx.releaseTurn != nil {
+				streamCtx.releaseTurn()
+			}
+			buf := make([]byte, 10240)
+			runtime.Stack(buf, true)
+			stageName := "Knowledge QA"
+			if mode == qaModeAgent {
+				stageName = "Agent QA"
+			}
+			logger.ErrorWithFields(streamCtx.asyncCtx,
+				errors.NewInternalServerError(fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf))),
+				map[string]interface{}{"session_id": sessionID})
+			// No completion path ran or will run for this turn. Record
+			// the loss before anything else can persist a default state.
+			h.finalizeTurn(streamCtx.asyncCtx, streamCtx, interruptedOutcome(streamCtx.asyncCtx))
+		}
+		// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
+		if mode == qaModeAgent {
+			if streamCtx.releaseTurn != nil {
+				streamCtx.releaseTurn()
+			}
+			// Use WithoutCancel so a user-triggered stop (which cancels
+			// asyncCtx) doesn't also cancel the GORM UPDATE that persists
+			// AgentSteps/Content. Without this, cancelled-ctx makes
+			// GORM skip the write and the agent's intermediate steps
+			// (thinking / tool_call history) are lost on page refresh.
+			updateCtx := context.WithValue(
+				context.WithoutCancel(streamCtx.asyncCtx),
+				types.TenantIDContextKey, reqCtx.session.TenantID,
+			)
+			// A cancelled run is a user stop (or a shutdown interrupt,
+			// which already wrote `interrupted` and is kept as is).
+			outcome := types.MessageStatusCompleted
+			if streamCtx.asyncCtx.Err() != nil {
+				outcome = types.MessageStatusStopped
+			}
+			if streamCtx.shutdownInterrupted.Load() {
+				// Shutdown cancelled the run and writes `interrupted` itself;
+				// record it here too so the persist below keeps that state
+				// (whichever lands first, the other matches it).
+				h.finalizeTurn(updateCtx, streamCtx, interruptedOutcome(updateCtx))
+			}
+
+			// Claim any follow-up before completing this row. liveAgentRun
+			// treats a completed assistant as idle and would ClearLiveRun
+			// the old marker — exactly the new_run window. The follow-up
+			// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
+			if outcome == types.MessageStatusStopped || panicked || streamCtx.turnEndedWithoutAnswer() {
+				// The turn was cancelled (a user stop), failed or panicked.
+				// Queued follow-ups are dropped rather than fired off as a
+				// brand-new run the user did not ask for: after a stop that
+				// is what stopping means, and after a failure the follow-up
+				// would build on an answer that does not exist. A failed
+				// turn keeps its state; the persist below only stores its
+				// steps and partial content.
+				injected := map[string]struct{}{}
+				if streamCtx.steerSink != nil {
+					injected = streamCtx.steerSink.InjectedIDs()
+				}
+				h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
+				h.completeStreamAssistantMessage(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID, outcome)
+			} else {
+				kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+				h.completeStreamAssistantMessage(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID, outcome)
+				// A /steer that landed while we were completing still sits
+				// on this run. Claim it before ClearLiveRun so it is not
+				// stranded on a list nobody will drain.
+				if !kicked {
+					h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+				}
+			}
+			if err := h.streamManager.ClearLiveRun(
+				updateCtx, sessionID, streamCtx.assistantMessage.ID,
+			); err != nil {
+				logger.Warnf(updateCtx, "live run cleanup failed for session %s: %v", sessionID, err)
+			}
+			logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
+			// Backstop: this goroutine's exit is the end of an agent
+			// turn. If every path above failed to write a terminal state
+			// (persistence unavailable, a missed branch), leave the row
+			// interrupted instead of generating forever. The write is
+			// conditional, so a turn that already ended is untouched.
+			h.finalizeTurn(updateCtx, streamCtx, interruptedOutcome(updateCtx))
+		}
+		// Knowledge mode normally releases on EventAgentFinalAnswer Done.
+		// If that event never fires, release here so rewind is not blocked
+		// until the Redis turn TTL expires.
+		if mode == qaModeNormal && streamCtx.releaseTurn != nil {
+			streamCtx.releaseTurn()
+		}
+	}()
+
+	// Resolve pre-uploaded attachments (may still be parsing): waits with a
+	// timeline step so the send is not blocked, then injects content/images.
+	if mode == qaModeAgent {
+		h.describeTemporaryAttachmentsForAgent(streamCtx, reqCtx)
+	} else {
+		h.resolveTemporaryAttachments(streamCtx, reqCtx)
+	}
+
+	// Run VLM image analysis if applicable
+	h.runVLMAnalysisIfNeeded(streamCtx, reqCtx, mode)
+
+	// Build QA request and invoke the appropriate service
+	qaReq := reqCtx.buildQARequest()
+
+	var serviceErr error
+	var stageName string
+	if mode == qaModeNormal {
+		stageName = stageKnowledgeQA
+		serviceErr = h.sessionService.KnowledgeQA(streamCtx.asyncCtx, qaReq, streamCtx.eventBus)
+	} else {
+		stageName = stageAgentExecution
+		serviceErr = h.sessionService.AgentQA(streamCtx.asyncCtx, qaReq, streamCtx.eventBus)
+	}
+
+	if serviceErr != nil {
+		if mode == qaModeNormal && streamCtx.releaseTurn != nil {
+			streamCtx.releaseTurn()
+		}
+		// A user-requested stop cancels asyncCtx, which surfaces here as a
+		// context cancellation. That is an expected outcome, not a failure:
+		// the stop handler already wrote `stopped` and the stop event
+		// notifies the client, so don't emit a spurious error event (which
+		// would otherwise show an error toast).
+		switch {
+		case streamCtx.asyncCtx.Err() != nil:
+			logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
+		case streamCtx.turnEndedWithoutAnswer():
+			// The engine already emitted the error event for this failure and
+			// watchTurnErrors stored it; a second event would show twice.
+			logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
+		default:
+			logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
+			// The turn is over: write its terminal state before telling
+			// the client, so a reload right after the error never sees a
+			// message that is still "generating" (BF-03 §4.2).
+			outcome := failureOutcome(streamCtx.asyncCtx, stageName, serviceErr)
+			h.finalizeTurn(streamCtx.asyncCtx, streamCtx, outcome)
+			if err := streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
+				Type:      event.EventError,
+				SessionID: sessionID,
+				Data: event.ErrorData{
+					Error:     serviceErr.Error(),
+					ErrorCode: outcome.code,
+					Stage:     stageName,
+					SessionID: sessionID,
+				},
+			}); err != nil {
+				// The terminal state is already stored; only the live
+				// notification was lost, and a reload shows the failure.
+				logger.Warnf(streamCtx.asyncCtx, "error event for session %s not delivered: %v", sessionID, err)
+			}
+		}
+	}
+}
+
+// watchTurnErrors ends a turn whose generation reported an error event. Every
+// error event ends the turn it belongs to: the agent engine emits one when
+// its run fails, and a quick-answer stream reports model failures from its
+// own goroutine after KnowledgeQA has already returned nil, where the
+// service-error branch in runTurn never sees them (BF-03 §4.2).
+func (h *Handler) watchTurnErrors(streamCtx *sseStreamContext) {
+	streamCtx.eventBus.On(event.EventError, func(ctx context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.ErrorData)
+		if !ok {
+			return nil
+		}
+		// A cancelled run is a stop or a shutdown; each writes its own
+		// state, and the engine's cancellation error is not a failure.
+		if streamCtx.asyncCtx != nil && streamCtx.asyncCtx.Err() != nil {
+			return nil
+		}
+		// The service-error branch in runTurn and the persist-failure path
+		// end the turn before they emit; nothing is left to do for those.
+		outcome := failureOutcome(ctx, data.Stage, stderrors.New(data.Error))
+		if data.ErrorCode != "" {
+			outcome.code = data.ErrorCode
+			outcome.message = types.TurnFailedMessage(data.ErrorCode, types.LanguageFromContextOrDefault(ctx))
+		}
+		h.finalizeTurn(ctx, streamCtx, outcome)
+		return nil
+	})
 }
 
 // runVLMAnalysisIfNeeded runs VLM image analysis within the async goroutine,
@@ -1976,7 +2188,8 @@ func (h *Handler) completeQuickAnswerTurn(
 			},
 		})
 	}
-	h.completeStreamAssistantMessage(ctx, streamCtx, query, userMessageID)
+	streamCtx.endTurn()
+	h.completeStreamAssistantMessage(ctx, streamCtx, query, userMessageID, types.MessageStatusCompleted)
 	if streamCtx.releaseTurn != nil {
 		streamCtx.releaseTurn()
 	}
@@ -2006,16 +2219,44 @@ func (h *Handler) sessionTenantInfoContext(ctx context.Context) (context.Context
 // completeStreamAssistantMessage makes output readable before notifying clients
 // to perform their final image/artifact fetch. A failed write must not announce
 // a successful completion whose file authorization evidence is still missing.
+// status is the terminal state the turn ends with when the write succeeds
+// (completed, or stopped for a cancelled agent run); a turn that already ended
+// as failed or interrupted keeps that state and is not announced as complete.
 func (h *Handler) completeStreamAssistantMessage(
-	ctx context.Context, streamCtx *sseStreamContext, query, userMessageID string,
+	ctx context.Context, streamCtx *sseStreamContext, query, userMessageID string, status types.MessageStatus,
 ) {
-	if err := h.completeAssistantMessage(ctx, streamCtx.assistantMessage, query, userMessageID); err != nil {
+	streamCtx.endTurn()
+	committed, err := h.persistStreamTurn(ctx, streamCtx, query, userMessageID, status)
+	if err != nil {
+		// The answer exists only in memory. End the turn as a persistence
+		// failure before telling the client, so a reload right after the
+		// error already shows it; if the database is still unavailable the
+		// row stays generating and the reconciler ends it later (spec §6.1).
+		h.finalizeTurn(ctx, streamCtx, turnOutcome{
+			status: types.MessageStatusFailed,
+			code:   types.TurnErrorCodePersistFailed,
+			message: types.TurnFailedMessage(types.TurnErrorCodePersistFailed,
+				types.LanguageFromContextOrDefault(ctx)),
+		})
 		if streamCtx.streamHandler != nil {
 			_ = streamCtx.streamHandler.handleError(ctx, event.Event{
 				ID: uuid.New().String(), Type: event.EventError, SessionID: streamCtx.assistantMessage.SessionID,
-				Data: event.ErrorData{Stage: "message_persistence", Error: "Failed to save assistant message"},
+				Data: event.ErrorData{
+					Stage:     "message_persistence",
+					ErrorCode: types.TurnErrorCodePersistFailed,
+					Error:     "Failed to save assistant message",
+				},
 			})
 		}
+		return
+	}
+	if committed != types.MessageStatusCompleted && committed != types.MessageStatusStopped {
+		// failed / interrupted: a completion event would contradict the
+		// stored state. The client must still learn that the turn is over:
+		// a failure already sent its error frame, but a panic, a shutdown or
+		// a row another path ended first (reconciler, another replica) did
+		// not, and the client would otherwise wait on "replying".
+		h.reportTurnEndedWithoutAnswer(ctx, streamCtx)
 		return
 	}
 	if streamCtx.streamHandler != nil {
@@ -2025,16 +2266,62 @@ func (h *Handler) completeStreamAssistantMessage(
 	}
 }
 
+// turnPersistTimeout bounds the full persist of a turn. It carries content,
+// steps and artifacts, so it gets more room than a status-only write.
+var turnPersistTimeout = 30 * time.Second
+
+// persistStreamTurn runs completeAssistantMessage for a streaming turn under
+// its turn lock, with a deadline of its own.
+func (h *Handler) persistStreamTurn(
+	ctx context.Context, streamCtx *sseStreamContext, query, userMessageID string, status types.MessageStatus,
+) (types.MessageStatus, error) {
+	ctx, cancel := turnWriteContext(ctx, turnPersistTimeout)
+	defer cancel()
+	streamCtx.turnMu.Lock()
+	defer streamCtx.turnMu.Unlock()
+	return h.completeAssistantMessage(ctx, streamCtx.assistantMessage, query, userMessageID, status)
+}
+
 // completeAssistantMessage marks an assistant message as complete, updates it,
 // and asynchronously indexes the Q&A pair into the chat history knowledge base.
+//
+// This is the full persist of a finished turn (content, steps, references,
+// artifacts), so it is also how success and a user stop write their terminal
+// state: status and is_completed go in the same row write (BF-03 C1). A turn
+// that already decided its state in memory — failed or interrupted by
+// finalizeTurn before this call — keeps that state instead of being relabelled,
+// and a row another path already ended differently is not written at all: the
+// in-memory message then takes the stored state. It returns the state the row
+// is in afterwards. Only a completed or stopped turn runs the follow-up work
+// (indexing, suggestions, memory); a failed or interrupted one has no answer.
 func (h *Handler) completeAssistantMessage(
-	ctx context.Context, assistantMessage *types.Message, userQuery, userMessageID string,
-) error {
+	ctx context.Context, assistantMessage *types.Message, userQuery, userMessageID string, status types.MessageStatus,
+) (types.MessageStatus, error) {
+	if assistantMessage == nil {
+		return "", nil
+	}
+	prev := *assistantMessage
+	if turnStatusDecided(assistantMessage) {
+		status = assistantMessage.Status
+	}
 	assistantMessage.UpdatedAt = time.Now()
 	assistantMessage.IsCompleted = true
-	if err := h.messageService.UpdateMessage(ctx, assistantMessage); err != nil {
+	assistantMessage.Status = status
+	applied, err := h.messageService.PersistTurnMessage(ctx, assistantMessage)
+	if err != nil {
+		// Nothing was stored: memory must not claim an ending the database
+		// does not have, or the fallback finalize would skip the turn.
+		assistantMessage.Status = prev.Status
+		assistantMessage.IsCompleted = prev.IsCompleted
+		assistantMessage.UpdatedAt = prev.UpdatedAt
 		logger.Errorf(ctx, "Failed to persist assistant message %s: %v", assistantMessage.ID, err)
-		return err
+		return "", err
+	}
+	if !applied {
+		return h.syncStoredTurnState(ctx, assistantMessage), nil
+	}
+	if status != types.MessageStatusCompleted && status != types.MessageStatusStopped {
+		return status, nil
 	}
 
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
@@ -2056,7 +2343,23 @@ func (h *Handler) completeAssistantMessage(
 	if userQuery != "" {
 		go h.recordTurnMemory(bgCtx, assistantMessage, userQuery, userMessageID)
 	}
-	return nil
+	return status, nil
+}
+
+// syncStoredTurnState makes the in-memory message agree with a row another
+// path already ended, and returns that state. When the row cannot be read the
+// turn is reported as interrupted: it is over, and not as this call wanted.
+func (h *Handler) syncStoredTurnState(ctx context.Context, assistantMessage *types.Message) types.MessageStatus {
+	stored, err := h.messageService.GetMessage(ctx, assistantMessage.SessionID, assistantMessage.ID)
+	if err != nil || stored == nil {
+		logger.Warnf(ctx, "Turn %s already ended elsewhere; stored state unreadable: %v", assistantMessage.ID, err)
+		assistantMessage.Status = types.MessageStatusInterrupted
+		return types.MessageStatusInterrupted
+	}
+	assistantMessage.Status = stored.EffectiveStatus()
+	assistantMessage.ErrorCode, assistantMessage.ErrorMessage = stored.ErrorCode, stored.ErrorMessage
+	assistantMessage.IsCompleted = stored.IsCompleted
+	return assistantMessage.Status
 }
 
 // recordTurnMemory runs the long-term memory write path for a finished turn.

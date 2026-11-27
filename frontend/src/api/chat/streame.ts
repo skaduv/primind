@@ -25,6 +25,26 @@ interface StreamOptions {
   chunkInterval?: number
 }
 
+/**
+ * 续流（continue-stream）握手失败的原因（BF-03）。`not_found` 表示后端已经没有这条
+ * 消息的流：要么轮次已结束（status 为其终态），要么流已过期。两种情况都不是网络
+ * 故障，调用方应静默结束"正在回复"，而不是弹"流式连接失败"。
+ */
+export type ResumeFailure = {
+  kind: 'not_found'
+  // 后端在 404 响应体里给出的轮次状态；握手失败读不到时为空串
+  status: string
+}
+
+const readResumeStatus = async (res: Response): Promise<string> => {
+  try {
+    const body = await res.json()
+    return typeof body?.status === 'string' ? body.status : ''
+  } catch {
+    return ''
+  }
+}
+
 export function useStream() {
   // 响应式状态
   const output = ref('')              // 显示内容
@@ -32,6 +52,8 @@ export function useStream() {
   const isLoading = ref(false)        // 初始加载
   const error = ref<string | null>(null)// 错误信息
   const lastStreamRequest = ref<StreamRequestMeta | null>(null)
+  // 最近一次续流握手失败的细节；每次 startStream 重置
+  const resumeFailure = ref<ResumeFailure | null>(null)
   let controller = new AbortController()
   let streamGeneration = 0
 
@@ -46,8 +68,11 @@ export function useStream() {
     // 重置状态
     output.value = '';
     error.value = null;
+    resumeFailure.value = null;
     isStreaming.value = true;
     isLoading.value = true;
+    // 只有续流请求的 404 才是"没有可恢复的流"，发起提问的 404 是真正的错误
+    const resuming = params.method === 'GET' && /continue-stream/.test(params.url)
 
     // 获取API配置
     const apiUrl = getApiBaseUrl();
@@ -188,7 +213,14 @@ export function useStream() {
         onopen: async (res) => {
           // 401 is recoverable (refresh + replay); everything else is not.
           if (res.status === 401) throw new StreamAuthError(res.status);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            if (resuming && res.status === 404) {
+              // The backend answers with the message's turn status in the
+              // body (BF-03); remember it so the caller can end quietly.
+              resumeFailure.value = { kind: 'not_found', status: await readResumeStatus(res) };
+            }
+            throw new Error(`HTTP ${res.status}`);
+          }
           console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           isLoading.value = false;
         },
@@ -271,6 +303,7 @@ export function useStream() {
     isLoading,       // 初始连接状态
     error,
     lastStreamRequest,
+    resumeFailure,   // 续流握手失败的细节（BF-03）
     onChunk,
     startStream,     // 启动流
     stopStream       // 手动停止

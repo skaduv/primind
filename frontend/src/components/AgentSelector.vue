@@ -188,7 +188,8 @@ import { type CustomAgent, BUILTIN_QUICK_ANSWER_ID, BUILTIN_SMART_REASONING_ID }
 import AgentAvatar from '@/components/AgentAvatar.vue';
 import { useOrganizationStore } from '@/stores/organization';
 import { useSettingsStore } from '@/stores/settings';
-import type { SharedAgentInfo } from '@/api/organization';
+import type { SharedAgentInfo, AgentReadinessIssue } from '@/api/organization';
+import { agentReadinessIssueLabels, isSharedAgentNotReady } from '@/utils/agent-share-readiness';
 import { getRootZoom, rectToCssPx, cssViewportSize } from '@/utils/zoom';
 import { type ModelConfig } from '@/api/model';
 import {
@@ -275,6 +276,19 @@ const sharedAgentsList = computed<SharedAgentSelection[]>(() =>
     .filter(shared => !shared.disabled_by_me)
     .map(shared => ({ ...shared, agent: toCustomAgent(shared.agent) })),
 );
+
+// 后端判定已保存配置不完整的共享智能体（ready=false）。接收方无从检查对方
+// 空间的模型，所以以后端的结论为准；旧后端不带 ready 时仍按本地规则判断。
+const sharedNotReadyKey = (agentId: string, sourceTenantId?: string) => `${agentId}@${sourceTenantId ?? ''}`;
+const serverNotReadyShared = computed(() => {
+  const map = new Map<string, AgentReadinessIssue[]>();
+  for (const shared of sharedAgentsList.value) {
+    if (isSharedAgentNotReady(shared)) {
+      map.set(sharedNotReadyKey(shared.agent.id, String(shared.source_tenant_id)), shared.issues ?? []);
+    }
+  }
+  return map;
+});
 
 const currentAgentSourceTenantId = computed(() => settingsStore.selectedAgentSourceTenantId ?? null);
 
@@ -397,6 +411,9 @@ const getAgentNotReadyReasonKeysFor = (agent: CustomAgent, sourceTenantId?: stri
 };
 
 const getAgentNotReadyLabels = (agent: CustomAgent, sourceTenantId?: string): string[] => {
+  if (sourceTenantId && serverNotReadyShared.value.has(sharedNotReadyKey(agent.id, sourceTenantId))) {
+    return [t('organization.share.sharedNotReady')];
+  }
   return formatAgentNotReadyReasons(
     getAgentNotReadyReasonKeysFor(agent, sourceTenantId),
     agent.is_builtin,
@@ -408,6 +425,16 @@ const formatNotReadyHint = (agent: CustomAgent, sourceTenantId?: string): string
 };
 
 const emitAgentNotReady = (agent: CustomAgent, sourceTenantId?: string) => {
+  // 共享智能体配置不完整：带上后端给出的具体缺项，由对话入口提示联系创建者
+  const serverIssues = sourceTenantId
+    ? serverNotReadyShared.value.get(sharedNotReadyKey(agent.id, sourceTenantId))
+    : undefined;
+  if (serverIssues) {
+    const detail = agentReadinessIssueLabels((key) => t(key), serverIssues);
+    const labels = detail.length > 0 ? detail : getAgentNotReadyLabels(agent, sourceTenantId);
+    emit('not-ready', agent, labels, [], sourceTenantId);
+    return;
+  }
   const keys = getAgentNotReadyReasonKeysFor(agent, sourceTenantId);
   const labels = formatAgentNotReadyReasons(keys, agent.is_builtin);
   emit('not-ready', agent, labels, keys, sourceTenantId);

@@ -185,3 +185,78 @@ test('retrieval strategy settings are hidden in agent mode, where search_knowled
   const modeWatch = source.match(/watch\(isAgentMode, \(isAgent\) => \{([\s\S]*?)^\}\);/m)?.[1] ?? ''
   assert.match(modeWatch, /isAgent && \([^)]*currentSection\.value === 'retrieval'/)
 })
+
+// Sharing reads the saved configuration, so the share panel needs to know
+// whether the editor holds unsaved edits, and needs a save that keeps the
+// window open ("保存并共享").
+test('the share panel is told about unsaved edits and can save without closing', () => {
+  assert.match(
+    source,
+    /<AgentShareSettings :agent-id="editorAgent\.id" :agent="editorAgent" :is-dirty="\(\) => modalShell\.isDirty\(\)"\s*:save-draft="saveDraft" @configure="handleShareConfigure" \/>/,
+  )
+  assert.match(source, /const handleSave = \(\) => saveAgentForm\(true\);/)
+  assert.match(source, /const saveDraft = \(\) => saveAgentForm\(false\);/)
+})
+
+test('saving before a share keeps the editor open and marks the form saved', () => {
+  const branch = source.match(
+    /const saved: any = await updateAgent\(formData\.value\.id, payload\);([\s\S]*?)return true;/,
+  )?.[1]
+  assert.ok(branch, 'expected the save-without-close branch')
+  assert.doesNotMatch(branch, /handleClose\(\)/)
+  assert.match(branch, /emit\('success'\);/)
+  assert.match(branch, /modalShell\.markClean\(\);/)
+  assert.match(branch, /notifyAgentSaveWarnings\(saved\?\.warnings\);/)
+  // The regular save still warns about an already shared agent.
+  assert.match(source, /handleClose\(\);\s*notifyAllowedToolsWarnings\(updated\?\.allowed_tools_warnings\);\s*notifyAgentSaveWarnings\(updated\?\.warnings\);/)
+})
+
+test('a refused share sends the editor to the model section and the missing field', () => {
+  assert.match(
+    source,
+    /const handleShareConfigure = \(issues: AgentReadinessIssue\[\]\) => \{\s*const field = firstReadinessHighlightField\(issues\);\s*if \(field\) applyInitialFieldHighlight\(field\);\s*\};/,
+  )
+})
+
+// Saves that keep the editor open (after create, "保存并共享") must take the
+// tool list the server stored: it may rename legacy tools or drop tools other
+// settings control. Otherwise the tools page keeps the old ticks while the
+// form counts as saved, and the next save resubmits them.
+test('saves that keep the editor open adopt the tool list the server stored', async () => {
+  const start = source.indexOf('const syncSavedAllowedTools =')
+  const end = source.indexOf('// 校验并保存当前表单', start)
+  assert.ok(start >= 0 && end > start, 'expected syncSavedAllowedTools')
+  const ts = (await import('typescript')).default
+  const vm = await import('node:vm')
+  const { ref } = await import('vue')
+  const formData = ref({ config: { allowed_tools: ['knowledge_search', 'dropped_tool'] } })
+  const storedToolNames = ref(['knowledge_search', 'dropped_tool'])
+  const keepAllowedToolsUnset = ref(true)
+  const { syncSavedAllowedTools } = vm.runInNewContext(
+    ts.transpile(`${source.slice(start, end)}\n({ syncSavedAllowedTools })`),
+    {
+      formData, storedToolNames, keepAllowedToolsUnset,
+      normalizeLegacyToolNames: (names) => names.map((name) => (name === 'knowledge_search' ? 'search_knowledge' : name)),
+    },
+  )
+
+  // Arrays built inside the sandbox have its prototype; compare plain copies.
+  const tools = () => Array.from(formData.value.config.allowed_tools)
+  syncSavedAllowedTools({ config: { allowed_tools: ['knowledge_search'] } })
+  assert.deepEqual(tools(), ['search_knowledge'])
+  assert.deepEqual(Array.from(storedToolNames.value), ['search_knowledge'])
+  assert.equal(keepAllowedToolsUnset.value, false)
+
+  // A response without a tool list leaves the form alone.
+  syncSavedAllowedTools({ config: {} })
+  syncSavedAllowedTools(undefined)
+  assert.deepEqual(tools(), ['search_knowledge'])
+
+  // Both branches sync before the form is marked saved.
+  const createBranch = source.match(/savedAgent\.value = created;([\s\S]*?)modalShell\.markClean\(\);/)?.[1] ?? ''
+  assert.match(createBranch, /syncSavedAllowedTools\(created\);/)
+  const draftBranch = source.match(
+    /const saved: any = await updateAgent\(formData\.value\.id, payload\);([\s\S]*?)modalShell\.markClean\(\);/,
+  )?.[1] ?? ''
+  assert.match(draftBranch, /syncSavedAllowedTools\(saved\?\.data\);/)
+})

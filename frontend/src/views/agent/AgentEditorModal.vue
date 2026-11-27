@@ -1796,10 +1796,12 @@
         </div>
       </div>
 
-      <!-- 共享管理（仅编辑模式且非内置智能体） -->
+      <!-- 共享管理（仅编辑模式且非内置智能体）。共享读取的是已保存的配置：
+           编辑窗口有未保存修改时由共享面板先确认，并可调用 saveDraft 保存后继续。 -->
       <div v-if="editorMode === 'edit' && editorAgent?.id && !editorAgent?.is_builtin"
         v-show="currentSection === 'share'" class="section">
-        <AgentShareSettings :agent-id="editorAgent.id" :agent="editorAgent" />
+        <AgentShareSettings :agent-id="editorAgent.id" :agent="editorAgent" :is-dirty="() => modalShell.isDirty()"
+          :save-draft="saveDraft" @configure="handleShareConfigure" />
       </div>
     </div>
 
@@ -1878,6 +1880,8 @@ import {
 } from '@/api/agent';
 import { type ModelConfig } from '@/api/model';
 import { type AgentNotReadyReasonKey, agentRequiresRerankModel } from '@/utils/agent-readiness';
+import { type AgentReadinessIssue } from '@/api/organization';
+import { firstReadinessHighlightField, parseAgentSaveWarnings, sharedAgentNotReadyIssues } from '@/utils/agent-share-readiness';
 import { normalizeLegacyToolNames } from '@/utils/legacy-tool-names';
 import { installSkillCatalog, type SkillCatalogItem } from '@/api/skill';
 import { installUpgradable, servedPreviousText, upgradeVersions } from '@/utils/skillUpgrade';
@@ -4093,6 +4097,19 @@ const notifyAllowedToolsWarnings = (warnings?: AllowedToolsWarnings) => {
   }
 };
 
+// 已共享的智能体保存成功，但当前配置会让接收方无法使用：只提示，不拦截
+const notifyAgentSaveWarnings = (warnings?: unknown) => {
+  if (sharedAgentNotReadyIssues(parseAgentSaveWarnings({ warnings })).length > 0) {
+    MessagePlugin.warning(t('agentEditor.tools.sharedNotReadyWarning'));
+  }
+};
+
+// 共享被拒且带有缺项：切到「模型配置」并定位到对应字段
+const handleShareConfigure = (issues: AgentReadinessIssue[]) => {
+  const field = firstReadinessHighlightField(issues);
+  if (field) applyInitialFieldHighlight(field);
+};
+
 // 加载依赖数据（复用空间级缓存，避免重复请求）
 const loadDependencies = async () => {
   try {
@@ -4967,27 +4984,39 @@ const hasPlaceholder = (text: string | undefined, placeholder: string): boolean 
   return text.includes(`{{${placeholder}}}`);
 };
 
-const handleSave = async () => {
+// 保存后窗口不关时（新建后、「保存并共享」）与后端返回的工具列表同步：后端可能改写了它
+// （旧名称映射、移除由其他设置控制的工具），不同步的话工具页仍显示旧勾选，
+// 再次保存会重复提交并重复提示。
+const syncSavedAllowedTools = (saved?: CustomAgent | null) => {
+  if (!Array.isArray(saved?.config?.allowed_tools)) return;
+  formData.value.config.allowed_tools = normalizeLegacyToolNames(saved.config.allowed_tools);
+  storedToolNames.value = [...formData.value.config.allowed_tools];
+  keepAllowedToolsUnset.value = false;
+};
+
+// 校验并保存当前表单，返回是否保存成功。
+// close=false（共享前的"保存并共享"）保存成功后留在编辑窗口。
+const saveAgentForm = async (close: boolean): Promise<boolean> => {
   // 验证必填项（内置智能体不验证名称和系统提示词）
   if (!isBuiltinAgent.value) {
     if (!formData.value.name || !formData.value.name.trim()) {
       MessagePlugin.error(t('agent.editor.nameRequired'));
       currentSection.value = 'basic';
-      return;
+      return false;
     }
 
     // 自定义智能体必须填写系统提示词
     if (!formData.value.config.system_prompt || !formData.value.config.system_prompt.trim()) {
       MessagePlugin.error(t('agent.editor.systemPromptRequired'));
       currentSection.value = 'prompts';
-      return;
+      return false;
     }
 
     // 自定义智能体普通模式必须填写上下文模板
     if (!isAgentMode.value && (!formData.value.config.context_template || !formData.value.config.context_template.trim())) {
       MessagePlugin.error(t('agent.editor.contextTemplateRequired'));
       currentSection.value = 'prompts';
-      return;
+      return false;
     }
   }
 
@@ -4999,7 +5028,7 @@ const handleSave = async () => {
       if (!hasPlaceholder(rewritePrompt, 'query')) {
         MessagePlugin.error(t('agent.editor.queryMissingInRewrite'));
         currentSection.value = 'prompts';
-        return;
+        return false;
       }
     }
   }
@@ -5011,21 +5040,21 @@ const handleSave = async () => {
     if (fallbackPrompt.trim() && !hasPlaceholder(fallbackPrompt, 'query')) {
       MessagePlugin.error(t('agent.editor.queryMissingInFallback'));
       currentSection.value = 'prompts';
-      return;
+      return false;
     }
   }
 
   if (!formData.value.config.model_id) {
     MessagePlugin.error(t('agent.editor.modelRequired'));
     currentSection.value = 'model';
-    return;
+    return false;
   }
 
   // 校验 VLM 模型（当图片上传启用时必填）
   if (formData.value.config.image_upload_enabled && !formData.value.config.vlm_model_id) {
     MessagePlugin.error(t('agentEditor.imageUpload.vlmModelRequired'));
     currentSection.value = 'multimodal';
-    return;
+    return false;
   }
 
   // ReRank 模型按运行范围按需使用：知识库范围为 none，或未启用
@@ -5055,13 +5084,7 @@ const handleSave = async () => {
       }
       savedAgent.value = created;
       formData.value.id = created.id;
-      // 后端可能改写了工具列表（旧名称映射、移除由其他设置控制的工具），与之同步，
-      // 避免再次保存时重复提示。
-      if (Array.isArray(created.config?.allowed_tools)) {
-        formData.value.config.allowed_tools = normalizeLegacyToolNames(created.config.allowed_tools);
-        storedToolNames.value = [...formData.value.config.allowed_tools];
-        keepAllowedToolsUnset.value = false;
-      }
+      syncSavedAllowedTools(created);
       modalShell.markClean();
       markContextualGuideDone('agentCreate')
       currentSection.value = 'basic';
@@ -5069,19 +5092,38 @@ const handleSave = async () => {
       MessagePlugin.success(t('agent.messages.created'));
       notifyAllowedToolsWarnings(result?.allowed_tools_warnings);
       emit('success', created);
+      return true;
+    } else if (!close) {
+      // 共享前保存：窗口不关，表单快照记为已保存，随后的共享不再提示"未保存"
+      const saved: any = await updateAgent(formData.value.id, payload);
+      MessagePlugin.success(t('common.saveSuccess'));
+      emit('success');
+      syncSavedAllowedTools(saved?.data);
+      modalShell.markClean();
+      notifyAllowedToolsWarnings(saved?.allowed_tools_warnings);
+      notifyAgentSaveWarnings(saved?.warnings);
+      return true;
     } else {
       const updated: any = await updateAgent(formData.value.id, payload);
       MessagePlugin.success(t('agent.messages.updated'));
       emit('success');
       handleClose();
       notifyAllowedToolsWarnings(updated?.allowed_tools_warnings);
+      notifyAgentSaveWarnings(updated?.warnings);
+      return true;
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('agent.messages.saveFailed'));
+    return false;
   } finally {
     saving.value = false;
   }
 };
+
+// 「保存并关闭」
+const handleSave = () => saveAgentForm(true);
+// 保存编辑窗口里的当前修改但不关闭窗口（「保存并共享」用）；返回是否保存成功
+const saveDraft = () => saveAgentForm(false);
 </script>
 
 <style scoped lang="less">

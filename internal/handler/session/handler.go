@@ -11,6 +11,7 @@ import (
 	"github.com/primind/primind/internal/errors"
 	"github.com/primind/primind/internal/infrastructure/docparser"
 	"github.com/primind/primind/internal/logger"
+	"github.com/primind/primind/internal/turn"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	secutils "github.com/primind/primind/internal/utils"
@@ -76,6 +77,10 @@ type Handler struct {
 	// validate CreateSession's optional project_dir. Nil means none are
 	// approved, so a non-empty project_dir is rejected.
 	approvedProjectDirs HostProjectDirsLoader
+	// turns indexes the assistant turns generating in this process, so
+	// graceful shutdown can end them and the reconciler can tell them from
+	// abandoned rows (BF-03 §4.4, §4.5). Nil disables the index.
+	turns *turn.Registry
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies
@@ -113,6 +118,7 @@ func NewHandler(
 	rewindService *service.SessionRewindService,
 	approvedProjectDirs HostProjectDirsLoader,
 	agentAccessResolver service.AgentAccessResolver,
+	turns *turn.Registry,
 ) *Handler {
 	h := &Handler{
 		browserSkill:          browserSkill,
@@ -144,6 +150,7 @@ func NewHandler(
 		desktopLast:           desktopLast,
 		redis:                 rdb,
 		approvedProjectDirs:   approvedProjectDirs,
+		turns:                 turns,
 		attachmentProcessor: NewAttachmentProcessor(
 			fileService,
 			documentReader,

@@ -29,6 +29,14 @@ type sandboxConfigLookup interface {
 	Get(ctx context.Context, tenantID uint64, id string) (*types.TenantSandboxConfigEntity, error)
 }
 
+// sharedAgentReadinessChecker is the check made right after an agent is
+// saved, for an agent this workspace has shared. It is an optional capability
+// of the agent service: a service without it (a test double) simply reports
+// no warning.
+type sharedAgentReadinessChecker interface {
+	SharedAgentReadinessIssues(ctx context.Context, agent *types.CustomAgent) []types.AgentReadinessIssue
+}
+
 // CustomAgentHandler defines the HTTP handler for custom agent operations
 type CustomAgentHandler struct {
 	service interfaces.CustomAgentService
@@ -481,6 +489,15 @@ func (h *CustomAgentHandler) UpdateAgent(c *gin.Context) {
 	}
 	if toolWarnings != nil {
 		resp["allowed_tools_warnings"] = toolWarnings
+	}
+	// Saving a shared agent with a configuration receivers cannot use is
+	// allowed (C3), but the editor is told.
+	if checker, ok := h.service.(sharedAgentReadinessChecker); ok {
+		if issues := checker.SharedAgentReadinessIssues(ctx, updatedAgent); len(issues) > 0 {
+			resp["warnings"] = []types.AgentSaveWarning{
+				{Code: types.AgentWarningSharedNotReady, Issues: issues},
+			}
+		}
 	}
 	c.JSON(http.StatusOK, resp)
 }

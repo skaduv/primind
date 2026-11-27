@@ -63,6 +63,7 @@ function fixture() {
     }).outputText
     runInNewContext(compiled, {
       exports, setTimeout, clearTimeout,
+      requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
       console: { ...console, error: (...args: unknown[]) => errors.push(args) },
       window: { addEventListener() {}, removeEventListener() {}, setInterval, clearInterval },
       require(name: string) {
@@ -87,7 +88,7 @@ function fixture() {
     app.mount({})
     return { vm: instance.value, unmount: () => { app.unmount(); assert.deepEqual(errors, []) } }
   }
-  return { mount, dialogs, resources, ui }
+  return { mount, dialogs, resources, ui, modules }
 }
 
 async function settle() {
@@ -162,6 +163,101 @@ test('closing during initialization does not warn or let a stale load replace th
     await settle()
     assert.equal(vm.modalShell.isDirty(), true)
   } finally { release(); unmount() }
+})
+
+// The agent editor's "保存并共享" saves through the same validation and
+// request as "保存并关闭", but keeps the window open and clears the dirty
+// state, so the share that follows is not asked about unsaved edits again.
+function mountEditableAgent(f: ReturnType<typeof fixture>) {
+  const successes: string[] = []
+  const props = vue.reactive({
+    visible: false, mode: 'edit',
+    agent: { id: 'agent', name: 'Original', config: { model_id: 'model', kb_selection_mode: 'none', allowed_tools: [] } },
+    'onUpdate:visible': (value: boolean) => { props.visible = value },
+    onSuccess: () => { successes.push('success') },
+  })
+  const mounted = f.mount('../views/agent/AgentEditorModal.vue', props)
+  return { ...mounted, props, successes }
+}
+
+async function makeAgentSavable(vm: any) {
+  vm.formData.config.system_prompt = 'You are helpful'
+  vm.formData.config.context_template = 'Answer from {{context}}'
+}
+
+test('saving before a share keeps the editor open and marks the form clean', async () => {
+  const f = fixture()
+  const updates: Array<{ id: string; payload: any }> = []
+  f.modules['@/api/agent'].updateAgent = async (id: string, payload: any) => {
+    updates.push({ id, payload })
+    return { data: { id, config: payload.config } }
+  }
+  const { vm, unmount, props, successes } = mountEditableAgent(f)
+  try {
+    props.visible = true
+    await settle()
+    assert.equal(vm.editorInitializing, false)
+    await makeAgentSavable(vm)
+    vm.formData.config.rerank_model_id = 'rerank-2'
+    await vue.nextTick()
+    assert.equal(vm.modalShell.isDirty(), true)
+
+    assert.equal(await vm.saveDraft(), true)
+
+    assert.equal(props.visible, true, 'the editor stays open')
+    assert.equal(updates.length, 1)
+    assert.equal(updates[0].id, 'agent')
+    assert.equal(updates[0].payload.config.rerank_model_id, 'rerank-2', 'the edit reached the request')
+    assert.equal(updates[0].payload.config.system_prompt, 'You are helpful')
+    assert.equal(vm.modalShell.isDirty(), false, 'the saved state is the new baseline')
+    assert.deepEqual(successes, ['success'])
+
+    // "保存并关闭" still closes, and a validation failure saves nothing.
+    vm.formData.config.system_prompt = ''
+    await vue.nextTick()
+    assert.equal(await vm.handleSave(), false)
+    assert.equal(updates.length, 1, 'an invalid form is not sent')
+    await makeAgentSavable(vm)
+    assert.equal(await vm.handleSave(), true)
+    assert.equal(updates.length, 2)
+    assert.equal(props.visible, false)
+  } finally { unmount() }
+})
+
+test('saving a shared agent with an unusable configuration warns without failing', async () => {
+  const f = fixture()
+  const warnings: string[] = []
+  f.modules['tdesign-vue-next'].MessagePlugin.warning = (text: string) => { warnings.push(text) }
+  f.modules['@/api/agent'].updateAgent = async () => ({
+    data: { id: 'agent', config: {} },
+    warnings: [{ code: 'shared_agent_not_ready', issues: [{ code: 'missing_rerank_model', field: 'config.rerank_model_id' }] }],
+  })
+  const { vm, unmount, props } = mountEditableAgent(f)
+  try {
+    props.visible = true
+    await settle()
+    await makeAgentSavable(vm)
+
+    assert.equal(await vm.saveDraft(), true, 'the save itself succeeds')
+    assert.deepEqual(warnings, ['agentEditor.tools.sharedNotReadyWarning'])
+  } finally { unmount() }
+})
+
+test('"去设置" after a refused share opens the model section at the missing field', async () => {
+  const f = fixture()
+  const { vm, unmount, props } = mountEditableAgent(f)
+  try {
+    props.visible = true
+    await settle()
+    vm.currentSection = 'share'
+
+    vm.handleShareConfigure([{ code: 'missing_rerank_model', field: 'config.rerank_model_id' }])
+    await new Promise(resolve => setTimeout(resolve, 40))
+
+    assert.equal(vm.currentSection, 'model')
+    assert.equal(vm.highlightedField, 'rerank_model')
+    vm.clearFieldHighlight()
+  } finally { unmount() }
 })
 
 for (const savedRules of [[], [{ file_types: ['xlsx'], engine: 'builtin', xlsx_first_row_as_header: true }]]) {

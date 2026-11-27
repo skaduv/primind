@@ -362,3 +362,10 @@ func (s *remoteCollectSource) ListSessionFiles(_ context.Context, _, dir string)
 func (s *remoteCollectSource) ReadSessionFile(context.Context, string, string) ([]byte, error) {
 	return nil, errors.New("not found")
 }
+
+func (s *capturingMessageService) PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error) {
+	if err := s.UpdateMessage(ctx, message); err != nil {
+		return false, err
+	}
+	return true, nil
+}

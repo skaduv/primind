@@ -76,6 +76,20 @@ type MessageService interface {
 	DeleteSessionArtifact(
 		ctx context.Context, req *types.ArtifactDeleteRequest,
 	) (*types.ArtifactDeleteResult, error)
+	// FinalizeMessage ends the assistant turn behind messageID with status,
+	// error_code and error_message, setting is_completed in the same write.
+	// It reports whether this call was the one that ended the turn: a message
+	// that already reached any terminal state is left untouched. See
+	// MessageRepository.FinalizeMessage for the full contract.
+	FinalizeMessage(
+		ctx context.Context, sessionID, messageID string, status types.MessageStatus,
+		errorCode, errorMessage string, content *string,
+	) (bool, error)
+	// PersistTurnMessage writes the full result of a finished assistant turn
+	// (content, steps, references, artifacts and its terminal status). It
+	// reports false, writing nothing, when the turn already ended in another
+	// state. See MessageRepository.PersistTurnMessage.
+	PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error)
 }
 
 // MessageRepository defines the message repository interface
@@ -84,6 +98,35 @@ type MessageRepository interface {
 	CreateMessage(ctx context.Context, message *types.Message) (*types.Message, error)
 	// GetMessage gets a message
 	GetMessage(ctx context.Context, sessionID string, id string) (*types.Message, error)
+	// FinalizeMessage moves an assistant message into a terminal turn state
+	// (completed / failed / stopped / interrupted). The write is conditional on
+	// the row still generating — is_completed = false AND status IN ('',
+	// 'generating') — so concurrent finalizers (success path, error path, the
+	// deferred backstop, continue-stream self-heal, the reconciler) cannot
+	// overwrite each other: only the first one applies, later ones return
+	// false. is_completed is set in the same statement so clients that only
+	// know is_completed agree with status. content, when non-nil, replaces the
+	// stored content so a stopped or failed turn keeps what it had generated;
+	// nil leaves the column alone (BF-03 §4.2).
+	FinalizeMessage(
+		ctx context.Context, sessionID, messageID string, status types.MessageStatus,
+		errorCode, errorMessage string, content *string,
+	) (bool, error)
+	// PersistTurnMessage is the full write of a finished assistant turn. It
+	// applies only while the row is still generating or already carries
+	// message.Status, so a turn another path ended differently (stop,
+	// shutdown, reconciler) is never relabelled; it then returns false.
+	// error_code and error_message are written even when empty.
+	PersistTurnMessage(ctx context.Context, message *types.Message) (bool, error)
+	// ListGeneratingAssistantMessagesBefore returns up to limit assistant
+	// messages whose turn never ended (is_completed = false, status still
+	// generating or empty) and whose updated_at is older than cutoff, oldest
+	// first. The turn reconciler walks it; live (non-deleted) rows only.
+	ListGeneratingAssistantMessagesBefore(ctx context.Context, cutoff time.Time, limit int) ([]*types.Message, error)
+	// CountGeneratingAssistantMessagesBefore counts the rows
+	// ListGeneratingAssistantMessagesBefore would page through, for the
+	// before/after record of the one-off backfill.
+	CountGeneratingAssistantMessagesBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	// GetMessagesBySession gets all messages of a session
 	GetMessagesBySession(ctx context.Context, sessionID string, page int, pageSize int) ([]*types.Message, error)
 	// GetRecentMessagesBySession gets recent messages of a session

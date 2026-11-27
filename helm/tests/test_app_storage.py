@@ -88,6 +88,16 @@ class AppStorageTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("app.strategy.type must be RollingUpdate or Recreate", result.stderr)
 
+    def test_termination_grace_covers_the_shutdown_budget(self):
+        # On SIGTERM the app drains HTTP for its shutdown timeout (30s) and then
+        # ends the assistant turns still generating in the pod (BF-03 §4.5). The
+        # pod must not be killed before that terminal write lands.
+        app = self.app(self.documents())
+        self.assertGreaterEqual(app["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 30)
+
+        app = self.app(self.documents({"app": {"terminationGracePeriodSeconds": 60}}))
+        self.assertEqual(app["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 60)
+
     def test_production_example_uses_single_replica_rwo_and_recreate(self):
         documents = self.documents(self.readme_values("values-production.yaml"))
         app = self.app(documents)

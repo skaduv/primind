@@ -96,6 +96,7 @@ import (
 	"github.com/primind/primind/internal/storageallowlist"
 	"github.com/primind/primind/internal/stream"
 	"github.com/primind/primind/internal/tracing/langfuse"
+	"github.com/primind/primind/internal/turn"
 	"github.com/primind/primind/internal/types"
 	"github.com/primind/primind/internal/types/interfaces"
 	secutils "github.com/primind/primind/internal/utils"
@@ -487,6 +488,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	logger.Debugf(ctx, "[Container] Data source sync framework registered")
 	must(container.Invoke(startAuditLogRetention))
 	logger.Debugf(ctx, "[Container] Audit log retention runner registered")
+	// BF-03: end abandoned assistant turns (background reconciler) and end the
+	// turns still generating here on graceful shutdown (in-process registry).
+	must(container.Provide(turn.NewRegistry))
+	must(container.Invoke(registerLiveTurnShutdown))
+	must(container.Provide(service.NewTurnReconciler))
+	must(container.Invoke(startTurnReconciler))
+	logger.Debugf(ctx, "[Container] Turn reconciler registered")
 	must(container.Provide(service.NewHousekeepingService))
 	must(container.Invoke(startHousekeepingService))
 	logger.Debugf(ctx, "[Container] Knowledge housekeeping runner registered")
@@ -616,12 +624,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
 
-	// BrowserSkill is registered when its manager is constructed, which is
-	// early, so reverse-order cleanup would run it last. Force the manager
-	// to exist, then run that hook first so a slow cron stop cannot leave
-	// the daemon alive until the process is killed.
+	// Force the browser-skill manager to exist so its hook is registered,
+	// then put the hooks that must run first at the end of the list. This is
+	// the last wiring step: a hook registered after a Promote would run
+	// before the promoted one.
 	must(container.Invoke(func(cleaner interfaces.ResourceCleaner, _ *browserskill.Manager) {
-		cleaner.Promote("BrowserSkill")
+		promoteFirstShutdownHooks(cleaner)
 	}))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
@@ -2019,4 +2027,39 @@ func startAuditLogRetention(
 		runner.StopWithin(cleanupStepTimeout)
 		return nil
 	})
+}
+
+// startTurnReconciler starts the background sweep that ends assistant turns
+// abandoned by a crashed or killed process (BF-03 §4.4). Best-effort like the
+// other runners: a start failure is logged and never aborts the container.
+func startTurnReconciler(reconciler *service.TurnReconciler, cleaner interfaces.ResourceCleaner) {
+	reconciler.Start(context.Background())
+	cleaner.RegisterWithName("TurnReconciler", func() error {
+		reconciler.StopWithin(cleanupStepTimeout)
+		return nil
+	})
+}
+
+// registerLiveTurnShutdown ends every assistant turn still generating in this
+// process before the server exits (BF-03 §4.5).
+//
+// SIGTERM gives a turn's own teardown no chance to run: the generation
+// goroutines outlive the HTTP drain and die with the process, so a rolling
+// restart would leave every in-flight turn "generating" until the reconciler
+// found it an hour later. The hook is promoted so it runs before the other
+// cleanups, each of which may wait up to cleanupStepTimeout.
+func registerLiveTurnShutdown(registry *turn.Registry, cleaner interfaces.ResourceCleaner) {
+	cleaner.RegisterWithName("LiveTurns", func() error {
+		if registry.Len() == 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), cleanupStepTimeout)
+		defer cancel()
+		if n := registry.InterruptAll(ctx); n > 0 {
+			logger.Infof(context.Background(), "[shutdown] interrupted %d in-flight assistant turn(s)", n)
+		}
+		return nil
+	})
+	// Promoted at the end of BuildContainer (promoteFirstShutdownHooks): hooks
+	// registered after this one would otherwise run before it.
 }

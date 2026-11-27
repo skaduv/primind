@@ -53,6 +53,7 @@ import {
   type AgentNotReadyReasonKey,
 } from '@/utils/agent-readiness';
 import { formatLocalizedList } from '@/utils/format-list';
+import { sharedAgentNotReadyFields } from '@/utils/agent-share-readiness';
 import { SKILL_ICON, type MentionItem, type MentionItemType, type MentionRequestItem } from '@/types/mention';
 import { toolboxLocation } from '@/config/toolbox';
 import { supportedLevels, levelLabelKey, levelFromLegacy, clampLevel, type ReasoningLevel } from '@/utils/reasoningEffort';
@@ -2508,20 +2509,36 @@ const formatAgentNotReadyReasons = (
   });
 };
 
+const findSharedAgentInfo = (agentId: string, sourceTenantId: string) =>
+  orgStore.sharedAgents?.find(
+    s => s.agent.id === agentId && String(s.source_tenant_id) === sourceTenantId,
+  );
+
+// 选择和发送前共用的就绪检查。共享智能体以后端对已保存配置的判定（ready=false）为准：
+// 接收方无从检查对方空间的模型，本地规则也不覆盖后端的全部规则（例如快速问答模式下
+// 启用知识库检索时同样需要 ReRank）。后端未判定时（旧后端）只用本地规则。
 const collectAgentNotReadyReasons = (
   agent: CustomAgent,
   isAgentMode: boolean,
   sourceTenantId?: string,
 ): { keys: AgentNotReadyReasonKey[]; labels: string[] } => {
   const isSharedAgent = !!sourceTenantId;
-  const keys = getAgentNotReadyReasonKeys(agent.config, allModels.value, {
+  const keys = [...getAgentNotReadyReasonKeys(agent.config, allModels.value, {
     isAgentMode,
     isSharedAgent,
-  });
-  return {
-    keys,
-    labels: formatAgentNotReadyReasons(keys, agent.is_builtin),
-  };
+  })];
+  const serverFields = sourceTenantId
+    ? sharedAgentNotReadyFields(findSharedAgentInfo(agent.id, sourceTenantId))
+    : null;
+  for (const field of serverFields ?? []) {
+    if (!keys.includes(field)) keys.push(field);
+  }
+  const labels = formatAgentNotReadyReasons(keys, agent.is_builtin);
+  if (serverFields && labels.length === 0) {
+    // 缺项无法对应到具体字段：仍然拦截，只说配置不完整
+    labels.push(t('organization.share.sharedNotReady'));
+  }
+  return { keys, labels };
 };
 
 const goToAgentEditor = (

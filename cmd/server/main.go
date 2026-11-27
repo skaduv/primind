@@ -24,6 +24,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -40,7 +41,22 @@ import (
 	"github.com/primind/primind/internal/types/interfaces"
 )
 
+// One-off repair of assistant turns an older build left "generating" (BF-03
+// §4.6). Run it once after the first deploy that carries the turn reconciler:
+// it prints the before/after counts for the rollout record and exits.
+var (
+	flagBackfillTurns = flag.Bool("backfill-interrupted-turns", false,
+		"End assistant turns left \"generating\" by an older build (BF-03), print the before/after counts, and exit")
+	flagBackfillDryRun = flag.Bool("dry-run", false,
+		"With -backfill-interrupted-turns: only print how many turns would be repaired")
+	flagBackfillOlderThan = flag.Duration("older-than", time.Hour,
+		"With -backfill-interrupted-turns: only turns idle for at least this long; "+
+			"keep it at or above the stream TTL while the app is serving")
+)
+
 func main() {
+	flag.Parse()
+
 	// Set Gin mode
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -53,6 +69,19 @@ func main() {
 	// Print the env banner before container build so operators see what
 	// config landed even when DB / storage init fails.
 	runtime.LogStartupEnv(context.Background())
+	if *flagBackfillTurns {
+		// A one-off repair, not a server: build only what it needs so it
+		// starts no workers, consumers or schedulers next to the serving
+		// replicas, and release the connections before exiting.
+		bc := container.BuildTurnBackfillContainer(runtime.GetContainer())
+		err := runTurnBackfill(bc, *flagBackfillDryRun, *flagBackfillOlderThan)
+		container.CloseTurnBackfillContainer(bc)
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	runtime.MarkServerStarted()
 
 	// Build dependency injection container

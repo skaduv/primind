@@ -90,6 +90,10 @@ func (s *stubStreamManager) ClaimLiveRun(context.Context, string, string, string
 	return nil
 }
 
+func (s *stubStreamManager) TouchLiveRun(context.Context, string, string) error {
+	return nil
+}
+
 func (s *stubStreamManager) GetLiveRun(context.Context, string) (string, string, error) {
 	return "", "", nil
 }

@@ -109,6 +109,10 @@ type agentShareService struct {
 	userRepo              interfaces.UserRepository
 	webSearchProviderRepo interfaces.WebSearchProviderRepository
 	kbRepo                interfaces.KnowledgeBaseRepository
+	// modelRepo backs CheckAgentReadiness when an agent is shared: a model
+	// the agent names may have been deleted or gone inactive since it was
+	// configured. nil skips that part of the check.
+	modelRepo interfaces.ModelRepository
 }
 
 // NewAgentShareService creates a new agent share service
@@ -120,6 +124,7 @@ func NewAgentShareService(
 	userRepo interfaces.UserRepository,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
 	kbRepo interfaces.KnowledgeBaseRepository,
+	modelRepo interfaces.ModelRepository,
 ) interfaces.AgentShareService {
 	return &agentShareService{
 		shareRepo:             shareRepo,
@@ -129,6 +134,7 @@ func NewAgentShareService(
 		userRepo:              userRepo,
 		webSearchProviderRepo: webSearchProviderRepo,
 		kbRepo:                kbRepo,
+		modelRepo:             modelRepo,
 	}
 }
 
@@ -165,6 +171,11 @@ func (s *agentShareService) sharedAgentInfo(
 		info.WebSearchReady = s.isAgentWebSearchReady(ctx, share.Agent, share.SourceTenantID)
 		webSearchReadyCache[cacheKey] = info.WebSearchReady
 	}
+	// Stored configuration only (no model lookup): a list must not cost one
+	// query per agent. A model that was deleted since is caught when the
+	// agent is shared or saved instead.
+	info.Issues = CheckAgentReadiness(ctx, share.Agent, nil)
+	info.Ready = len(info.Issues) == 0
 	return info
 }
 
@@ -208,11 +219,11 @@ func (s *agentShareService) ShareAgent(ctx context.Context, agentID string, orgI
 		return nil, err
 	}
 
-	if agent.Config.ModelID == "" {
-		return nil, ErrAgentNotConfigured
-	}
-	if agentRequiresRerankModel(agent) && agent.Config.RerankModelID == "" {
-		return nil, ErrAgentNotConfigured
+	// The share is checked against the saved configuration, not what the
+	// editor currently shows. The returned error still matches
+	// ErrAgentNotConfigured, and names the missing items for the client.
+	if issues := CheckAgentReadiness(ctx, agent, s.modelRepo); len(issues) > 0 {
+		return nil, &AgentNotReadyError{Issues: issues}
 	}
 
 	_, err = s.orgRepo.GetByID(ctx, orgID)
