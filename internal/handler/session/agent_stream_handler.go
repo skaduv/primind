@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/primind/primind/internal/agent/skills"
@@ -43,6 +44,9 @@ type AgentStreamHandler struct {
 	assistantMessage   *types.Message
 	streamManager      interfaces.StreamManager
 	completionEvent    *interfaces.StreamEvent // Published only after the final message is persisted.
+	// errorSent records that the client was sent the error frame that ends
+	// the turn, so a turn ending without an answer is reported exactly once.
+	errorSent atomic.Bool
 
 	eventBus *event.EventBus
 
@@ -650,6 +654,7 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		metadata["code"] = code
 	}
 
+	h.errorSent.Store(true)
 	// Append error event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
 		ID:        evt.ID,
@@ -1011,4 +1016,10 @@ func (h *AgentStreamHandler) handleCommandOutput(_ context.Context, evt event.Ev
 			"started_at": data.StartedAt, "output": data.Output, "done": data.Done,
 		},
 	})
+}
+
+// reportedError reports whether the client was already sent an error frame
+// for this turn.
+func (h *AgentStreamHandler) reportedError() bool {
+	return h != nil && h.errorSent.Load()
 }

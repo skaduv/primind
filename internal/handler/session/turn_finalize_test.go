@@ -643,6 +643,9 @@ func TestAgentSuccessDoesNotRelabelATurnEndedElsewhere(t *testing.T) {
 	assert.Equal(t, types.MessageStatusInterrupted, rig.streamCtx.assistantMessage.Status,
 		"memory follows the stored state")
 	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete))
+	frames := rig.streams.eventsOfType(types.ResponseTypeError)
+	require.Len(t, frames, 1, "the live client is told the turn is over instead of waiting on \"replying\"")
+	assert.Equal(t, types.TurnSSECodeInterrupted, frames[0].Data["code"])
 }
 
 // Graceful shutdown cancels a running agent turn before it writes the
@@ -666,5 +669,22 @@ func TestShutdownCancelledAgentTurnEndsAsInterruptedNotStopped(t *testing.T) {
 	assert.Equal(t, types.MessageStatusInterrupted, row.Status)
 	assert.Equal(t, types.TurnErrorCodeProcessLost, row.ErrorCode)
 	assert.Equal(t, "half an answer", row.Content, "what was generated is kept")
+	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete))
+}
+
+// A panicking agent run is stored as interrupted; its live client gets the one
+// quiet interrupted frame rather than a completion or nothing at all.
+func TestAgentPanicTellsTheClientTheTurnWasInterrupted(t *testing.T) {
+	rig := newTurnRig(t, qaModeAgent)
+	rig.sessions.agentQA = func(context.Context, *types.QARequest, *event.EventBus) error {
+		panic("nil pointer in the engine")
+	}
+
+	rig.h.runTurn(rig.reqCtx, rig.streamCtx, qaModeAgent)
+
+	assert.Equal(t, types.MessageStatusInterrupted, rig.memory.row("a1").Status)
+	frames := rig.streams.eventsOfType(types.ResponseTypeError)
+	require.Len(t, frames, 1)
+	assert.Equal(t, types.TurnSSECodeInterrupted, frames[0].Data["code"])
 	assert.Empty(t, rig.streams.eventsOfType(types.ResponseTypeComplete))
 }

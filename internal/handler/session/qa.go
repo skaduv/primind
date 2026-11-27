@@ -2255,8 +2255,12 @@ func (h *Handler) completeStreamAssistantMessage(
 		return
 	}
 	if committed != types.MessageStatusCompleted && committed != types.MessageStatusStopped {
-		// failed / interrupted: the client already received the error frame
-		// that ended the turn; a completion event would contradict it.
+		// failed / interrupted: a completion event would contradict the
+		// stored state. The client must still learn that the turn is over:
+		// a failure already sent its error frame, but a panic, a shutdown or
+		// a row another path ended first (reconciler, another replica) did
+		// not, and the client would otherwise wait on "replying".
+		h.reportTurnEndedWithoutAnswer(ctx, streamCtx)
 		return
 	}
 	if streamCtx.streamHandler != nil {

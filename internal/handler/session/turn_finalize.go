@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/primind/primind/internal/event"
 	"github.com/primind/primind/internal/logger"
 	"github.com/primind/primind/internal/types"
 )
@@ -163,4 +165,33 @@ func (sc *sseStreamContext) turnEndedWithoutAnswer() bool {
 // still being persisted (or about to be stopped) as completed.
 func turnStatusDecided(msg *types.Message) bool {
 	return msg.Status != "" && msg.Status != types.MessageStatusGenerating
+}
+
+// reportTurnEndedWithoutAnswer sends the live client the one error frame that
+// ends a turn stored as failed or interrupted, unless it already got one. An
+// interrupted turn uses the same quiet code as continue-stream's self-heal.
+func (h *Handler) reportTurnEndedWithoutAnswer(ctx context.Context, streamCtx *sseStreamContext) {
+	if streamCtx == nil || streamCtx.streamHandler == nil || streamCtx.streamHandler.reportedError() {
+		return
+	}
+	streamCtx.turnMu.Lock()
+	msg := *streamCtx.assistantMessage
+	streamCtx.turnMu.Unlock()
+
+	data := event.ErrorData{
+		Error:     msg.ErrorMessage,
+		ErrorCode: msg.ErrorCode,
+		Stage:     "turn_ended",
+		SessionID: msg.SessionID,
+	}
+	if msg.Status == types.MessageStatusInterrupted {
+		data.ErrorCode = types.TurnSSECodeInterrupted
+		data.Stage = turnInterruptedStage
+		if data.Error == "" {
+			data.Error = types.TurnInterruptedMessage(types.LanguageFromContextOrDefault(ctx))
+		}
+	}
+	_ = streamCtx.streamHandler.handleError(ctx, event.Event{
+		ID: uuid.New().String(), Type: event.EventError, SessionID: msg.SessionID, Data: data,
+	})
 }
