@@ -60,8 +60,10 @@ func (m *turnMemory) FinalizeMessage(
 ) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	call := finalizedCall{sessionID: sessionID, messageID: messageID, status: status, code: code,
-		message: message, ctxErr: ctx.Err()}
+	call := finalizedCall{
+		sessionID: sessionID, messageID: messageID, status: status, code: code,
+		message: message, ctxErr: ctx.Err(),
+	}
 	if content != nil {
 		copied := *content
 		call.content = &copied
@@ -216,8 +218,10 @@ func newTurnRig(t *testing.T, mode qaMode) *turnRig {
 	}
 	t.Cleanup(cancel)
 
-	rig := &turnRig{h: h, memory: memory, streams: streams, sessions: &turnSessionService{}, bus: bus,
-		streamCtx: streamCtx, registry: registry, cancel: cancel, seen: seen}
+	rig := &turnRig{
+		h: h, memory: memory, streams: streams, sessions: &turnSessionService{}, bus: bus,
+		streamCtx: streamCtx, registry: registry, cancel: cancel, seen: seen,
+	}
 	h.sessionService = rig.sessions
 	rig.reqCtx = &qaRequestContext{
 		ctx:              asyncCtx,
@@ -239,8 +243,10 @@ func newTurnRig(t *testing.T, mode qaMode) *turnRig {
 func TestQuickAnswerRetrievalFailureEndsTurnAsFailed(t *testing.T) {
 	rig := newTurnRig(t, qaModeNormal)
 	rig.sessions.knowledgeQA = func(context.Context, *types.QARequest, *event.EventBus) error {
-		return &types.QAStageError{Stage: string(types.CHUNK_SEARCH_PARALLEL), Kind: "search_failed",
-			Err: stderrors.New("opensearch: response too large")}
+		return &types.QAStageError{
+			Stage: string(types.CHUNK_SEARCH_PARALLEL), Kind: "search_failed",
+			Err: stderrors.New("opensearch: response too large"),
+		}
 	}
 
 	rig.h.runTurn(rig.reqCtx, rig.streamCtx, qaModeNormal)
@@ -273,8 +279,10 @@ func TestQuickAnswerRetrievalFailureEndsTurnAsFailed(t *testing.T) {
 func TestQuickAnswerModelFailuresUseTheModelCode(t *testing.T) {
 	for name, knowledgeQA := range map[string]func(context.Context, *types.QARequest, *event.EventBus) error{
 		"synchronous model call failure": func(context.Context, *types.QARequest, *event.EventBus) error {
-			return &types.QAStageError{Stage: string(types.CHAT_COMPLETION_STREAM), Kind: "model_call_failed",
-				Err: stderrors.New("upstream 503")}
+			return &types.QAStageError{
+				Stage: string(types.CHAT_COMPLETION_STREAM), Kind: "model_call_failed",
+				Err: stderrors.New("upstream 503"),
+			}
 		},
 		// The stream goroutine reports a mid-stream failure after KnowledgeQA
 		// returned nil: only the bus hook can see it.
@@ -309,10 +317,14 @@ func TestQuickAnswerModelFailuresUseTheModelCode(t *testing.T) {
 func TestQuickAnswerSuccessEndsTurnAsCompletedAndBackstopChangesNothing(t *testing.T) {
 	rig := newTurnRig(t, qaModeNormal)
 	rig.sessions.knowledgeQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventAgentFinalAnswer,
-			Data: event.AgentFinalAnswerData{Content: "the full "}}))
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventAgentFinalAnswer,
-			Data: event.AgentFinalAnswerData{Content: "answer", Done: true}}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentFinalAnswer,
+			Data: event.AgentFinalAnswerData{Content: "the full "},
+		}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentFinalAnswer,
+			Data: event.AgentFinalAnswerData{Content: "answer", Done: true},
+		}))
 		return nil
 	}
 
@@ -337,10 +349,14 @@ func TestQuickAnswerSuccessEndsTurnAsCompletedAndBackstopChangesNothing(t *testi
 func TestUserStopKeepsPartialContentAsStopped(t *testing.T) {
 	rig := newTurnRig(t, qaModeNormal)
 	rig.sessions.knowledgeQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventAgentFinalAnswer,
-			Data: event.AgentFinalAnswerData{Content: "half an "}}))
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventStop,
-			Data: event.StopData{SessionID: "s1", MessageID: "a1", Reason: "user_requested"}}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentFinalAnswer,
+			Data: event.AgentFinalAnswerData{Content: "half an "},
+		}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventStop,
+			Data: event.StopData{SessionID: "s1", MessageID: "a1", Reason: "user_requested"},
+		}))
 		return ctx.Err()
 	}
 
@@ -359,8 +375,10 @@ func TestUserStopKeepsPartialContentAsStopped(t *testing.T) {
 func TestAgentTurnSuccessThenBackstopStaysCompleted(t *testing.T) {
 	rig := newTurnRig(t, qaModeAgent)
 	rig.sessions.agentQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventAgentComplete,
-			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "done"}}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentComplete,
+			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "done"},
+		}))
 		return nil
 	}
 
@@ -370,7 +388,8 @@ func TestAgentTurnSuccessThenBackstopStaysCompleted(t *testing.T) {
 	assert.Equal(t, types.MessageStatusCompleted, row.Status)
 	assert.Equal(t, "done", row.Content)
 	assert.True(t, row.IsCompleted)
-	assert.Contains(t, rig.streams.cleared, "a1", "the finished turn releases its live-run marker (the backstop repeats the idempotent clear)")
+	assert.Contains(t, rig.streams.cleared, "a1",
+		"the finished turn releases its live-run marker (the backstop repeats the idempotent clear)")
 	calls := rig.memory.finalizeCalls()
 	require.Len(t, calls, 1, "the agent backstop ran once")
 	assert.Equal(t, types.MessageStatusInterrupted, calls[0].status)
@@ -396,10 +415,14 @@ func TestAgentTurnUserStopEndsAsStopped(t *testing.T) {
 	rig := newTurnRig(t, qaModeAgent)
 	rig.sessions.agentQA = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
 		// The engine still announces what it had when a stop cancels it.
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventAgentComplete,
-			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "so far"}}))
-		require.NoError(t, bus.Emit(ctx, event.Event{Type: event.EventStop,
-			Data: event.StopData{SessionID: "s1", MessageID: "a1", Reason: "user_requested"}}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventAgentComplete,
+			Data: event.AgentCompleteData{MessageID: "a1", FinalAnswer: "so far"},
+		}))
+		require.NoError(t, bus.Emit(ctx, event.Event{
+			Type: event.EventStop,
+			Data: event.StopData{SessionID: "s1", MessageID: "a1", Reason: "user_requested"},
+		}))
 		return ctx.Err()
 	}
 
@@ -491,19 +514,28 @@ func TestShutdownInterruptsLiveTurns(t *testing.T) {
 
 func TestFailureOutcomeMapsStagesToCodes(t *testing.T) {
 	ctx := context.Background()
+	stageErr := func(stage types.EventType, kind string) error {
+		return &types.QAStageError{Stage: string(stage), Kind: kind, Err: stderrors.New("x")}
+	}
 	for name, tc := range map[string]struct {
 		stage string
 		err   error
 		code  string
 	}{
-		"retrieval stage":     {stageKnowledgeQA, &types.QAStageError{Stage: string(types.CHUNK_RERANK), Kind: "rerank_failed", Err: stderrors.New("x")}, types.TurnErrorCodeKBSearchFailed},
-		"model lookup":        {stageKnowledgeQA, &types.QAStageError{Stage: string(types.LOAD_HISTORY), Kind: "get_chat_model_failed", Err: stderrors.New("x")}, types.TurnErrorCodeModelError},
-		"history":             {stageKnowledgeQA, &types.QAStageError{Stage: string(types.LOAD_HISTORY), Kind: "get_history_failed", Err: stderrors.New("x")}, types.TurnErrorCodeQAFailed},
+		"retrieval stage": {
+			stageKnowledgeQA, stageErr(types.CHUNK_RERANK, "rerank_failed"), types.TurnErrorCodeKBSearchFailed,
+		},
+		"model lookup": {
+			stageKnowledgeQA, stageErr(types.LOAD_HISTORY, "get_chat_model_failed"), types.TurnErrorCodeModelError,
+		},
+		"history": {
+			stageKnowledgeQA, stageErr(types.LOAD_HISTORY, "get_history_failed"), types.TurnErrorCodeQAFailed,
+		},
 		"untyped service err": {stageKnowledgeQA, stderrors.New("resolve kb: 500"), types.TurnErrorCodeQAFailed},
 		"stream event":        {"chat_completion_stream", stderrors.New("broke"), types.TurnErrorCodeModelError},
-		"agent":               {stageAgentExecution, &types.QAStageError{Stage: "x", Err: stderrors.New("x")}, types.TurnErrorCodeAgentError},
+		"agent":               {stageAgentExecution, stageErr("x", ""), types.TurnErrorCodeAgentError},
 	} {
-		outcome := failureOutcome(tc.stage, tc.err, ctx)
+		outcome := failureOutcome(ctx, tc.stage, tc.err)
 		assert.Equal(t, types.MessageStatusFailed, outcome.status, name)
 		assert.Equal(t, tc.code, outcome.code, name)
 		assert.Equal(t, types.TurnFailedMessage(tc.code, "zh-CN"), outcome.message, name)

@@ -31,7 +31,7 @@ import (
 // @Param        message_id     query     string  true   "消息ID"
 // @Param        resource_urls  query     string  false  "文件引用形式，public 返回可加载直链"  Enums(handle, public)  default(handle)
 // @Success      200            {object}  map[string]interface{}  "流式响应"
-// @Failure      404         {object}  map[string]interface{}  "会话或消息不存在，或消息已不再生成（带 status：completed / failed / stopped / interrupted / generating）"
+// @Failure      404         {object}  map[string]interface{}  "会话或消息不存在，或消息已不再生成（响应带 status）"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /sessions/continue-stream/{session_id} [get]
@@ -136,7 +136,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		// The stream is gone (it expires an hour after the last event) and
 		// the message never finished. If nothing is driving the turn either,
 		// end it here instead of failing every future open (BF-03 §4.3 case 3).
-		if h.healAbandonedTurn(c, ctx, sessionID, message) {
+		if h.healAbandonedTurn(ctx, c, sessionID, message) {
 			return
 		}
 		logger.Warnf(ctx, "No events found in stream, session ID: %s, message ID: %s", sessionID, messageID)
@@ -245,7 +245,7 @@ const turnInterruptedStage = "turn_interrupted"
 // It returns true when it took over the response. The write is the
 // conditional FinalizeMessage, so a turn that ends concurrently is untouched.
 func (h *Handler) healAbandonedTurn(
-	c *gin.Context, ctx context.Context, sessionID string, message *types.Message,
+	ctx context.Context, c *gin.Context, sessionID string, message *types.Message,
 ) bool {
 	if h.turns.IsLive(sessionID, message.ID) {
 		logger.Infof(ctx, "continue-stream: turn still generating in this process, session ID: %s, message ID: %s",

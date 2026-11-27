@@ -332,7 +332,8 @@ func (r *TurnReconciler) sweep(ctx context.Context, cutoff time.Time) (Reconcile
 			types.MessageStatusInterrupted, types.TurnErrorCodeProcessLost, interruptedMessage, nil)
 		if err != nil {
 			result.Skipped++
-			logger.Warnf(ctx, "[turn-reconciler] finalize failed for message %s in session %s: %v", m.ID, m.SessionID, err)
+			logger.Warnf(ctx, "[turn-reconciler] finalize failed for message %s in session %s: %v",
+				m.ID, m.SessionID, err)
 			continue
 		}
 		if !applied {

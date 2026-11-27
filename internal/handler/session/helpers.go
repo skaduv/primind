@@ -345,7 +345,9 @@ func (h *Handler) setupStopEventHandler(
 			context.WithoutCancel(ctx),
 			types.TenantIDContextKey, sessionTenantID,
 		)
-		if err := h.completeAssistantMessage(updateCtx, assistantMessage, "", "", types.MessageStatusStopped); err != nil { // empty query: stopped conversations are not indexed
+		// Empty query: stopped conversations are not indexed.
+		err := h.completeAssistantMessage(updateCtx, assistantMessage, "", "", types.MessageStatusStopped)
+		if err != nil {
 			// The full persist failed; at least end the turn so it is not
 			// left generating (BF-03 §4.2).
 			h.finalizeTurn(updateCtx, streamCtx, turnOutcome{status: types.MessageStatusStopped})

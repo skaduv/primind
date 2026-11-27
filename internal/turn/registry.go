@@ -62,7 +62,9 @@ func (r *Registry) Register(
 	}
 	k := key(sessionID, messageID)
 	r.mu.Lock()
-	r.live[k] = Turn{SessionID: sessionID, MessageID: messageID, registeredAt: r.now(), interrupt: interrupt, cancel: cancel}
+	r.live[k] = Turn{
+		SessionID: sessionID, MessageID: messageID, registeredAt: r.now(), interrupt: interrupt, cancel: cancel,
+	}
 	r.mu.Unlock()
 
 	var once sync.Once

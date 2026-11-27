@@ -1470,7 +1470,7 @@ func (h *Handler) watchQuickAnswerTurn(streamCtx *sseStreamContext, reqCtx *qaRe
 	// reconstruct the thinking card (same shape as Agent-mode steps).
 	// Accumulate on assistantMessage directly so user-initiated stop also
 	// keeps whatever reasoning had streamed before the cancel.
-	streamCtx.eventBus.On(event.EventAgentThought, func(ctx context.Context, evt event.Event) error {
+	streamCtx.eventBus.On(event.EventAgentThought, func(_ context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentThoughtData)
 		if !ok || data.Content == "" {
 			return nil
@@ -1479,7 +1479,7 @@ func (h *Handler) watchQuickAnswerTurn(streamCtx *sseStreamContext, reqCtx *qaRe
 		return nil
 	})
 
-	streamCtx.eventBus.On(event.EventAgentFinalAnswer, func(ctx context.Context, evt event.Event) error {
+	streamCtx.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentFinalAnswerData)
 		if !ok {
 			return nil
@@ -1653,9 +1653,9 @@ func (h *Handler) runTurn(reqCtx *qaRequestContext, streamCtx *sseStreamContext,
 			// The turn is over: write its terminal state before telling
 			// the client, so a reload right after the error never sees a
 			// message that is still "generating" (BF-03 §4.2).
-			outcome := failureOutcome(stageName, serviceErr, streamCtx.asyncCtx)
+			outcome := failureOutcome(streamCtx.asyncCtx, stageName, serviceErr)
 			h.finalizeTurn(streamCtx.asyncCtx, streamCtx, outcome)
-			streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
+			if err := streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 				Type:      event.EventError,
 				SessionID: sessionID,
 				Data: event.ErrorData{
@@ -1664,7 +1664,11 @@ func (h *Handler) runTurn(reqCtx *qaRequestContext, streamCtx *sseStreamContext,
 					Stage:     stageName,
 					SessionID: sessionID,
 				},
-			})
+			}); err != nil {
+				// The terminal state is already stored; only the live
+				// notification was lost, and a reload shows the failure.
+				logger.Warnf(streamCtx.asyncCtx, "error event for session %s not delivered: %v", sessionID, err)
+			}
 		}
 	}
 }
@@ -1684,7 +1688,7 @@ func (h *Handler) watchQuickAnswerStreamErrors(streamCtx *sseStreamContext) {
 		if streamCtx.assistantMessage.IsTerminal() {
 			return nil
 		}
-		h.finalizeTurn(ctx, streamCtx, failureOutcome(data.Stage, stderrors.New(data.Error), ctx))
+		h.finalizeTurn(ctx, streamCtx, failureOutcome(ctx, data.Stage, stderrors.New(data.Error)))
 		return nil
 	})
 }

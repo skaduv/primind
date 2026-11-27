@@ -46,8 +46,10 @@ func TestSQLiteMigrationsUpgradeV36AddsMessageTurnStatus(t *testing.T) {
 	require.Empty(t, message)
 
 	// A row written through the new columns round-trips.
-	_, err = db.Exec(`INSERT INTO messages (id, session_id, request_id, role, content, is_completed, status, error_code, error_message)
-		VALUES ('new-1', 'sess-1', 'req-2', 'assistant', '', 1, 'interrupted', 'process_lost', 'interrupted on purpose')`)
+	_, err = db.Exec(`INSERT INTO messages
+		(id, session_id, request_id, role, content, is_completed, status, error_code, error_message)
+		VALUES ('new-1', 'sess-1', 'req-2', 'assistant', '', 1,
+			'interrupted', 'process_lost', 'interrupted on purpose')`)
 	require.NoError(t, err)
 	require.NoError(t, db.QueryRow(`SELECT status, error_code FROM messages WHERE id = 'new-1'`).Scan(&status, &code))
 	require.Equal(t, "interrupted", status)

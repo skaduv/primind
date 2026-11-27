@@ -37,7 +37,9 @@ func (s *reconcilerStream) GetLiveRun(_ context.Context, sessionID string) (stri
 	return s.live[sessionID], "req-1", nil
 }
 
-func newTurnReconcilerTestRig(t *testing.T) (*TurnReconciler, *reconcilerStream, *turn.Registry, *gorm.DB, *miniredis.Miniredis) {
+func newTurnReconcilerTestRig(
+	t *testing.T,
+) (*TurnReconciler, *reconcilerStream, *turn.Registry, *gorm.DB, *miniredis.Miniredis) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -214,7 +216,8 @@ func TestTurnReconcilerBackfillPagesUntilDone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, got.Repaired)
 	assert.Equal(t, types.MessageStatusInterrupted, loadTurn(t, db, "stale-e").Status)
-	assert.Equal(t, types.MessageStatusGenerating, loadTurn(t, db, "live").EffectiveStatus(), "the live turn is skipped on every page")
+	assert.Equal(t, types.MessageStatusGenerating, loadTurn(t, db, "live").EffectiveStatus(),
+		"the live turn is skipped on every page")
 
 	count, err = r.CountStale(ctx, time.Hour)
 	require.NoError(t, err)

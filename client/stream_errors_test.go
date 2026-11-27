@@ -37,7 +37,8 @@ func TestSSEStreamError_Unwrap(t *testing.T) {
 // BF-03: continue-stream's interrupted frame carries data.code so SDK callers
 // can tell an abandoned turn from a model failure.
 func TestIsTurnInterruptedError(t *testing.T) {
-	interrupted := NewSSEStreamErrorWithCode("This answer was interrupted", streamErrorCode(map[string]interface{}{"code": "turn_interrupted"}))
+	code := streamErrorCode(map[string]interface{}{"code": "turn_interrupted"})
+	interrupted := NewSSEStreamErrorWithCode("This answer was interrupted", code)
 	if !IsTurnInterruptedError(interrupted) {
 		t.Fatalf("data.code=turn_interrupted should be recognised: %v", interrupted)
 	}

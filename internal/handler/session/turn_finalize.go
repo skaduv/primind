@@ -38,7 +38,7 @@ func interruptedOutcome(ctx context.Context) turnOutcome {
 // failureOutcome maps a service or stream error to the failed outcome. The
 // quick-answer pipeline reports the stage that failed; everything else is an
 // agent engine error.
-func failureOutcome(stage string, err error, ctx context.Context) turnOutcome {
+func failureOutcome(ctx context.Context, stage string, err error) turnOutcome {
 	code := types.TurnErrorCodeAgentError
 	if stage != stageAgentExecution {
 		code = types.TurnErrorCodeQAFailed

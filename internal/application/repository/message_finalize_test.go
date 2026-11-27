@@ -220,7 +220,8 @@ func TestListGeneratingAssistantMessagesBefore(t *testing.T) {
 func TestMessageEffectiveStatusInfersLegacyRows(t *testing.T) {
 	assert.Equal(t, types.MessageStatusCompleted, (&types.Message{IsCompleted: true}).EffectiveStatus())
 	assert.Equal(t, types.MessageStatusGenerating, (&types.Message{}).EffectiveStatus())
-	assert.Equal(t, types.MessageStatusGenerating, (&types.Message{Status: types.MessageStatusGenerating, IsCompleted: true}).EffectiveStatus(),
+	explicit := &types.Message{Status: types.MessageStatusGenerating, IsCompleted: true}
+	assert.Equal(t, types.MessageStatusGenerating, explicit.EffectiveStatus(),
 		"an explicit status always wins")
 	for _, status := range []types.MessageStatus{
 		types.MessageStatusCompleted, types.MessageStatusFailed,

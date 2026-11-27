@@ -49,7 +49,8 @@ func runTurnBackfill(c *dig.Container, dryRun bool, olderThan time.Duration) {
 			return err
 		}
 		logger.Infof(ctx,
-			"[BF-03 backfill] done: scanned=%d repaired=%d skipped=%d remaining=%d (skipped and remaining turns are still running)",
+			"[BF-03 backfill] done: scanned=%d repaired=%d skipped=%d remaining=%d"+
+				" (skipped and remaining turns are still running)",
 			result.Scanned, result.Repaired, result.Skipped, after)
 		return nil
 	})

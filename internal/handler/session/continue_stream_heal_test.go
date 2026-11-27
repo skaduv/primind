@@ -39,8 +39,10 @@ func (m *healMessages) FinalizeMessage(
 	ctx context.Context, sessionID, messageID string, status types.MessageStatus,
 	code, message string, content *string,
 ) (bool, error) {
-	m.finalized = append(m.finalized, finalizedCall{sessionID: sessionID, messageID: messageID,
-		status: status, code: code, message: message, content: content, ctxErr: ctx.Err()})
+	m.finalized = append(m.finalized, finalizedCall{
+		sessionID: sessionID, messageID: messageID,
+		status: status, code: code, message: message, content: content, ctxErr: ctx.Err(),
+	})
 	if m.finalizeErr != nil {
 		return false, m.finalizeErr
 	}
@@ -90,8 +92,10 @@ func getContinueStream(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
 }
 
 func generatingMessage(idleFor time.Duration) *types.Message {
-	return &types.Message{ID: "msg1", SessionID: "sess1", Role: "assistant", RequestID: "req-1",
-		UpdatedAt: time.Now().Add(-idleFor)}
+	return &types.Message{
+		ID: "msg1", SessionID: "sess1", Role: "assistant", RequestID: "req-1",
+		UpdatedAt: time.Now().Add(-idleFor),
+	}
 }
 
 // A message that already ended has nothing to resume: the 404 says which
@@ -99,8 +103,12 @@ func generatingMessage(idleFor time.Duration) *types.Message {
 func TestContinueStreamTerminalMessageReportsStatus(t *testing.T) {
 	for name, message := range map[string]*types.Message{
 		"completed before status existed": {ID: "msg1", SessionID: "sess1", IsCompleted: true},
-		"failed":                          {ID: "msg1", SessionID: "sess1", IsCompleted: true, Status: types.MessageStatusFailed},
-		"interrupted":                     {ID: "msg1", SessionID: "sess1", IsCompleted: true, Status: types.MessageStatusInterrupted},
+		"failed": {
+			ID: "msg1", SessionID: "sess1", IsCompleted: true, Status: types.MessageStatusFailed,
+		},
+		"interrupted": {
+			ID: "msg1", SessionID: "sess1", IsCompleted: true, Status: types.MessageStatusInterrupted,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, messages := newHealRouter(t, message, &healStream{})
@@ -197,7 +205,8 @@ func TestContinueStreamLeavesYoungMessageWithoutEventsAlone(t *testing.T) {
 
 // An unreadable marker is not proof that nothing runs.
 func TestContinueStreamLiveRunLookupFailureIsNotProof(t *testing.T) {
-	r, messages := newHealRouter(t, generatingMessage(3*time.Minute), &healStream{liveErr: stderrors.New("redis timeout")})
+	streams := &healStream{liveErr: stderrors.New("redis timeout")}
+	r, messages := newHealRouter(t, generatingMessage(3*time.Minute), streams)
 
 	w := getContinueStream(t, r)
 

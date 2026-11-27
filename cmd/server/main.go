@@ -50,7 +50,8 @@ var (
 	flagBackfillDryRun = flag.Bool("dry-run", false,
 		"With -backfill-interrupted-turns: only print how many turns would be repaired")
 	flagBackfillOlderThan = flag.Duration("older-than", time.Hour,
-		"With -backfill-interrupted-turns: only turns idle for at least this long; keep it at or above the stream TTL while the app is serving")
+		"With -backfill-interrupted-turns: only turns idle for at least this long; "+
+			"keep it at or above the stream TTL while the app is serving")
 )
 
 func main() {

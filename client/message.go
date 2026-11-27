@@ -52,9 +52,11 @@ type Message struct {
 	// Status is the assistant turn's lifecycle state: "generating",
 	// "completed", "failed", "stopped" or "interrupted". Empty on rows that
 	// predate the field; read it through EffectiveStatus (BF-03).
-	Status       string    `json:"status"`
-	ErrorCode    string    `json:"error_code"`        // Machine-readable reason when Status is "failed" or "interrupted"
-	ErrorMessage string    `json:"error_message"`     // Short user-facing explanation when Status is "failed" or "interrupted"
+	Status string `json:"status"`
+	// ErrorCode is the machine-readable reason when Status is "failed" or "interrupted".
+	ErrorCode string `json:"error_code"`
+	// ErrorMessage is a short user-facing explanation when Status is "failed" or "interrupted".
+	ErrorMessage string    `json:"error_message"`
 	Channel      string    `json:"channel,omitempty"` // Source channel: "web", "api", "im", etc.
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`

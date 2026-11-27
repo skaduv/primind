@@ -13769,7 +13769,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "会话或消息不存在，或消息已不再生成（带 status：completed / failed / stopped / interrupted / generating）",
+                        "description": "会话或消息不存在，或消息已不再生成（响应带 status）",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
