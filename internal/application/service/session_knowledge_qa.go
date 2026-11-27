@@ -811,7 +811,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"error_type":  err.ErrorType,
 				"description": err.Description,
 			})
-			return err.Err
+			// Name the stage that failed so the handler can record a precise
+			// turn error code; Error() still reads as the original error.
+			inner := err.Err
+			if inner == nil {
+				inner = fmt.Errorf("%s failed: %s", eventType, err.Description)
+			}
+			return &types.QAStageError{Stage: string(eventType), Kind: err.ErrorType, Err: inner}
 		}
 
 		common.PipelineInfo(ctx, "Pipeline", "stage_complete", map[string]interface{}{

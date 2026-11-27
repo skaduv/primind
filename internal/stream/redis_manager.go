@@ -122,11 +122,11 @@ func (r *RedisStreamManager) GetEvents(
 		return nil, fromOffset, fmt.Errorf("failed to get events from Redis: %w", err)
 	}
 
-	// No new events. Still refresh the live-run marker: the SSE poll loop
-	// hits this path while the model is thinking, which is exactly when a
-	// long turn would otherwise outlive the one-shot SetLiveRun TTL.
+	// Reads never extend the live-run marker (BF-03): continue-stream polls
+	// this every 100ms, and refreshing here kept a killed engine's marker
+	// alive for as long as anyone watched the session. The generating
+	// process keeps its own marker alive with TouchLiveRun.
 	if len(results) == 0 {
-		r.touchLiveRun(ctx, sessionID)
 		return []interfaces.StreamEvent{}, fromOffset, nil
 	}
 
@@ -145,7 +145,6 @@ func (r *RedisStreamManager) GetEvents(
 
 	// Calculate next offset
 	nextOffset := fromOffset + len(results)
-	r.touchLiveRun(ctx, sessionID)
 
 	return events, nextOffset, nil
 }
@@ -215,8 +214,9 @@ func (r *RedisStreamManager) GetSteerEvents(
 		}
 		return nil, fromOffset, fmt.Errorf("failed to get steer events from Redis: %w", err)
 	}
+	// Like GetEvents, a pure read: /steer handlers call this on behalf of
+	// users, so it must not vouch for the run (see TouchLiveRun).
 	if len(results) == 0 {
-		r.touchLiveRun(ctx, sessionID)
 		return []interfaces.StreamEvent{}, fromOffset, nil
 	}
 
@@ -229,7 +229,6 @@ func (r *RedisStreamManager) GetSteerEvents(
 		events = append(events, event)
 	}
 
-	r.touchLiveRun(ctx, sessionID)
 	return events, fromOffset + len(results), nil
 }
 
@@ -450,17 +449,69 @@ func (r *RedisStreamManager) GetLiveRun(
 		// treat empty as new_run and would start a second AgentQA.
 		return "", "", fmt.Errorf("failed to decode live run marker: %w", err)
 	}
-	r.touchLiveRun(ctx, sessionID)
+	// A pure read (BF-03): refreshing here let every continue-stream open,
+	// /steer probe and reconciler sweep extend a dead engine's marker by a
+	// full TTL, so the abandoned turn looked live forever.
 	return payload.AssistantMessageID, payload.RequestID, nil
 }
 
 // touchLiveRun extends the live-run marker so a turn longer than the
 // StreamManager TTL does not look idle. Expire on a missing key is a no-op.
+// Only writes made by the generating run call it (AppendEvent); readers
+// must not (see TouchLiveRun).
 func (r *RedisStreamManager) touchLiveRun(ctx context.Context, sessionID string) {
 	if sessionID == "" {
 		return
 	}
 	_ = r.client.Expire(ctx, r.buildLiveRunKey(sessionID), r.ttl).Err()
+}
+
+// touchLiveRunCAS extends the marker only while it still names the caller's
+// run, so the heartbeat of a run that already handed the session to a
+// follow-up cannot keep the follow-up's marker alive past its own life.
+var touchLiveRunCAS = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+if string.find(raw, ARGV[1], 1, true) == nil then
+  return 0
+end
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 1
+`)
+
+// TouchLiveRun is the generating process's heartbeat on its own marker.
+func (r *RedisStreamManager) TouchLiveRun(
+	ctx context.Context,
+	sessionID, assistantMessageID string,
+) error {
+	if sessionID == "" || assistantMessageID == "" {
+		return nil
+	}
+	needle, err := liveRunNeedle(assistantMessageID)
+	if err != nil {
+		return err
+	}
+	seconds := int64(r.ttl / time.Second)
+	if seconds <= 0 {
+		seconds = 1
+	}
+	if err := touchLiveRunCAS.Run(ctx, r.client,
+		[]string{r.buildLiveRunKey(sessionID)}, needle, seconds).Err(); err != nil && err != redis.Nil {
+		return fmt.Errorf("failed to refresh live run marker in Redis: %w", err)
+	}
+	return nil
+}
+
+// liveRunNeedle is the serialized assistant id field the CAS scripts match.
+// The marker is written by SetLiveRun, so the encoding is ours to rely on.
+func liveRunNeedle(assistantMessageID string) (string, error) {
+	idJSON, err := json.Marshal(assistantMessageID)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal assistant message id: %w", err)
+	}
+	return `"assistant_message_id":` + string(idJSON), nil
 }
 
 // clearLiveRunCAS deletes the marker only when it still names the run being
@@ -485,13 +536,11 @@ func (r *RedisStreamManager) ClearLiveRun(
 	if assistantMessageID == "" {
 		return nil
 	}
-	// Match the serialized field rather than decoding in Lua: the marker is
-	// written by SetLiveRun above, so the encoding is ours to rely on.
-	idJSON, err := json.Marshal(assistantMessageID)
+	// Match the serialized field rather than decoding in Lua.
+	needle, err := liveRunNeedle(assistantMessageID)
 	if err != nil {
-		return fmt.Errorf("failed to marshal assistant message id: %w", err)
+		return err
 	}
-	needle := `"assistant_message_id":` + string(idJSON)
 	if err := clearLiveRunCAS.Run(ctx, r.client,
 		[]string{r.buildLiveRunKey(sessionID)}, needle).Err(); err != nil && err != redis.Nil {
 		return fmt.Errorf("failed to clear live run marker in Redis: %w", err)

@@ -217,6 +217,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 						SessionID: chatManage.SessionID,
 						Data: event.ErrorData{
 							Error:     response.Content,
+							ErrorCode: types.TurnErrorCodeModelError,
 							Stage:     "chat_completion_stream",
 							SessionID: chatManage.SessionID,
 						},

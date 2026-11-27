@@ -1029,6 +1029,10 @@ func (m *transcriptStreamManager) ClaimLiveRun(context.Context, string, string, 
 	return nil
 }
 
+func (m *transcriptStreamManager) TouchLiveRun(context.Context, string, string) error {
+	return nil
+}
+
 func (m *transcriptStreamManager) GetLiveRun(context.Context, string) (string, string, error) {
 	return "", "", nil
 }

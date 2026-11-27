@@ -74,3 +74,33 @@ func TestCleanupAlreadyCanceledContextStillRunsHooks(t *testing.T) {
 		t.Fatalf("ran %d hooks, want 2", n)
 	}
 }
+
+// BF-03 §4.5: LiveTurns is registered in the middle of the wiring; hooks
+// registered after it (IM, Asynq) must still run after it, and BrowserSkill,
+// registered earliest, comes right after it.
+func TestFirstShutdownHooksRunBeforeEverythingRegisteredLater(t *testing.T) {
+	cleaner := NewResourceCleaner()
+	var ran []string
+	for _, name := range []string{"BrowserSkill", "Database", "LiveTurns", "IMService", "AsynqServer"} {
+		name := name
+		cleaner.RegisterWithName(name, func() error {
+			ran = append(ran, name)
+			return nil
+		})
+	}
+
+	promoteFirstShutdownHooks(cleaner)
+
+	if errs := cleaner.Cleanup(context.Background()); len(errs) != 0 {
+		t.Fatalf("errs = %v", errs)
+	}
+	want := []string{"LiveTurns", "BrowserSkill", "AsynqServer", "IMService", "Database"}
+	if len(ran) != len(want) {
+		t.Fatalf("ran = %v, want %v", ran, want)
+	}
+	for i := range want {
+		if ran[i] != want[i] {
+			t.Fatalf("ran = %v, want %v", ran, want)
+		}
+	}
+}
