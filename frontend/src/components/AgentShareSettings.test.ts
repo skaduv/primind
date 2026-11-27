@@ -138,6 +138,37 @@ test('with unsaved edits, "共享" only asks: no request, the selection stays', 
   } finally { unmount() }
 })
 
+// Closing the popup (outside click, Esc) drops the confirmation: the edits may
+// be undone by the time it opens again.
+test('closing the popup drops the confirmation; reopening asks again only if still unsaved', async () => {
+  const f = fixture()
+  const saves: string[] = []
+  const options = { dirty: true, saveDraft: async () => { saves.push('save'); return true } }
+  const { vm, unmount } = mountSharePanel(f, options)
+  try {
+    await settle()
+    vm.selectedOrgId = 'org-1'
+    vm.addPopupVisible = true
+    await vm.handleShare()
+    assert.equal(vm.confirmingUnsaved, true)
+
+    vm.addPopupVisible = false
+    await vue.nextTick()
+    assert.equal(vm.confirmingUnsaved, false, 'no confirmation survives the closed popup')
+
+    // The user undid the edits, then opens the popup again: the space is still
+    // chosen, and "共享" shares directly.
+    options.dirty = false
+    vm.addPopupVisible = true
+    await vue.nextTick()
+    assert.equal(vm.confirmingUnsaved, false)
+    assert.equal(vm.selectedOrgId, 'org-1')
+    await vm.handleShare()
+    assert.deepEqual(saves, [], 'no needless save')
+    assert.equal(f.shareCalls.length, 1)
+  } finally { unmount() }
+})
+
 test('"保存并共享" saves first and shares only after the save succeeded', async () => {
   const f = fixture()
   const order: string[] = []

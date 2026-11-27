@@ -377,6 +377,12 @@ async function handleUnshare(share: AgentShareResponse) {
   }
 }
 
+// 弹层关闭（点外面、Esc、保存失败）后确认作废：用户可能已经撤销了修改，
+// 下次打开时按当时是否有未保存修改重新判断。
+watch(addPopupVisible, (visible) => {
+  if (!visible) confirmingOrgId.value = null
+})
+
 watch(() => props.agentId, async (newId) => {
   confirmingOrgId.value = null
   refusedIssues.value = []

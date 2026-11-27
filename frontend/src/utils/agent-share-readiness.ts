@@ -126,3 +126,22 @@ export function agentReadinessIssueLabels(
 export function isSharedAgentNotReady(info: { ready?: boolean } | null | undefined): boolean {
   return info?.ready === false
 }
+
+/**
+ * The editor fields behind the server's "not ready" verdict on a shared agent,
+ * without repeats. null when the server did not mark the agent (ready, or an
+ * older backend): only then may a caller rely on its local checks alone. An
+ * empty list still means "not ready" — the issues name nothing this client
+ * maps to a field, e.g. a code added on the backend later.
+ */
+export function sharedAgentNotReadyFields(
+  info: { ready?: boolean; issues?: readonly AgentReadinessIssue[] } | null | undefined,
+): AgentNotReadyReasonKey[] | null {
+  if (!isSharedAgentNotReady(info)) return null
+  const fields: AgentNotReadyReasonKey[] = []
+  for (const issue of info?.issues ?? []) {
+    const field = agentReadinessHighlightField(issue)
+    if (field && !fields.includes(field)) fields.push(field)
+  }
+  return fields
+}

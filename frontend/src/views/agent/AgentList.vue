@@ -1181,23 +1181,35 @@ const handleOpenAgentEditor = (event: CustomEvent) => {
   }
 }
 
+// 请求某个空间内全部智能体（含我共享的）。只采用最后一次请求的结果，避免先发后到的
+// 旧请求覆盖当前列表。silent：保存后的静默刷新，不显示加载态，失败时保留原列表。
+let spaceAgentsRequest = 0
+async function fetchSpaceAgents(orgId: string, { silent = false } = {}) {
+  const request = ++spaceAgentsRequest
+  if (!silent) spaceAgentsLoading.value = true
+  try {
+    const res = await listOrganizationSharedAgents(orgId)
+    if (request !== spaceAgentsRequest) return
+    if (res.success && res.data) {
+      spaceAgentsList.value = res.data
+      spaceAgentCountByOrg.value = { ...spaceAgentCountByOrg.value, [orgId]: res.data.length }
+    } else if (!silent) {
+      spaceAgentsList.value = []
+    }
+  } finally {
+    if (request === spaceAgentsRequest) spaceAgentsLoading.value = false
+  }
+}
+
 // 选中空间时请求该空间内全部智能体（含我共享的）
 watch(spaceSelection, (val) => {
   if (val === 'all' || val === 'mine' || !val) {
+    spaceAgentsRequest++
+    spaceAgentsLoading.value = false
     spaceAgentsList.value = []
     return
   }
-  spaceAgentsLoading.value = true
-  listOrganizationSharedAgents(val).then((res) => {
-    if (res.success && res.data) {
-      spaceAgentsList.value = res.data
-      spaceAgentCountByOrg.value = { ...spaceAgentCountByOrg.value, [val]: res.data.length }
-    } else {
-      spaceAgentsList.value = []
-    }
-  }).finally(() => {
-    spaceAgentsLoading.value = false
-  })
+  void fetchSpaceAgents(val)
 }, { immediate: true })
 
 // Refetch when the creator filter flips so the server applies the
@@ -1532,6 +1544,8 @@ const handleEditorSuccess = (agent?: CustomAgent) => {
     editorMode.value = 'edit'
   }
   fetchList(true)
+  // 空间视角的卡片来自单独的接口：保存可能改变「配置不完整」的判定，一并刷新
+  if (spaceSelectionOrgId.value) void fetchSpaceAgents(spaceSelection.value, { silent: true })
 }
 
 // 暴露创建方法供外部调用

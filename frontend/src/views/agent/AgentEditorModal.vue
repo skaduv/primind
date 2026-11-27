@@ -4984,6 +4984,16 @@ const hasPlaceholder = (text: string | undefined, placeholder: string): boolean 
   return text.includes(`{{${placeholder}}}`);
 };
 
+// 保存后窗口不关时（新建后、「保存并共享」）与后端返回的工具列表同步：后端可能改写了它
+// （旧名称映射、移除由其他设置控制的工具），不同步的话工具页仍显示旧勾选，
+// 再次保存会重复提交并重复提示。
+const syncSavedAllowedTools = (saved?: CustomAgent | null) => {
+  if (!Array.isArray(saved?.config?.allowed_tools)) return;
+  formData.value.config.allowed_tools = normalizeLegacyToolNames(saved.config.allowed_tools);
+  storedToolNames.value = [...formData.value.config.allowed_tools];
+  keepAllowedToolsUnset.value = false;
+};
+
 // 校验并保存当前表单，返回是否保存成功。
 // close=false（共享前的"保存并共享"）保存成功后留在编辑窗口。
 const saveAgentForm = async (close: boolean): Promise<boolean> => {
@@ -5074,13 +5084,7 @@ const saveAgentForm = async (close: boolean): Promise<boolean> => {
       }
       savedAgent.value = created;
       formData.value.id = created.id;
-      // 后端可能改写了工具列表（旧名称映射、移除由其他设置控制的工具），与之同步，
-      // 避免再次保存时重复提示。
-      if (Array.isArray(created.config?.allowed_tools)) {
-        formData.value.config.allowed_tools = normalizeLegacyToolNames(created.config.allowed_tools);
-        storedToolNames.value = [...formData.value.config.allowed_tools];
-        keepAllowedToolsUnset.value = false;
-      }
+      syncSavedAllowedTools(created);
       modalShell.markClean();
       markContextualGuideDone('agentCreate')
       currentSection.value = 'basic';
@@ -5094,6 +5098,7 @@ const saveAgentForm = async (close: boolean): Promise<boolean> => {
       const saved: any = await updateAgent(formData.value.id, payload);
       MessagePlugin.success(t('common.saveSuccess'));
       emit('success');
+      syncSavedAllowedTools(saved?.data);
       modalShell.markClean();
       notifyAllowedToolsWarnings(saved?.allowed_tools_warnings);
       notifyAgentSaveWarnings(saved?.warnings);

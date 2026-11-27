@@ -8,6 +8,7 @@ import {
   parseAgentReadinessIssues,
   parseAgentSaveWarnings,
   shareRefusalIssues,
+  sharedAgentNotReadyFields,
   sharedAgentNotReadyIssues,
 } from './agent-share-readiness.ts'
 
@@ -88,4 +89,28 @@ test('only an explicit ready=false marks a shared agent as not ready', () => {
   assert.equal(isSharedAgentNotReady({ ready: true }), false)
   assert.equal(isSharedAgentNotReady({}), false, 'an older backend sends no verdict')
   assert.equal(isSharedAgentNotReady(undefined), false)
+})
+
+// The send and select checks in the chat input block a shared agent on the
+// server's verdict, and point at the fields the server named.
+test('the fields behind a not-ready shared agent', () => {
+  const missingChat = { code: 'missing_chat_model', field: 'config.model_id' }
+  assert.deepEqual(sharedAgentNotReadyFields({ ready: false, issues: [missingRerank] }), ['rerank_model'])
+  assert.deepEqual(
+    sharedAgentNotReadyFields({
+      ready: false,
+      issues: [missingChat, missingRerank, { code: 'rerank_model_unavailable', field: 'config.rerank_model_id' }],
+    }),
+    ['summary_model', 'rerank_model'],
+    'one field per config path, in order',
+  )
+  assert.deepEqual(
+    sharedAgentNotReadyFields({ ready: false, issues: [{ code: 'future_code', field: 'config.other' }] }),
+    [],
+    'not ready even when no field can be named',
+  )
+  assert.deepEqual(sharedAgentNotReadyFields({ ready: false }), [])
+  assert.equal(sharedAgentNotReadyFields({ ready: true, issues: [missingRerank] }), null)
+  assert.equal(sharedAgentNotReadyFields({}), null, 'an older backend sends no verdict')
+  assert.equal(sharedAgentNotReadyFields(undefined), null)
 })
