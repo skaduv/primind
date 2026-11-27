@@ -1,3 +1,6 @@
+// Package router wires the HTTP handlers onto the gin engine and gives every
+// route the role, ownership, API-key and knowledge-base access guards it needs.
+// The Register* functions are declarative; the guards themselves live in rbac.go.
 package router
 
 import (

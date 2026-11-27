@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/primind/primind/internal/application/access"
+	"github.com/primind/primind/internal/application/service"
 	"github.com/primind/primind/internal/errors"
 	"github.com/primind/primind/internal/event"
 	"github.com/primind/primind/internal/infrastructure/docparser"
@@ -609,8 +610,9 @@ func cloneTagScopes(scopes []types.TagScope) []types.TagScope {
 	return cloned
 }
 
-// resolveAgent resolves the custom agent by ID: the caller's own agent unless a
-// source workspace is given, otherwise (or when no own agent matches) a share.
+// resolveAgent resolves the custom agent by ID through service.AgentAccessResolver,
+// the one component every agent-by-ID route shares: the caller's own agent unless
+// a source workspace is given, otherwise (or when no own agent matches) a share.
 // Returns (nil, 0) if agentID is empty or not found.
 func (h *Handler) resolveAgent(
 	ctx context.Context,
@@ -622,43 +624,37 @@ func (h *Handler) resolveAgent(
 		return nil, 0, false
 	}
 
-	logger.Infof(ctx, "Resolving agent, agent ID: %s", secutils.SanitizeForLog(agentID))
-
-	// Without a source workspace the ID names the caller's own agent first.
-	// Built-in IDs exist in every workspace, so trying shares first would let
-	// any org member that shares an agent under such an ID take over the
-	// caller's default agent (and run the caller's chats in its workspace).
-	// A rejected shared selector (sourceTenantID != 0) must likewise never
-	// fall back to a same-ID local agent.
-	var ownErr error
-	if sourceTenantID == 0 {
-		agent, err := h.customAgentService.GetAgentByID(ctx, agentID)
-		if err == nil && agent != nil {
-			logger.Infof(ctx, "Using own agent: ID=%s, Name=%s, AgentMode=%s",
-				agent.ID, agent.Name, agent.Config.AgentMode)
-			return agent, 0, false
-		}
-		ownErr = err
+	if h.agentAccessResolver == nil {
+		logger.Errorf(ctx, "Agent access resolver is not configured, agent ID: %s, using default config",
+			secutils.SanitizeForLog(agentID))
+		return nil, 0, false
 	}
 
-	var shareErr error
-	userIDVal, _ := c.Get(types.UserIDContextKey.String())
-	currentTenantID := c.GetUint64(types.TenantIDContextKey.String())
-	if h.agentShareService != nil && userIDVal != nil && currentTenantID != 0 {
-		callerTenantRole := types.TenantRoleFromContext(ctx)
-		agent, err := h.agentShareService.GetSharedAgentForTenant(
-			ctx, currentTenantID, callerTenantRole, agentID, sourceTenantID)
-		if err == nil && agent != nil {
-			logger.Infof(ctx, "Using shared agent: ID=%s, Name=%s, IsBuiltin=%v, AgentMode=%s, effectiveTenantID=%d",
-				agent.ID, agent.Name, agent.IsBuiltin, agent.Config.AgentMode, agent.TenantID)
-			return agent, agent.TenantID, true
-		}
-		shareErr = err
+	// ResolveForChat: chat does not refuse a share this workspace has disabled.
+	// That predates the disabled list and stays as it is until the recorded
+	// defect (docs/bug/2026-11-26-本空间停用的共享智能体仍可在对话中使用.md) is fixed.
+	resolved, err := h.agentAccessResolver.ResolveForChat(ctx, agentCallerFromGin(c), agentID, sourceTenantID)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to get agent, agent ID: %s, source tenant: %d, error: %v, using default config",
+			secutils.SanitizeForLog(agentID), sourceTenantID, err)
+		return nil, 0, false
 	}
+	if resolved.IsShared {
+		return resolved.Agent, resolved.EffectiveTenantID, true
+	}
+	return resolved.Agent, 0, false
+}
 
-	logger.Warnf(ctx, "Failed to get agent, agent ID: %s, source tenant: %d, own error: %v, share error: %v, "+
-		"using default config", secutils.SanitizeForLog(agentID), sourceTenantID, ownErr, shareErr)
-	return nil, 0, false
+// agentCallerFromGin snapshots the identity the resolver keys on: the workspace
+// and user auth attached to the request, and the user's role in that workspace.
+func agentCallerFromGin(c *gin.Context) service.AgentCaller {
+	userID, _ := c.Get(types.UserIDContextKey.String())
+	id, _ := userID.(string)
+	return service.AgentCaller{
+		TenantID: c.GetUint64(types.TenantIDContextKey.String()),
+		UserID:   id,
+		Role:     types.TenantRoleFromContext(c.Request.Context()),
+	}
 }
 
 // mergeKnowledgeTargets merges request KB/knowledge IDs with @mentioned items into deduplicated slices.

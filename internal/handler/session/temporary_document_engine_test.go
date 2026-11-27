@@ -57,12 +57,12 @@ func uploadWithEngine(t *testing.T, h *Handler, agentID string) {
 // which of the owner's parser engines (and credentials) runs.
 func TestUploadTemporaryDocumentIgnoresCallerEngineForSharedAgents(t *testing.T) {
 	shared := &engineTestDocuments{}
-	h := &Handler{
+	h := withAgentResolver(&Handler{
 		sessionService:     engineTestSessions{},
 		temporaryDocuments: shared,
 		agentShareService:  &resolveAgentShareStub{agent: &types.CustomAgent{ID: "shared-agent", TenantID: 84}},
 		customAgentService: &resolveOwnAgentStub{err: context.Canceled},
-	}
+	})
 	uploadWithEngine(t, h, "shared-agent")
 	require.Equal(t, uint64(84), shared.options.ResourceTenantID)
 	require.Empty(t, shared.options.ParserEngine)
@@ -70,6 +70,7 @@ func TestUploadTemporaryDocumentIgnoresCallerEngineForSharedAgents(t *testing.T)
 	own := &engineTestDocuments{}
 	h.temporaryDocuments = own
 	h.customAgentService = &resolveOwnAgentStub{agent: &types.CustomAgent{ID: "own-agent", TenantID: 7}}
+	h = withAgentResolver(h)
 	uploadWithEngine(t, h, "own-agent")
 	require.Equal(t, "mineru_cloud", own.options.ParserEngine, "the caller's own workspace keeps its choice")
 }
